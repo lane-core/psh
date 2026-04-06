@@ -268,10 +268,10 @@ node types reflecting the sequent calculus:
 
 | psh sort | λμμ̃ analog | Evaluation | Examples |
 |---|---|---|---|
-| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | `Literal`, `Var`, `CommandSub`, `Concat` |
+| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | `Literal`, `Var`, `CommandSub`, `Concat`, `Tuple`, `Tagged` |
 | `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | `Pipeline`, `Redirect`, `Background` |
-| `Binding` | μ̃-binder (let) | Extends context Γ | `Assignment`, `Fn` |
-| `Command` | Cut / control | Connects producers to consumers, or branches | `Exec`, `If`, `For`, `Switch` |
+| `Binding` | μ̃-binder (let) | Extends context Γ | `Assignment`, `Fn`, `Let`, `LetTry`, `Ref` |
+| `Command` | Cut / control | Connects producers to consumers, or branches | `Exec`, `If`, `For`, `Match`, `Try` |
 
 In ksh93, this structure is implicit — the `Shnode_t` union carries
 it via `tretyp & COMMSK` tags, but nothing in the type system
@@ -415,34 +415,136 @@ by testing.
 
 A variable with `.get` and `.set` disciplines is a MonadicLens:
 
-- `fn x.get { ... }` is the **view** (co-Kleisli). It extracts a
-  value from context. psh **enforces purity** by running `.get`
-  bodies in a readonly scope — mutations inside `.get` are
-  discarded. The reentrancy guard prevents recursive firing.
+- `fn x.get { ... }` is a **notification hook** (co-Kleisli
+  position). It fires on `$x` access. The body runs in a readonly
+  scope — mutations are rejected. The returned value is always the
+  stored value, not the body's output. The `.get` body cannot
+  influence what `$x` evaluates to. It can observe, log, trigger
+  side effects (to stderr), but the value flows through unchanged.
 
 - `fn x.set { ... }` is the **update** (Kleisli). It takes a value
   (`$1`) and may produce effects. The interpreter stores the value
   afterward regardless. Reentrancy guard prevents infinite recursion.
 
+**Why `.get` is notification-only, not a view transformer.** The
+roundtable deliberated this extensively. A transforming `.get` (where
+the body's stdout replaces the returned value) would break the
+MonadicLens laws: PutGet fails because `view(set(s, b))` returns
+whatever `.get` computes, not `b`. GetPut fails because storing the
+transformed value back changes the state. The variable degrades from
+a lawful MonadicLens to an arbitrary pair of effectful functions with
+no compositional guarantees. ksh93's transforming `.get` discipline
+(via `.sh.value`) was the single largest source of crash bugs in
+ksh93u+m — scoping leaks, use-after-free in subshell discipline
+chains, and crash in get/getn disciplines from longjmp interaction.
+
+Computed variables (`let x = try { body }`) serve the "live query"
+use case that transforming `.get` would otherwise handle. The
+computed variable is explicitly tier-3 (affine, no laws) while `.get`
+disciplines preserve tier-2 MonadicLens laws.
+
 The composition with pane's namespace MonadicLens follows from the
 shared optic type: `get /pane/editor/attrs/cursor` fires a remote
 AttrReader (co-Kleisli); `set /pane/editor/cursor 42` fires a remote
-AttrWriter (Kleisli). A nameref bridges local and remote:
-
-```
-ref cursor = /pane/editor/attrs/cursor
-fn cursor.set { set /pane/editor/cursor $1 }
-```
+AttrWriter (Kleisli).
 
 **Scope of lens laws:** MonadicLens laws (PutGet, GetPut, PutPut)
 hold for tiers 1-2 (local variables, environment) where the store
-is process-local and stable. For tier 3 (pane namespace), PutGet
-degrades — `get` after `set` is not guaranteed to return the set
-value because the remote store may have changed. The lens laws
-become an affine contract: the shell does not guarantee round-trip
-fidelity for remote attributes. This matches the structural-rule
-distinction: tiers 1-2 admit contraction (classical), tier 3 does
-not (affine).
+is process-local and stable. For tier 3 (pane namespace, computed
+variables), PutGet degrades — `get` after `set` is not guaranteed
+to return the set value because the remote store may have changed.
+The lens laws become an affine contract: the shell does not
+guarantee round-trip fidelity for remote attributes. This matches
+the structural-rule distinction: tiers 1-2 admit contraction
+(classical), tier 3 does not (affine).
+
+### Products, coproducts, and the optic hierarchy
+
+Val's type constructors map directly to the optic hierarchy:
+
+| Type constructor | Optic | Constraint |
+|---|---|---|
+| Tuple (product, ×) | Lens | Cartesian |
+| Tagged (coproduct, +) | Prism | Cocartesian |
+| Tuple × Tagged | AffineTraversal | Cartesian + Cocartesian |
+| List (sequence) | Traversal | Monoidal |
+
+Products give users Lenses: `$pos.0` projects the first element
+of a tuple. Coproducts give users Prisms: `match $result { case ok $v { } }` decomposes a tagged value. Composing both gives
+AffineTraversals: `$result.ok.name` is Prism then Lens.
+
+Tagged values are the user's coproduct constructor — the open
+counterpart to Val's fixed enum. Val's Rust enum is a closed
+coproduct (the implementation's sum type). Tagged is an open
+coproduct (the user's sum type). Without Tagged, the Cocartesian
+half of the optic hierarchy would be theoretically present but
+operationally unreachable for user-defined domains. Every script
+needing domain-specific alternatives would encode them as lists
+with tag strings — the void-pointer pattern the type system
+exists to prevent.
+
+ExitCode is a reified computation outcome. It enters the value
+world through `try` (the ↑ shift). `try { body }` runs the body
+and produces either `ok(captured_value)` (Tagged "ok") or
+`err(ExitCode(n))` (Tagged "err"). The type is `Result[T] =
+T | ExitCode`. The coproduct structure is explicit in the type
+annotation and in the runtime Tagged value.
+
+### Error metadata on variables
+
+For stored variables (tiers 1-2), the value is always clean data.
+For computed variables (`let x = try { }`), the value IS the
+Tagged result — `Tagged("ok", T)` on success, `Tagged("err",
+ExitCode(n))` on failure. The `$x.err` accessor is a Prism
+preview into the err branch of that Tagged result. The `$x.ok`
+accessor previews the ok branch.
+
+Each Var also carries `error: Option<String>` — the human-readable
+error message from stderr of the last failed evaluation. This is
+diagnostic metadata (following Plan 9's errstr model), not the
+primary error signal. The ExitCode in the Tagged result is the
+structural error value; the error string is for user display.
+
+Val stays inert — pure positive data, Clone, no embedded error
+signals. Adding Err as a Val variant was rejected because it
+breaks Val's inertness — an Err in value position is a
+computation-mode signal (negative) embedded in a value-mode type
+(positive), the same polarity confusion the specification
+identifies in BMessage. The Tagged result preserves the
+separation: error is a coproduct branch (positive data with a
+tag), not a mode violation.
+
+### `try` as the ⊕→⅋ converter
+
+The specification establishes two error conventions:
+- **⊕** (positive): caller inspects `$status`. Explicit. v1.
+- **⅋** (negative): callee invokes continuation. Traps. Deferred.
+
+`try` is the ⊕→⅋ converter — it takes explicit ⊕ checking and
+makes it automatic within a lexical scope. Inside `try`, every
+command's Status is checked; nonzero aborts to the `else`
+handler. This is `set -e` done right: lexically scoped (not
+dynamic), with explicit handler (not silent termination), and
+with boolean-context exemptions (if/while conditions, &&/||
+LHS are not checked).
+
+ksh26's SPEC.md identifies `set -e` as the ⊕→⅋ converter.
+psh's `try` is the principled version with proper scoping. The
+ErrorT monad transformer sits in the evaluator's control flow
+(the cut-elimination engine), not in the value sort. Val stays
+positive. The monad is at the right level.
+
+**Distinction: scoped `try` vs binding `try`.** `try { } else { }`
+is the ⊕→⅋ converter — inside the block, errors abort to the
+handler (⅋ discipline). `let x = try { }` is a thunk binding —
+the body is captured as a call-by-name computation. The result
+is a `Result[T]` value: `Tagged("ok", T)` or `Tagged("err",
+ExitCode(n))`. The binding form stays in ⊕ — the caller inspects
+the Tagged result via `match $x` or the `.ok`/`.err` accessors.
+No automatic abort occurs. The `try` keyword marks "fallible
+computation" in both cases; the syntactic context determines
+whether the error discipline is ⅋ (scoped handler) or ⊕ (caller
+inspects).
 
 ### Word expansion as Kleisli pipeline
 
