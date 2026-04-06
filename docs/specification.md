@@ -133,14 +133,38 @@ same shift pattern as ksh93's polarity frames [2, §The save/restore
 pattern IS the shift] — save context, enter redirected context,
 restore on exit.
 
-### fd tracking (specified, not yet implemented)
+### fd tracking
 
-shell.md specifies a parse-time fd tracker: each `Expr` carries a
-bitset of live fds, initialized to `{0, 1, 2}`. `Close` makes an fd
-dead; use-after-close is a parse-time error. This is the affine
-resource discipline. The profunctor nesting makes the analysis
+Two layers, static and dynamic:
+
+**Parse-time (static).** Each `Expr` carries a bitset of live fds,
+initialized to `{0, 1, 2}`. `Close` makes an fd dead;
+use-after-close is a parse-time error. This is the affine resource
+discipline. The profunctor nesting makes the analysis
 straightforward — walk the `Redirect` chain outer-to-inner,
 maintaining the live set.
+
+**Runtime (dynamic).** A `FdTable` tracks per-fd metadata that the
+kernel cannot tell you — the semantic role of each fd:
+
+```rust
+enum FdRole { Pipe, File, Tty, Coproc, Session }
+struct FdEntry { role: FdRole, saved: Vec<RawFd> }
+fd_table: BTreeMap<RawFd, FdEntry>
+```
+
+The save stack replaces the ad-hoc dup/restore in `run_redirect`.
+Each redirect pushes a saved fd; restore pops it. The lens
+invariant: save-redirect-restore is a roundtrip (PutGet: restoring
+after redirect gives back the saved state; GetPut: saving without
+redirecting is a no-op). This is ksh93's `filemap[]` / `sh.topfd`
+pattern [2, sfio-analysis/10-ksh-integration.md] translated to a
+typed Rust structure.
+
+The fd table does NOT mirror kernel state — it records only what
+the kernel can't tell you (semantic role). Plan 9 would store this
+in a per-process directory under `/proc`; on commodity kernels, a
+small `BTreeMap` is the honest translation. Target: under 100 lines.
 
 
 ## What psh prevents by construction that rc enforced by convention
@@ -422,6 +446,104 @@ Each stage is a function `Word → Val` with possible effects. They
 compose by structural recursion over the `Word` enum.
 
 
+## I/O architecture
+
+### Design position: Plan 9 directness, not sfio complexity
+
+ksh93 built a 15,000-line I/O substrate (sfio) with discipline
+stacks, pools, string streams, format engines, and mmap support.
+Plan 9 had bio(2) — 300 lines: a buffer and a file descriptor.
+psh follows Plan 9: `std::io::BufReader`/`BufWriter` (Rust's bio
+equivalent) for line-oriented reads, raw syscalls everywhere else.
+
+sfio's complexity came from trying to be the kernel, a file server,
+and the application simultaneously. psh delegates I/O to the kernel
+and Rust's `std::io`. Discipline functions operate at the variable
+layer (semantic level), not the byte-stream layer. If psh's I/O
+layer exceeds ~200 lines, something has gone wrong.
+
+The sfio analysis [2, sfio-analysis/] informs three specific
+designs.
+
+### Command substitution capture
+
+Currently every `` `{cmd} `` forks and pipes regardless of output
+size. ksh93's `sftmp(PIPE_BUF)` pattern starts in-memory and
+promotes to file on overflow — the `_tmpexcept` polarity shift
+[2, sfio-analysis/09-string-and-temp.md].
+
+psh adopts a two-tier capture strategy:
+
+```rust
+enum CaptureBuffer {
+    Mem(Vec<u8>),         // value-mode: pure memory, no syscalls
+    File(std::fs::File),  // computation-mode: fd-backed, real I/O
+}
+```
+
+Accumulate in `Vec<u8>` up to a threshold; spill to an anonymous
+temp file (`memfd_create` or `O_TMPFILE`) on overflow. The polarity
+shift is the same as sfio's — value (memory) promotes to
+computation (fd) — but through Rust's enum dispatch rather than
+sfio's `memcpy` identity swap. The invariant from sfio applies:
+the handle the evaluator holds must not change across the
+promotion.
+
+In optic terms [2, sfio-analysis/09-string-and-temp.md], this is
+a change of monoidal action: Optic_{×, ×} (plain Lens — both
+actions cartesian, Ψ = Id) becomes Optic_{×, ⋊} (MonadicLens —
+update action now Kleisli for IO). The optic interface is
+preserved; the algebra under it shifts.
+
+### Coprocess I/O
+
+ksh93 uses two unidirectional pipes for coprocesses. Plan 9 pipes
+were bidirectional by default — both ends of `pipe(2)` could read
+and write, because pipes were 9P connections to the `#|` device.
+
+psh uses `socketpair(AF_UNIX, SOCK_STREAM)` for coprocesses. No
+`shutdown` on either end. One fd per side — the child reads and
+writes its end, the shell reads and writes its end. Fewer fds to
+track, fewer close-ordering bugs than the two-pipe model.
+
+```rust
+struct Coproc {
+    fd: RawFd,           // bidirectional socket endpoint
+    pid: libc::pid_t,
+}
+```
+
+The session type structure is two independent linear channels
+(read and write) on the same fd, not a single sequenced protocol.
+The shell can read and write in any order. Deadlock prevention is
+by convention (half-duplex: write then read, or read then write).
+
+### Atomic writes for structured output
+
+sfio's `SFIO_WHOLE` flag ensures writes are atomic at the buffer
+level. psh builtins that produce multi-line output (`get` printing
+a list, `echo` in a pipeline) should write the complete output in
+one `write(2)` call to avoid interleaving with other pipeline
+stages. This matters when `echo $multiline_var | ...` sends to a
+pipeline.
+
+### What sfio teaches about non-associativity in I/O
+
+The sfio discipline stack's `Dccache` mechanism [2, sfio-analysis/
+07-disciplines.md] is the duploid's non-associativity made concrete
+in I/O: data that has crossed from computation to value mode (was
+already buffered by a discipline) cannot be re-processed through a
+new discipline without corruption. The mediator (`Dccache_t`)
+explicitly resolves the bracketing.
+
+psh's wrapped-redirect representation prevents this at the AST
+level — the nesting determines the only legal bracketing, so
+the Dccache problem cannot arise. If psh ever adds runtime stream
+transformations (encoding conversion, compression on redirected
+output), the Dccache non-associativity will reappear and will need
+explicit mediation.
+
+
 ## Design heritage: ksh93 and BeOS
 
 ### The let/control duality
@@ -520,3 +642,10 @@ dispatches, and only then does the session-typed exchange begin.
    RTA, 2005.
 
 8. Paul Blain Levy. *Call-by-Push-Value.* Springer, 2004.
+
+9. ksh26 sfio analysis suite. Operational semantics of ksh93's I/O
+   substrate, with polarity annotations.
+   `/Users/lane/src/ksh/ksh/notes/sfio-analysis/`
+
+10. Clarke, Elgot, Gibbons, Sherwood-Taylor, Wu. "Profunctor Optics,
+    a Categorical Update." Compositionality, 2024.
