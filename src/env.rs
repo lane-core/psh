@@ -36,6 +36,9 @@ pub struct Var {
     pub readonly: bool,
     /// Discipline functions, if any.
     pub discipline: Option<Discipline>,
+    /// ksh93 heritage: nameref target. When set, all accesses
+    /// resolve through the named target variable instead.
+    pub nameref: Option<String>,
 }
 
 impl Var {
@@ -45,6 +48,7 @@ impl Var {
             exported: false,
             readonly: false,
             discipline: None,
+            nameref: None,
         }
     }
 
@@ -54,6 +58,18 @@ impl Var {
             exported: true,
             readonly: false,
             discipline: None,
+            nameref: None,
+        }
+    }
+
+    /// Create a nameref variable pointing to `target`.
+    pub fn nameref(target: String) -> Self {
+        Var {
+            value: Val::empty(),
+            exported: false,
+            readonly: false,
+            discipline: None,
+            nameref: Some(target),
         }
     }
 }
@@ -214,14 +230,17 @@ impl Env {
     }
 
     /// Get the value of a variable, or empty if not found.
+    /// Follows namerefs up to 8 levels deep (ksh93 convention).
     pub fn get_value(&self, name: &str) -> Val {
-        self.get(name)
+        let resolved = self.resolve_nameref(name);
+        self.get(resolved)
             .map(|v| v.value.clone())
             .unwrap_or_else(Val::empty)
     }
 
     /// Set a variable. If it exists in any scope, updates in place.
     /// Otherwise creates in the current (topmost) scope.
+    /// Follows namerefs: if `name` is a nameref, the target is set instead.
     ///
     /// Returns `true` on success, `false` if the variable is readonly
     /// or the current scope is readonly. The caller must report the error.
@@ -231,9 +250,12 @@ impl Env {
             return false;
         }
 
+        // Resolve nameref chain before mutating
+        let resolved = self.resolve_nameref(name).to_string();
+
         // Search existing scopes for the variable
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(var) = scope.get_mut(name) {
+            if let Some(var) = scope.get_mut(&resolved) {
                 if var.readonly {
                     return false;
                 }
@@ -243,7 +265,7 @@ impl Env {
         }
         // Not found — create in current scope
         let scope = self.scopes.last_mut().unwrap();
-        scope.set(name.into(), Var::new(value));
+        scope.set(resolved, Var::new(value));
         true
     }
 
@@ -255,6 +277,33 @@ impl Env {
             }
         }
         None
+    }
+
+    /// Resolve a nameref chain, returning the final target name.
+    /// Limits recursion to 8 levels (ksh93 convention) to prevent
+    /// infinite loops from circular namerefs.
+    fn resolve_nameref<'b>(&'b self, name: &'b str) -> &'b str {
+        let mut current = name;
+        for _ in 0..8 {
+            match self.get(current) {
+                Some(var) if var.nameref.is_some() => {
+                    current = var.nameref.as_ref().unwrap();
+                }
+                _ => break,
+            }
+        }
+        current
+    }
+
+    /// Get the nameref target for a variable, if it is a nameref.
+    pub fn get_nameref_target(&self, name: &str) -> Option<&str> {
+        self.get(name).and_then(|v| v.nameref.as_deref())
+    }
+
+    /// Create a nameref variable in the current scope.
+    pub fn set_nameref(&mut self, name: &str, target: String) {
+        let scope = self.scopes.last_mut().unwrap();
+        scope.set(name.into(), Var::nameref(target));
     }
 
     /// Check if a variable has a discipline function.
@@ -363,10 +412,48 @@ mod tests {
                 exported: false,
                 readonly: true,
                 discipline: None,
+                nameref: None,
             },
         );
         let ok = env.set_value("ro", Val::scalar("changed"));
         assert!(!ok);
         assert_eq!(env.get_value("ro"), Val::scalar("frozen"));
+    }
+
+    #[test]
+    fn nameref_resolves_read() {
+        let mut env = Env::new();
+        env.set_value("target", Val::scalar("data"));
+        env.set_nameref("alias", "target".into());
+        assert_eq!(env.get_value("alias"), Val::scalar("data"));
+    }
+
+    #[test]
+    fn nameref_resolves_write() {
+        let mut env = Env::new();
+        env.set_value("target", Val::scalar("old"));
+        env.set_nameref("alias", "target".into());
+        env.set_value("alias", Val::scalar("new"));
+        assert_eq!(env.get_value("target"), Val::scalar("new"));
+    }
+
+    #[test]
+    fn nameref_chain_resolves() {
+        let mut env = Env::new();
+        env.set_value("base", Val::scalar("value"));
+        env.set_nameref("mid", "base".into());
+        env.set_nameref("top", "mid".into());
+        assert_eq!(env.get_value("top"), Val::scalar("value"));
+    }
+
+    #[test]
+    fn nameref_depth_limit() {
+        // Create a circular nameref — resolution should terminate
+        // after 8 levels without panicking.
+        let mut env = Env::new();
+        env.set_nameref("a", "b".into());
+        env.set_nameref("b", "a".into());
+        // Should not panic; returns empty since neither has a value
+        let _ = env.get_value("a");
     }
 }

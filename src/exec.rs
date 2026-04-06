@@ -291,6 +291,10 @@ impl Shell {
                 self.env.define_fn(name.clone(), body.clone());
                 Status::ok()
             }
+            Command::Bind(Binding::Ref { name, target }) => {
+                self.env.set_nameref(name, target.clone());
+                Status::ok()
+            }
             Command::Exec(expr) => self.run_expr(expr),
             Command::If {
                 condition,
@@ -775,6 +779,7 @@ impl Shell {
             "false" => Status::from_code(1),
             "~" => self.builtin_match(args),
             "." => self.builtin_source(args),
+            "whatis" => self.builtin_whatis(args),
             "builtin" => {
                 if args.is_empty() {
                     Status::err("builtin: usage: builtin command [args...]")
@@ -908,6 +913,11 @@ impl Shell {
                 }
                 result
             }
+            // rc heritage: $"x joins list elements with spaces
+            Word::Stringify(name) => {
+                let val = self.env.get_value(name);
+                Val::scalar(val.to_string())
+            }
         }
     }
 
@@ -1034,6 +1044,84 @@ impl Shell {
             Ok(prog) => self.run(&prog),
             Err(e) => Status::err(format!(".: {}: {e}", args[0])),
         }
+    }
+
+    /// rc heritage: `whatis name` tells you what `name` is.
+    /// (Duff 1990, §Builtins)
+    fn builtin_whatis(&mut self, args: &[String]) -> Status {
+        if args.is_empty() {
+            return Status::err("whatis: usage: whatis name");
+        }
+        let mut status = Status::ok();
+        for name in args {
+            if !self.whatis_one(name) {
+                status = Status::from_code(1);
+            }
+        }
+        status
+    }
+
+    /// Print identification for a single name. Returns true if found.
+    fn whatis_one(&self, name: &str) -> bool {
+        let mut found = false;
+
+        // Check functions (including discipline functions)
+        if self.env.get_fn(name).is_some() {
+            self.fd_write_line(&format!("fn {name} {{...}}"));
+            found = true;
+        }
+
+        // Check builtins
+        if is_builtin(name) {
+            self.fd_write_line(&format!("builtin {name}"));
+            found = true;
+        }
+
+        // Check $path for external commands
+        if let Some(path) = self.find_in_path(name) {
+            self.fd_write_line(&path);
+            found = true;
+        }
+
+        // Check variables
+        let val = self.env.get_value(name);
+        if val.is_true() {
+            if val.count() == 1 {
+                self.fd_write_line(&format!("{name} = {val}"));
+            } else {
+                let items: Vec<&str> = val.0.iter().map(|s| s.as_str()).collect();
+                self.fd_write_line(&format!("{name} = ({})", items.join(" ")));
+            }
+            found = true;
+        }
+
+        if !found {
+            use rustix::fd::BorrowedFd;
+            let stderr = unsafe { BorrowedFd::borrow_raw(2) };
+            let msg = format!("whatis: {name}: not found\n");
+            let _ = rustix::io::write(stderr, msg.as_bytes());
+        }
+        found
+    }
+
+    /// Search $path for an executable named `name`.
+    fn find_in_path(&self, name: &str) -> Option<String> {
+        // If name contains '/', it's already a path
+        if name.contains('/') {
+            return if std::fs::metadata(name).is_ok_and(|m| !m.is_dir()) {
+                Some(name.to_string())
+            } else {
+                None
+            };
+        }
+        let path_val = self.env.get_value("path");
+        for dir in &path_val.0 {
+            let full = format!("{dir}/{name}");
+            if std::fs::metadata(&full).is_ok_and(|m| !m.is_dir()) {
+                return Some(full);
+            }
+        }
+        None
     }
 
     /// `~ value pattern [pattern...]` — rc match operator.
@@ -1476,6 +1564,29 @@ fn exec_command(name: &str, args: &[String], env: &[(String, String)]) -> String
         libc::execvp(c_name.as_ptr(), c_arg_ptrs.as_ptr());
     }
     std::io::Error::last_os_error().to_string()
+}
+
+/// Check if a name is a builtin command.
+fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "cd" | "echo"
+            | "exit"
+            | "get"
+            | "set"
+            | "wait"
+            | "jobs"
+            | "fg"
+            | "bg"
+            | "read"
+            | "print"
+            | "true"
+            | "false"
+            | "~"
+            | "."
+            | "whatis"
+            | "builtin"
+    )
 }
 
 /// Check if a string contains glob metacharacters.
@@ -1974,5 +2085,117 @@ mod tests {
     #[test]
     fn match_no_args_errors() {
         assert!(!run("~ foo").is_success());
+    }
+
+    // ── Stringify ($") tests ──────────────────────────────────
+
+    #[test]
+    fn stringify_joins_list() {
+        let prog = Parser::parse("x = (a b c)\nresult = $\"x").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        let val = shell.env.get_value("result");
+        assert_eq!(val, Val::scalar("a b c"));
+    }
+
+    #[test]
+    fn stringify_scalar_identity() {
+        let prog = Parser::parse("x = hello\nresult = $\"x").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("result"), Val::scalar("hello"));
+    }
+
+    #[test]
+    fn stringify_empty_is_empty_string() {
+        let prog = Parser::parse("x = ()\nresult = $\"x").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("result"), Val::scalar(""));
+    }
+
+    // ── whatis builtin tests ─────────────────────────────────
+
+    #[test]
+    fn whatis_builtin() {
+        let prog = Parser::parse("whatis echo").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+    }
+
+    #[test]
+    fn whatis_function() {
+        let prog = Parser::parse("fn greet { echo hi }\nwhatis greet").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+    }
+
+    #[test]
+    fn whatis_variable() {
+        let prog = Parser::parse("x = hello\nwhatis x").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+    }
+
+    #[test]
+    fn whatis_not_found() {
+        let prog = Parser::parse("whatis nonexistent_name_xyz").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
+    }
+
+    #[test]
+    fn whatis_no_args() {
+        assert!(!run("whatis").is_success());
+    }
+
+    // ── Nameref tests ────────────────────────────────────────
+
+    #[test]
+    fn nameref_read() {
+        let prog = Parser::parse("x = hello\nref y = x\nresult = $y").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("result"), Val::scalar("hello"));
+    }
+
+    #[test]
+    fn nameref_write() {
+        let prog = Parser::parse("x = hello\nref y = x\ny = world").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::scalar("world"));
+    }
+
+    #[test]
+    fn nameref_chain() {
+        let prog = Parser::parse("x = val\nref y = x\nref z = y\nresult = $z").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("result"), Val::scalar("val"));
+    }
+
+    #[test]
+    fn nameref_write_through_chain() {
+        let prog = Parser::parse("x = old\nref y = x\nref z = y\nz = new").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::scalar("new"));
+    }
+
+    #[test]
+    fn nameref_path_stores_string() {
+        let prog = Parser::parse("ref cursor = /pane/editor/attrs/cursor").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        // The nameref target is the path string itself
+        assert_eq!(
+            shell.env.get_nameref_target("cursor"),
+            Some("/pane/editor/attrs/cursor")
+        );
     }
 }

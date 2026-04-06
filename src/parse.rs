@@ -331,6 +331,13 @@ impl<'a> RecParser<'a> {
                         anyhow::anyhow!("{}: expected variable name after $#", self.pos_str())
                     })?;
                     Ok(Word::Count(name))
+                } else if self.peek() == Some('"') {
+                    // rc heritage: $"x joins list elements with spaces
+                    self.advance();
+                    let name = self.read_bare_word().ok_or_else(|| {
+                        anyhow::anyhow!("{}: expected variable name after $\"", self.pos_str())
+                    })?;
+                    Ok(Word::Stringify(name))
                 } else {
                     let name = self.read_bare_word().ok_or_else(|| {
                         anyhow::anyhow!("{}: expected variable name after $", self.pos_str())
@@ -617,8 +624,8 @@ impl<'a> RecParser<'a> {
             bail!("{}: expected '=' after ref name", self.pos_str());
         }
         self.advance();
-        let target = self.value()?;
-        Ok(Command::Bind(Binding::Assignment(name, target)))
+        let target = self.expect_word_string("reference target")?;
+        Ok(Command::Bind(Binding::Ref { name, target }))
     }
 
     /// Check for and consume a specific keyword.
@@ -1301,6 +1308,41 @@ mod tests {
                 assert!(matches!(&cmd.args[0], Word::ProcessSub(_)));
             }
             other => panic!("expected simple command with process sub, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stringify_parse() {
+        let prog = parse("echo $\"x");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Stringify("x".into()));
+            }
+            other => panic!("expected stringify word, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ref_parse() {
+        let prog = parse("ref y = x");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Ref { name, target }) => {
+                assert_eq!(name, "y");
+                assert_eq!(target, "x");
+            }
+            other => panic!("expected ref binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ref_parse_path() {
+        let prog = parse("ref cursor = /pane/editor/attrs/cursor");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Ref { name, target }) => {
+                assert_eq!(name, "cursor");
+                assert_eq!(target, "/pane/editor/attrs/cursor");
+            }
+            other => panic!("expected ref binding with path, got {other:?}"),
         }
     }
 }

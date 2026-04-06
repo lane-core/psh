@@ -48,6 +48,9 @@ pub enum Word {
     ProcessSub(Vec<Command>),
     /// Concatenation: a^b — juxtaposition of words
     Concat(Vec<Word>),
+    /// Stringify: $"x — join list elements with spaces into a
+    /// single string. rc heritage (Duff 1990, §Concatenation).
+    Stringify(String),
 }
 
 /// A list value — rc's first-class lists.
@@ -167,6 +170,10 @@ pub enum Binding {
     /// Function definition: fn name { body }
     /// Also handles discipline functions: fn x.get { body }
     Fn { name: String, body: Vec<Command> },
+    /// Nameref: ref name = target
+    /// ksh93 heritage: creates an alias that resolves through the
+    /// target variable on every access.
+    Ref { name: String, target: String },
 }
 
 /// A command — the top-level sequencing unit.
@@ -232,6 +239,7 @@ impl fmt::Display for Word {
                 }
                 Ok(())
             }
+            Word::Stringify(name) => write!(f, "$\"{name}"),
         }
     }
 }
