@@ -412,6 +412,18 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
         (Val::Int(n), TypeAnnotation::Str) => Ok(Val::Str(n.to_string())),
         (Val::Bool(b), TypeAnnotation::Str) => Ok(Val::Str(b.to_string())),
         (Val::Path(p), TypeAnnotation::Str) => Ok(Val::Str(p.display().to_string())),
+        // Narrowing from Str: attempt parse when assigning to typed variable.
+        // This handles bare `x = 99` when x was declared `let mut x : Int`.
+        (Val::Str(s), TypeAnnotation::Int) => s
+            .parse::<i64>()
+            .map(Val::Int)
+            .map_err(|_| format!("type mismatch: expected Int, got Str(\"{s}\")")),
+        (Val::Str(s), TypeAnnotation::Bool) => match s.as_str() {
+            "true" => Ok(Val::Bool(true)),
+            "false" => Ok(Val::Bool(false)),
+            _ => Err(format!("type mismatch: expected Bool, got Str(\"{s}\")")),
+        },
+        (Val::Str(s), TypeAnnotation::Path) => Ok(Val::Path(std::path::PathBuf::from(s.as_str()))),
         // All other combinations are type errors
         _ => Err(format!(
             "type mismatch: expected {}, got {}",

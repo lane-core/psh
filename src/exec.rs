@@ -282,6 +282,7 @@ impl Shell {
                     }
                 } else {
                     if let Err(e) = self.env.set_value(name, val) {
+                        self.fd_write_err(&format!("psh: {name}: {e}"));
                         return Status::err(format!("{name}: {e}"));
                     }
                     Status::ok()
@@ -299,6 +300,7 @@ impl Shell {
                     .env
                     .let_value(name, val, *mutable, *export, type_ann.clone())
                 {
+                    self.fd_write_err(&format!("psh: {name}: {e}"));
                     return Status::err(format!("{name}: {e}"));
                 }
                 Status::ok()
@@ -1059,6 +1061,15 @@ impl Shell {
         let mut buf = s.to_string();
         buf.push('\n');
         let _ = rustix::io::write(stdout, buf.as_bytes());
+    }
+
+    /// Write error messages to fd 2 (stderr) directly.
+    fn fd_write_err(&self, s: &str) {
+        use rustix::fd::BorrowedFd;
+        let stderr = unsafe { BorrowedFd::borrow_raw(2) };
+        let mut buf = s.to_string();
+        buf.push('\n');
+        let _ = rustix::io::write(stderr, buf.as_bytes());
     }
 
     fn builtin_echo(&self, args: &[String]) -> Status {
