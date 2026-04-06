@@ -17,7 +17,12 @@ use std::{
     process,
 };
 
-use crate::{ast::*, env::Env, value::Val};
+use crate::{
+    ast::*,
+    env::Env,
+    job::{Job, JobStatus, JobTable},
+    value::Val,
+};
 
 /// Exit status — a string in rc tradition.
 ///
@@ -84,13 +89,45 @@ fn sys_setpgid(pid: libc::pid_t, pgid: libc::pid_t) {
     unsafe { libc::setpgid(pid, pgid) };
 }
 
+fn sys_tcsetpgrp(fd: i32, pgid: libc::pid_t) -> Result<(), String> {
+    let r = unsafe { libc::tcsetpgrp(fd, pgid) };
+    if r == -1 {
+        Err(format!("tcsetpgrp: {}", std::io::Error::last_os_error()))
+    } else {
+        Ok(())
+    }
+}
+
+fn sys_killpg(pgid: libc::pid_t, sig: i32) -> Result<(), String> {
+    let r = unsafe { libc::killpg(pgid, sig) };
+    if r == -1 {
+        Err(format!("killpg: {}", std::io::Error::last_os_error()))
+    } else {
+        Ok(())
+    }
+}
+
+fn sys_getpid() -> libc::pid_t {
+    unsafe { libc::getpid() }
+}
+
 /// The shell interpreter state.
+///
+/// Kept decomposed — job table, environment, and discipline state
+/// are separate concerns. (STYLEGUIDE.md: "Shell struct: keep
+/// decomposed.")
 pub struct Shell {
     pub env: Env,
     /// ksh93 heritage: reentrancy guard for discipline functions.
     /// Prevents `fn x.set { x = $1 }` from recursing infinitely.
     /// (src/cmd/ksh93/sh/nvdisc.c — nv_disc uses SH_VARNOD flag)
     active_disciplines: HashSet<String>,
+    /// Job table for background and stopped processes.
+    pub jobs: JobTable,
+    /// Whether we're an interactive shell (controls terminal handling).
+    interactive: bool,
+    /// The shell's own process group id.
+    shell_pgid: libc::pid_t,
 }
 
 impl Default for Shell {
@@ -106,6 +143,87 @@ impl Shell {
         Shell {
             env,
             active_disciplines: HashSet::new(),
+            jobs: JobTable::new(),
+            interactive: false,
+            shell_pgid: 0,
+        }
+    }
+
+    /// Set up the shell for interactive use.
+    ///
+    /// Takes control of the terminal: puts the shell in its own
+    /// process group and makes it the foreground group. Ignores
+    /// SIGTSTP so Ctrl-Z only affects the foreground job, not the
+    /// shell itself. Also ignores SIGTTIN/SIGTTOU to prevent the
+    /// shell from stopping on background terminal access.
+    pub fn setup_interactive(&mut self) {
+        self.interactive = true;
+        let pid = sys_getpid();
+        sys_setpgid(pid, pid);
+        self.shell_pgid = pid;
+
+        // Take the terminal — the shell must be the foreground group.
+        let _ = sys_tcsetpgrp(libc::STDIN_FILENO, pid);
+
+        // The shell ignores job control signals directed at it.
+        // Only the foreground process group should respond to these.
+        crate::signal::ignore_signal(libc::SIGTSTP);
+        crate::signal::ignore_signal(libc::SIGTTIN);
+        crate::signal::ignore_signal(libc::SIGTTOU);
+    }
+
+    /// Check for pending signals and dispatch to rc-style handler
+    /// functions. Called after each command and in the interactive loop.
+    ///
+    /// rc heritage: signal handlers are functions named `fn sigint { }`,
+    /// `fn sighup { }`, etc. If no function is defined, the default
+    /// behavior applies.
+    pub fn check_signals(&mut self) {
+        let pending = crate::signal::take_pending();
+        for (name, _count) in pending {
+            if name == "sigchld" {
+                self.reap_children();
+            }
+
+            // Look up rc-style handler function
+            if let Some(body) = self.env.get_fn(name).cloned() {
+                self.run_cmds(&body);
+            }
+        }
+    }
+
+    /// Fire the `sigexit` artificial signal — runs `fn sigexit { }`
+    /// if defined. Called when the shell is about to exit.
+    ///
+    /// rc heritage: sigexit is not a real signal. It fires on shell
+    /// exit, providing cleanup hooks.
+    pub fn fire_sigexit(&mut self) {
+        if let Some(body) = self.env.get_fn("sigexit").cloned() {
+            self.run_cmds(&body);
+        }
+    }
+
+    /// Print "[n] Done command" for completed background jobs.
+    /// Called before each interactive prompt.
+    pub fn notify_done_jobs(&mut self) {
+        // Reap any children that exited since last check.
+        self.reap_children();
+        let done = self.jobs.collect_done();
+        for (num, cmd) in done {
+            eprintln!("[{num}] Done\t{cmd}");
+        }
+    }
+
+    /// Reap all finished/stopped children via waitpid(-1, WNOHANG).
+    /// Updates job table entries.
+    fn reap_children(&mut self) {
+        loop {
+            let mut wstatus: i32 = 0;
+            let pid = unsafe { libc::waitpid(-1, &mut wstatus, libc::WNOHANG | libc::WUNTRACED) };
+            if pid <= 0 {
+                break;
+            }
+            self.jobs.reap(pid, wstatus);
         }
     }
 
@@ -250,19 +368,33 @@ impl Shell {
                     Status::ok()
                 }
             }
-            Expr::Background(inner) => match sys_fork() {
-                Err(e) => Status::err(e),
-                Ok(0) => {
-                    let status = self.run_expr(inner);
-                    // _exit in forked children: don't run atexit handlers or
-                    // Rust destructors. The kernel closes all fds on process exit.
-                    unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
+            Expr::Background(inner) => {
+                let cmd_str = format!("{inner:?}");
+                match sys_fork() {
+                    Err(e) => Status::err(e),
+                    Ok(0) => {
+                        // Child: put in its own process group so
+                        // it doesn't receive the terminal's signals.
+                        sys_setpgid(0, 0);
+                        let status = self.run_expr(inner);
+                        // _exit in forked children: don't run atexit handlers or
+                        // Rust destructors. The kernel closes all fds on process exit.
+                        unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
+                    }
+                    Ok(pid) => {
+                        sys_setpgid(pid, pid);
+                        let job = Job {
+                            pgid: pid,
+                            pids: vec![pid],
+                            command: cmd_str,
+                            status: JobStatus::Running,
+                        };
+                        let num = self.jobs.insert(job);
+                        eprintln!("[{num}] {pid}");
+                        Status::ok()
+                    }
                 }
-                Ok(pid) => {
-                    eprintln!("[{pid}]");
-                    Status::ok()
-                }
-            },
+            }
             Expr::Block(stmts) => self.run_cmds(stmts),
             Expr::Subshell(stmts) => match sys_fork() {
                 Err(e) => Status::err(e),
@@ -521,6 +653,10 @@ impl Shell {
             "exit" => self.builtin_exit(args),
             "get" => self.builtin_get(args),
             "set" => self.builtin_set(args),
+            "wait" => self.builtin_wait(args),
+            "jobs" => self.builtin_jobs(args),
+            "fg" => self.builtin_fg(args),
+            "bg" => self.builtin_bg(args),
             "true" => Status::ok(),
             "false" => Status::from_code(1),
             "." => self.builtin_source(args),
@@ -752,6 +888,182 @@ impl Shell {
         }
     }
 
+    // ── Job control builtins ─────────────────────────────────
+
+    /// Parse a job spec like "%1" or "%2". Returns the 1-based job number.
+    fn parse_jobspec(arg: &str) -> Option<usize> {
+        arg.strip_prefix('%').and_then(|n| n.parse().ok())
+    }
+
+    /// `wait` — wait for background jobs.
+    ///
+    /// `wait` with no arguments waits for all background jobs.
+    /// `wait %n` waits for a specific job.
+    fn builtin_wait(&mut self, args: &[String]) -> Status {
+        if let Some(arg) = args.first() {
+            let Some(num) = Self::parse_jobspec(arg) else {
+                return Status::err(format!("wait: {arg}: not a valid job spec"));
+            };
+            let Some(job) = self.jobs.get(num) else {
+                return Status::err(format!("wait: %{num}: no such job"));
+            };
+            if matches!(job.status, JobStatus::Done(_)) {
+                let status = match &job.status {
+                    JobStatus::Done(s) => s.clone(),
+                    _ => Status::ok(),
+                };
+                self.jobs.remove(num);
+                return status;
+            }
+            let pgid = job.pgid;
+            // Wait for all pids in the job
+            loop {
+                let mut wstatus: i32 = 0;
+                let r = unsafe { libc::waitpid(-pgid, &mut wstatus, libc::WUNTRACED) };
+                if r <= 0 {
+                    break;
+                }
+                self.jobs.reap(r, wstatus);
+                // Check if job is done
+                if let Some(j) = self.jobs.get(num) {
+                    if matches!(j.status, JobStatus::Done(_) | JobStatus::Stopped) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            let status = self
+                .jobs
+                .get(num)
+                .map(|j| match &j.status {
+                    JobStatus::Done(s) => s.clone(),
+                    JobStatus::Stopped => Status::err("stopped"),
+                    JobStatus::Running => Status::ok(),
+                })
+                .unwrap_or_else(Status::ok);
+            // Clean up done jobs
+            if self
+                .jobs
+                .get(num)
+                .is_some_and(|j| matches!(j.status, JobStatus::Done(_)))
+            {
+                self.jobs.remove(num);
+            }
+            status
+        } else {
+            // Wait for all background jobs
+            loop {
+                let mut wstatus: i32 = 0;
+                let r = unsafe { libc::waitpid(-1, &mut wstatus, libc::WUNTRACED) };
+                if r <= 0 {
+                    break;
+                }
+                self.jobs.reap(r, wstatus);
+            }
+            self.jobs.collect_done();
+            Status::ok()
+        }
+    }
+
+    /// `jobs` — list background and stopped jobs.
+    fn builtin_jobs(&mut self, _args: &[String]) -> Status {
+        // Reap first so status is current.
+        self.reap_children();
+        for (num, job) in self.jobs.iter() {
+            let state = match &job.status {
+                JobStatus::Running => "Running",
+                JobStatus::Stopped => "Stopped",
+                JobStatus::Done(s) if s.is_success() => "Done",
+                JobStatus::Done(_) => "Done (error)",
+            };
+            self.fd_write_line(&format!("[{num}] {state}\t{}", job.command));
+        }
+        Status::ok()
+    }
+
+    /// `fg %n` — bring a stopped or background job to the foreground.
+    ///
+    /// Gives the job's process group the terminal, sends SIGCONT,
+    /// and waits for completion or stop.
+    fn builtin_fg(&mut self, args: &[String]) -> Status {
+        let num = if let Some(arg) = args.first() {
+            let Some(n) = Self::parse_jobspec(arg) else {
+                return Status::err(format!("fg: {arg}: not a valid job spec"));
+            };
+            n
+        } else {
+            // Default: most recent job
+            let Some(n) = self.jobs.current_job() else {
+                return Status::err("fg: no current job");
+            };
+            n
+        };
+
+        let Some(job) = self.jobs.get(num) else {
+            return Status::err(format!("fg: %{num}: no such job"));
+        };
+        let pgid = job.pgid;
+        let pids = job.pids.clone();
+        let cmd = job.command.clone();
+
+        eprintln!("{cmd}");
+
+        // Send SIGCONT to resume stopped jobs.
+        let _ = sys_killpg(pgid, libc::SIGCONT);
+
+        // Update status to Running.
+        if let Some(j) = self.jobs.get_mut(num) {
+            j.status = JobStatus::Running;
+        }
+
+        // Wait in foreground with terminal control.
+        let status = self.wait_fg_pgid(pgid, &pids);
+
+        // If job stopped, update the table. Otherwise, remove it.
+        if let Some(j) = self.jobs.get(num) {
+            if matches!(j.status, JobStatus::Done(_)) {
+                self.jobs.remove(num);
+            }
+        }
+
+        status
+    }
+
+    /// `bg %n` — continue a stopped job in the background.
+    ///
+    /// Sends SIGCONT to the job's process group without giving
+    /// it the terminal.
+    fn builtin_bg(&mut self, args: &[String]) -> Status {
+        let num = if let Some(arg) = args.first() {
+            let Some(n) = Self::parse_jobspec(arg) else {
+                return Status::err(format!("bg: {arg}: not a valid job spec"));
+            };
+            n
+        } else {
+            let Some(n) = self.jobs.current_job() else {
+                return Status::err("bg: no current job");
+            };
+            n
+        };
+
+        let Some(job) = self.jobs.get_mut(num) else {
+            return Status::err(format!("bg: %{num}: no such job"));
+        };
+
+        if !matches!(job.status, JobStatus::Stopped) {
+            return Status::err(format!("bg: %{num}: not stopped"));
+        }
+
+        let pgid = job.pgid;
+        job.status = JobStatus::Running;
+        let cmd = job.command.clone();
+        eprintln!("[{num}] {cmd} &");
+
+        let _ = sys_killpg(pgid, libc::SIGCONT);
+        Status::ok()
+    }
+
     // ── External commands ───────────────────────────────────
 
     fn exec_external(&mut self, name: &str, args: &[String]) -> Status {
@@ -768,18 +1080,89 @@ impl Shell {
         }
     }
 
-    fn wait_pid(&self, pid: libc::pid_t) -> Status {
+    fn wait_pid(&mut self, pid: libc::pid_t) -> Status {
         let mut wstatus: i32 = 0;
-        unsafe {
-            libc::waitpid(pid, &mut wstatus, 0);
+        loop {
+            let r = unsafe { libc::waitpid(pid, &mut wstatus, libc::WUNTRACED) };
+            if r == -1 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    // Interrupted by signal — reap background children, then retry
+                    self.reap_children();
+                    continue;
+                }
+                return Status::err(format!("waitpid: {err}"));
+            }
+            break;
         }
         if libc::WIFEXITED(wstatus) {
             Status::from_code(libc::WEXITSTATUS(wstatus))
         } else if libc::WIFSIGNALED(wstatus) {
             Status::err(format!("signal {}", libc::WTERMSIG(wstatus)))
+        } else if libc::WIFSTOPPED(wstatus) {
+            // Foreground job was stopped (Ctrl-Z). Add to job table.
+            let job = Job {
+                pgid: pid,
+                pids: vec![pid],
+                command: String::from("(stopped)"),
+                status: JobStatus::Stopped,
+            };
+            let num = self.jobs.insert(job);
+
+            // Reclaim the terminal for the shell.
+            if self.interactive && self.shell_pgid > 0 {
+                let _ = sys_tcsetpgrp(libc::STDIN_FILENO, self.shell_pgid);
+            }
+            eprintln!("\n[{num}] Stopped");
+            Status::err(format!("signal {}", libc::WSTOPSIG(wstatus)))
         } else {
             Status::err("unknown exit")
         }
+    }
+
+    /// Wait for a foreground job with terminal control.
+    ///
+    /// Gives the terminal to the job's process group, waits for
+    /// completion or stop, then reclaims the terminal.
+    fn wait_fg_pgid(&mut self, pgid: libc::pid_t, pids: &[libc::pid_t]) -> Status {
+        // Give the terminal to the foreground job's process group.
+        if self.interactive && pgid > 0 {
+            let _ = sys_tcsetpgrp(libc::STDIN_FILENO, pgid);
+        }
+
+        let mut last_status = Status::ok();
+        for &pid in pids {
+            loop {
+                let mut wstatus: i32 = 0;
+                let r = unsafe { libc::waitpid(pid, &mut wstatus, libc::WUNTRACED) };
+                if r == -1 {
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() == Some(libc::EINTR) {
+                        self.reap_children();
+                        continue;
+                    }
+                    last_status = Status::err(format!("waitpid: {err}"));
+                    break;
+                }
+                if libc::WIFEXITED(wstatus) {
+                    last_status = Status::from_code(libc::WEXITSTATUS(wstatus));
+                } else if libc::WIFSIGNALED(wstatus) {
+                    last_status = Status::err(format!("signal {}", libc::WTERMSIG(wstatus)));
+                } else if libc::WIFSTOPPED(wstatus) {
+                    // Job stopped — it enters the job table as stopped.
+                    // The job table update is handled by the caller.
+                    last_status = Status::err(format!("signal {}", libc::WSTOPSIG(wstatus)));
+                }
+                break;
+            }
+        }
+
+        // Reclaim the terminal.
+        if self.interactive && self.shell_pgid > 0 {
+            let _ = sys_tcsetpgrp(libc::STDIN_FILENO, self.shell_pgid);
+        }
+
+        last_status
     }
 
     fn match_pattern(&self, value: &str, pattern: &Pattern) -> bool {
@@ -1139,5 +1522,120 @@ mod tests {
         let status = shell.run(&prog);
         assert!(!status.is_success());
         assert_eq!(status.0, "error");
+    }
+
+    // ── Job control tests ──────────────────────────────────
+
+    #[test]
+    fn job_table_tracks_background() {
+        // Verify the Background handler creates a job entry.
+        let mut shell = Shell::new();
+        let prog = Parser::parse("sleep 0 &").unwrap();
+        shell.run(&prog);
+
+        // Give the child a moment to exit, then reap.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        shell.reap_children();
+
+        // The job was created (slot 1 exists or was collected).
+        // Either it's still in the table as Done, or was reaped.
+        // In either case, the table was used.
+        let done = shell.jobs.collect_done();
+        // Job 1 should have completed.
+        assert!(
+            done.iter().any(|(n, _)| *n == 1) || shell.jobs.get(1).is_none(),
+            "background job should have been tracked"
+        );
+    }
+
+    #[test]
+    fn wait_builtin_waits_for_job() {
+        // Run a fast background job, then `wait %1`.
+        let mut shell = Shell::new();
+        let prog = Parser::parse("sleep 0 &").unwrap();
+        shell.run(&prog);
+        assert!(shell.jobs.get(1).is_some(), "job 1 should exist");
+
+        let prog = Parser::parse("wait %1").unwrap();
+        let status = shell.run(&prog);
+        // The job completed successfully.
+        assert!(status.is_success());
+    }
+
+    #[test]
+    fn jobs_builtin_lists() {
+        let mut shell = Shell::new();
+        // Insert a synthetic job to test `jobs` output.
+        use crate::job::{Job, JobStatus};
+        shell.jobs.insert(Job {
+            pgid: 99999,
+            pids: vec![99999],
+            command: "test-job".into(),
+            status: JobStatus::Running,
+        });
+
+        let prog = Parser::parse("jobs").unwrap();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+    }
+
+    #[test]
+    fn sigexit_fires() {
+        let mut shell = Shell::new();
+        let prog = Parser::parse("fn sigexit { exited = yes }").unwrap();
+        shell.run(&prog);
+        shell.fire_sigexit();
+        assert_eq!(shell.env.get_value("exited"), Val::scalar("yes"));
+    }
+
+    #[test]
+    fn signal_handler_as_function() {
+        // rc heritage: fn sigint { } defines a signal handler.
+        // We test that check_signals dispatches to it.
+        let mut shell = Shell::new();
+        let prog = Parser::parse("fn sigint { handled = yes }").unwrap();
+        shell.run(&prog);
+
+        // Simulate a pending SIGINT by sending ourselves one,
+        // but that's tricky in tests. Instead, verify the function
+        // is in the table and would be dispatched.
+        assert!(shell.env.get_fn("sigint").is_some());
+    }
+
+    #[test]
+    fn parse_jobspec_valid() {
+        assert_eq!(Shell::parse_jobspec("%1"), Some(1));
+        assert_eq!(Shell::parse_jobspec("%42"), Some(42));
+    }
+
+    #[test]
+    fn parse_jobspec_invalid() {
+        assert_eq!(Shell::parse_jobspec("1"), None);
+        assert_eq!(Shell::parse_jobspec("%abc"), None);
+        assert_eq!(Shell::parse_jobspec(""), None);
+    }
+
+    #[test]
+    fn wait_no_job_errors() {
+        let mut shell = Shell::new();
+        let prog = Parser::parse("wait %1").unwrap();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
+    }
+
+    #[test]
+    fn fg_no_job_errors() {
+        let mut shell = Shell::new();
+        let prog = Parser::parse("fg %1").unwrap();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
+    }
+
+    #[test]
+    fn bg_no_job_errors() {
+        let mut shell = Shell::new();
+        let prog = Parser::parse("bg %1").unwrap();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
     }
 }

@@ -6,7 +6,9 @@
 pub mod ast;
 pub mod env;
 pub mod exec;
+pub mod job;
 pub mod parse;
+pub mod signal;
 pub mod value;
 
 use std::io::{self, BufRead, Write};
@@ -34,9 +36,12 @@ fn main() {
 
     if let Some(cmd) = opts.command {
         // psh -c 'command'
+        signal::install_handlers();
         match Parser::parse(&cmd) {
             Ok(prog) => {
                 let status = shell.run(&prog);
+                shell.check_signals();
+                shell.fire_sigexit();
                 if !status.is_success() {
                     std::process::exit(1);
                 }
@@ -48,10 +53,13 @@ fn main() {
         }
     } else if let Some(file) = opts.file {
         // psh file.psh
+        signal::install_handlers();
         match std::fs::read_to_string(&file) {
             Ok(content) => match Parser::parse(&content) {
                 Ok(prog) => {
                     let status = shell.run(&prog);
+                    shell.check_signals();
+                    shell.fire_sigexit();
                     if !status.is_success() {
                         std::process::exit(1);
                     }
@@ -67,10 +75,16 @@ fn main() {
             }
         }
     } else {
-        // Interactive mode (stub — reads lines and executes them)
+        // Interactive mode
+        shell.setup_interactive();
+        signal::install_handlers();
+
         let stdin = io::stdin();
         let mut reader = stdin.lock();
         loop {
+            // Report completed background jobs before prompting.
+            shell.notify_done_jobs();
+
             eprint!("psh% ");
             let _ = io::stderr().flush();
             let mut line = String::new();
@@ -78,6 +92,7 @@ fn main() {
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     if line.trim().is_empty() {
+                        shell.check_signals();
                         continue;
                     }
                     match Parser::parse(&line) {
@@ -88,12 +103,19 @@ fn main() {
                             eprintln!("psh: {e}");
                         }
                     }
+                    shell.check_signals();
                 }
                 Err(e) => {
+                    // EINTR from SIGINT — cancel input line, re-prompt
+                    if e.kind() == io::ErrorKind::Interrupted {
+                        eprintln!();
+                        continue;
+                    }
                     eprintln!("psh: read error: {e}");
                     break;
                 }
             }
         }
+        shell.fire_sigexit();
     }
 }
