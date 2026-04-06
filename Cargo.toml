@@ -1,0 +1,24 @@
+[package]
+name = "psh"
+version = "0.1.0"
+edition = "2021"
+description = "The pane system shell. rc heritage, ksh93 discipline functions, session-typed internals."
+
+[dependencies]
+par = { version = "0.3.10", default-features = false }
+libc = "0.2"
+winnow = "1"
+bpaf = "0.9"
+anyhow = "1"
+
+[features]
+default = []
+pane = ["dep:pane-proto", "dep:pane-session"]
+
+[dependencies.pane-proto]
+path = "../pane/crates/pane-proto"
+optional = true
+
+[dependencies.pane-session]
+path = "../pane/crates/pane-session"
+optional = true
