@@ -80,7 +80,11 @@ pub enum RedirectTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RedirectOp {
     /// >[fd] target  or  >target (fd defaults to 1)
-    Output { fd: u32, target: RedirectTarget, append: bool },
+    Output {
+        fd: u32,
+        target: RedirectTarget,
+        append: bool,
+    },
     /// <[fd] target  or  <target (fd defaults to 0)
     Input { fd: u32, target: RedirectTarget },
     /// >[dst=src] — dup src onto dst
@@ -162,10 +166,7 @@ pub enum Statement {
     },
     /// fn name { body }
     /// Also handles discipline functions: fn x.get { body }
-    Fn {
-        name: String,
-        body: Vec<Statement>,
-    },
+    Fn { name: String, body: Vec<Statement> },
     /// Return from a function (implicit via last status,
     /// but explicit return is useful).
     Return(Option<Value>),

@@ -15,8 +15,10 @@
 
 use anyhow::{bail, Context, Result};
 
-use crate::ast::*;
-use crate::lex::{Lexer, Pos, Spanned, Token};
+use crate::{
+    ast::*,
+    lex::{Lexer, Pos, Spanned, Token},
+};
 
 /// Parser state — walks a pre-lexed token stream.
 pub struct Parser {
@@ -52,7 +54,11 @@ impl Parser {
     }
 
     fn advance(&mut self) -> &Token {
-        let tok = self.tokens.get(self.pos).map(|s| &s.token).unwrap_or(&Token::Eof);
+        let tok = self
+            .tokens
+            .get(self.pos)
+            .map(|s| &s.token)
+            .unwrap_or(&Token::Eof);
         if self.pos < self.tokens.len() {
             self.pos += 1;
         }
@@ -191,11 +197,14 @@ impl Parser {
                 let mut b = body;
                 // The evaluator will handle while loops directly.
                 // For now, tag this as a while by wrapping.
-                b.insert(0, Statement::Exec(Expr::Simple(SimpleCommand {
-                    name: Word::Literal("__while_marker".into()),
-                    args: vec![],
-                    assignments: vec![],
-                })));
+                b.insert(
+                    0,
+                    Statement::Exec(Expr::Simple(SimpleCommand {
+                        name: Word::Literal("__while_marker".into()),
+                        args: vec![],
+                        assignments: vec![],
+                    })),
+                );
                 b
             },
             else_body: None,
@@ -614,7 +623,14 @@ mod tests {
     fn redirect_output() {
         let prog = parse("echo hello > file");
         match &prog.statements[0] {
-            Statement::Exec(Expr::Redirect(inner, RedirectOp::Output { fd: 1, append: false, .. })) => {
+            Statement::Exec(Expr::Redirect(
+                inner,
+                RedirectOp::Output {
+                    fd: 1,
+                    append: false,
+                    ..
+                },
+            )) => {
                 assert!(matches!(inner.as_ref(), Expr::Simple(_)));
             }
             other => panic!("expected redirect, got {other:?}"),
@@ -794,13 +810,24 @@ mod tests {
         match &prog.statements[0] {
             Statement::Exec(Expr::Redirect(
                 inner,
-                RedirectOp::Output { fd: 1, append: false, .. },
+                RedirectOp::Output {
+                    fd: 1,
+                    append: false,
+                    ..
+                },
             )) => {
                 // Outermost is > out (first redirect, runs first)
                 // Inner is >> log (second redirect, runs second)
                 assert!(matches!(
                     inner.as_ref(),
-                    Expr::Redirect(_, RedirectOp::Output { fd: 1, append: true, .. })
+                    Expr::Redirect(
+                        _,
+                        RedirectOp::Output {
+                            fd: 1,
+                            append: true,
+                            ..
+                        }
+                    )
                 ));
             }
             other => panic!("expected nested redirects (left-to-right), got {other:?}"),

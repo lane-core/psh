@@ -7,6 +7,7 @@
 //! pure observation) and set (Kleisli, effectful mutation).
 
 use std::collections::HashMap;
+
 use crate::value::Val;
 
 /// A discipline function pair — the shell-level MonadicLens.

@@ -66,7 +66,10 @@ impl Val {
         }
         if self.0.len() == other.0.len() {
             // Pairwise: (a b)^(1 2) = (a1 b2)
-            let result = self.0.iter().zip(&other.0)
+            let result = self
+                .0
+                .iter()
+                .zip(&other.0)
                 .map(|(a, b)| format!("{a}{b}"))
                 .collect();
             Val(result)
@@ -126,7 +129,11 @@ impl From<Vec<String>> for Val {
 
 impl From<bool> for Val {
     fn from(b: bool) -> Self {
-        if b { Val::scalar("") } else { Val::empty() }
+        if b {
+            Val::scalar("")
+        } else {
+            Val::empty()
+        }
     }
 }
 
@@ -172,7 +179,10 @@ mod tests {
     fn concat_broadcast_left() {
         let a = Val::scalar("prefix-");
         let b = Val::list(["a", "b", "c"]);
-        assert_eq!(a.concat(&b), Val::list(["prefix-a", "prefix-b", "prefix-c"]));
+        assert_eq!(
+            a.concat(&b),
+            Val::list(["prefix-a", "prefix-b", "prefix-c"])
+        );
     }
 
     #[test]

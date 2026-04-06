@@ -24,38 +24,38 @@ impl fmt::Display for Pos {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Words and values
-    Word(String),          // bare word or quoted string
-    Dollar,                // $
-    DollarHash,            // $# (count prefix)
-    Backtick,              // ` (command substitution start)
-    Caret,                 // ^ (concatenation)
+    Word(String), // bare word or quoted string
+    Dollar,       // $
+    DollarHash,   // $# (count prefix)
+    Backtick,     // ` (command substitution start)
+    Caret,        // ^ (concatenation)
 
     // Operators
-    Pipe,                  // |
-    PipeAnd,               // |& (coprocess)
-    And,                   // &&
-    Or,                    // ||
-    Bang,                  // !
-    Amp,                   // & (background)
+    Pipe,    // |
+    PipeAnd, // |& (coprocess)
+    And,     // &&
+    Or,      // ||
+    Bang,    // !
+    Amp,     // & (background)
 
     // Redirections
-    Less,                  // <
-    Great,                 // >
-    GreatGreat,            // >> (append)
+    Less,       // <
+    Great,      // >
+    GreatGreat, // >> (append)
 
     // Grouping
-    LBrace,                // {
-    RBrace,                // }
-    LParen,                // (
-    RParen,                // )
-    AtLBrace,              // @{ (subshell)
+    LBrace,   // {
+    RBrace,   // }
+    LParen,   // (
+    RParen,   // )
+    AtLBrace, // @{ (subshell)
 
     // Assignment
-    Equals,                // =
+    Equals, // =
 
     // Separators
-    Semi,                  // ;
-    Newline,               // \n (significant in shell grammar)
+    Semi,    // ;
+    Newline, // \n (significant in shell grammar)
 
     // Keywords
     If,
@@ -66,7 +66,7 @@ pub enum Token {
     Case,
     Fn,
     While,
-    Ref,                   // name references
+    Ref, // name references
 
     // Special
     Eof,
@@ -448,10 +448,7 @@ mod tests {
     fn escaped_quote() {
         assert_eq!(
             tokens("echo 'it''s'"),
-            vec![
-                Token::Word("echo".into()),
-                Token::Word("it's".into()),
-            ]
+            vec![Token::Word("echo".into()), Token::Word("it's".into()),]
         );
     }
 
@@ -509,10 +506,7 @@ mod tests {
 
     #[test]
     fn background() {
-        assert_eq!(
-            tokens("cmd &"),
-            vec![Token::Word("cmd".into()), Token::Amp]
-        );
+        assert_eq!(tokens("cmd &"), vec![Token::Word("cmd".into()), Token::Amp]);
     }
 
     #[test]
@@ -556,11 +550,7 @@ mod tests {
     fn subshell() {
         assert_eq!(
             tokens("@{ cmd }"),
-            vec![
-                Token::AtLBrace,
-                Token::Word("cmd".into()),
-                Token::RBrace,
-            ]
+            vec![Token::AtLBrace, Token::Word("cmd".into()), Token::RBrace,]
         );
     }
 

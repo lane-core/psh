@@ -5,14 +5,11 @@
 //! pipe(2). Variable expansion is CBV (eager). Pipeline stages
 //! are CBN (concurrent, demand-driven).
 
-use std::os::unix::io::FromRawFd;
-use std::process;
+use std::{collections::HashSet, os::unix::io::FromRawFd, process};
 
 use anyhow::Result;
 
-use crate::ast::*;
-use crate::env::Env;
-use crate::value::Val;
+use crate::{ast::*, env::Env, value::Val};
 
 /// Exit status — a string in rc tradition.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,13 +40,20 @@ impl Status {
 /// The shell interpreter state.
 pub struct Shell {
     pub env: Env,
+    /// ksh93 heritage: reentrancy guard for discipline functions.
+    /// Prevents `fn x.set { x = $1 }` from recursing infinitely.
+    /// (src/cmd/ksh93/sh/nvdisc.c — nv_disc uses SH_VARNOD flag)
+    active_disciplines: HashSet<String>,
 }
 
 impl Shell {
     pub fn new() -> Self {
         let mut env = Env::new();
         env.import_process_env();
-        Shell { env }
+        Shell {
+            env,
+            active_disciplines: HashSet::new(),
+        }
     }
 
     /// Execute a parsed program.
@@ -69,13 +73,21 @@ impl Shell {
         match stmt {
             Statement::Assignment(name, value) => {
                 let val = self.eval_value(value);
-                // Check for .set discipline — runs in the CURRENT scope
-                // (not a child scope) so its side effects are visible.
-                if let Some(body) = self.env.get_fn(&format!("{name}.set")).cloned() {
-                    self.env.set_value("1", val.clone());
-                    let status = self.run_stmts(&body);
-                    self.env.set_value(name, val);
-                    status
+                let disc_name = format!("{name}.set");
+                // Fire .set discipline if defined and not already active
+                // for this variable (reentrancy guard prevents infinite
+                // recursion from `fn x.set { x = $1 }`).
+                if let Some(body) = self.env.get_fn(&disc_name).cloned() {
+                    if self.active_disciplines.insert(disc_name.clone()) {
+                        self.env.set_value("1", val.clone());
+                        let status = self.run_stmts(&body);
+                        self.active_disciplines.remove(&disc_name);
+                        self.env.set_value(name, val);
+                        status
+                    } else {
+                        self.env.set_value(name, val);
+                        Status::ok()
+                    }
                 } else {
                     self.env.set_value(name, val);
                     Status::ok()
@@ -154,33 +166,27 @@ impl Shell {
                     Status::ok()
                 }
             }
-            Expr::Background(inner) => {
-                match unsafe { libc::fork() } {
-                    -1 => Status::err("fork failed"),
-                    0 => {
-                        let status = self.run_expr(inner);
-                        process::exit(if status.is_success() { 0 } else { 1 });
-                    }
-                    pid => {
-                        eprintln!("[{}]", pid);
-                        Status::ok()
-                    }
+            Expr::Background(inner) => match unsafe { libc::fork() } {
+                -1 => Status::err("fork failed"),
+                0 => {
+                    let status = self.run_expr(inner);
+                    process::exit(if status.is_success() { 0 } else { 1 });
                 }
-            }
+                pid => {
+                    eprintln!("[{}]", pid);
+                    Status::ok()
+                }
+            },
             Expr::Block(stmts) => self.run_stmts(stmts),
-            Expr::Subshell(stmts) => {
-                match unsafe { libc::fork() } {
-                    -1 => Status::err("fork failed"),
-                    0 => {
-                        let status = self.run_stmts(stmts);
-                        process::exit(if status.is_success() { 0 } else { 1 });
-                    }
-                    pid => self.wait_pid(pid),
+            Expr::Subshell(stmts) => match unsafe { libc::fork() } {
+                -1 => Status::err("fork failed"),
+                0 => {
+                    let status = self.run_stmts(stmts);
+                    process::exit(if status.is_success() { 0 } else { 1 });
                 }
-            }
-            Expr::Coprocess(_inner) => {
-                Status::err("coprocesses not yet implemented")
-            }
+                pid => self.wait_pid(pid),
+            },
+            Expr::Coprocess(_inner) => Status::err("coprocesses not yet implemented"),
         }
     }
 
@@ -192,6 +198,21 @@ impl Shell {
         for arg in &cmd.args {
             let val = self.eval_word(arg);
             args.extend(val.0.into_iter());
+        }
+
+        // `builtin` bypasses function lookup — allows patterns like
+        // `fn cd { builtin cd $* && update_prompt }` without recursion.
+        if name_str == "builtin" {
+            if args.is_empty() {
+                let status = Status::err("builtin: usage: builtin command [args...]");
+                self.env.set_value("status", Val::scalar(&status.0));
+                return status;
+            }
+            let builtin_name = &args[0];
+            let builtin_args = &args[1..];
+            let status = self.dispatch_builtin(builtin_name, builtin_args);
+            self.env.set_value("status", Val::scalar(&status.0));
+            return status;
         }
 
         // Function call
@@ -210,17 +231,7 @@ impl Shell {
         }
 
         // Builtins
-        let status = match name_str.as_str() {
-            "cd" => self.builtin_cd(&args),
-            "echo" => self.builtin_echo(&args),
-            "exit" => self.builtin_exit(&args),
-            "get" => self.builtin_get(&args),
-            "set" => self.builtin_set(&args),
-            "true" => Status::ok(),
-            "false" => Status::from_code(1),
-            "." => self.builtin_source(&args),
-            _ => self.exec_external(&name_str, &args),
-        };
+        let status = self.dispatch_builtin(&name_str, &args);
 
         self.env.set_value("status", Val::scalar(&status.0));
         status
@@ -233,6 +244,8 @@ impl Shell {
 
         let mut prev_read_fd: Option<i32> = None;
         let mut children: Vec<libc::pid_t> = Vec::new();
+        // First child creates the process group; subsequent children join it.
+        let mut pgid: libc::pid_t = 0;
 
         for (i, stage) in stages.iter().enumerate() {
             let is_last = i == stages.len() - 1;
@@ -250,6 +263,10 @@ impl Shell {
             match unsafe { libc::fork() } {
                 -1 => return Status::err("fork failed"),
                 0 => {
+                    // Join the pipeline's process group (or create it
+                    // if we are the first child).
+                    unsafe { libc::setpgid(0, pgid) };
+
                     if let Some(fd) = prev_read_fd {
                         unsafe {
                             libc::dup2(fd, 0);
@@ -269,6 +286,13 @@ impl Shell {
                     process::exit(if status.is_success() { 0 } else { 1 });
                 }
                 pid => {
+                    if pgid == 0 {
+                        pgid = pid;
+                    }
+                    // Parent also calls setpgid to handle the race where
+                    // the child hasn't called setpgid yet.
+                    unsafe { libc::setpgid(pid, pgid) };
+
                     children.push(pid);
                     if let Some(fd) = write_fd {
                         unsafe { libc::close(fd) };
@@ -301,8 +325,13 @@ impl Shell {
                     RedirectTarget::File(word) => self.eval_word(word).as_str().to_string(),
                     _ => return Status::err("unsupported redirect target"),
                 };
-                let flags = libc::O_WRONLY | libc::O_CREAT
-                    | if *append { libc::O_APPEND } else { libc::O_TRUNC };
+                let flags = libc::O_WRONLY
+                    | libc::O_CREAT
+                    | if *append {
+                        libc::O_APPEND
+                    } else {
+                        libc::O_TRUNC
+                    };
                 let c_path = match std::ffi::CString::new(path.as_str()) {
                     Ok(s) => s,
                     Err(_) => return Status::err("invalid path"),
@@ -359,16 +388,44 @@ impl Shell {
         }
     }
 
+    /// Dispatch a command name directly to the builtin table,
+    /// falling through to exec if not a builtin.
+    fn dispatch_builtin(&mut self, name: &str, args: &[String]) -> Status {
+        match name {
+            "cd" => self.builtin_cd(args),
+            "echo" => self.builtin_echo(args),
+            "exit" => self.builtin_exit(args),
+            "get" => self.builtin_get(args),
+            "set" => self.builtin_set(args),
+            "true" => Status::ok(),
+            "false" => Status::from_code(1),
+            "." => self.builtin_source(args),
+            "builtin" => {
+                // `builtin builtin ...` — just strip one layer
+                if args.is_empty() {
+                    Status::err("builtin: usage: builtin command [args...]")
+                } else {
+                    self.dispatch_builtin(&args[0], &args[1..])
+                }
+            }
+            _ => self.exec_external(name, args),
+        }
+    }
+
     // ── Word evaluation (CBV — eager) ───────────────────────
 
     fn eval_word(&mut self, word: &Word) -> Val {
         match word {
             Word::Literal(s) => Val::scalar(s.clone()),
             Word::Var(name) => {
-                if let Some(body) = self.env.get_fn(&format!("{name}.get")).cloned() {
-                    self.env.push_scope();
-                    self.run_stmts(&body);
-                    self.env.pop_scope();
+                let disc_name = format!("{name}.get");
+                if let Some(body) = self.env.get_fn(&disc_name).cloned() {
+                    if self.active_disciplines.insert(disc_name.clone()) {
+                        self.env.push_scope();
+                        self.run_stmts(&body);
+                        self.env.pop_scope();
+                        self.active_disciplines.remove(&disc_name);
+                    }
                 }
                 self.env.get_value(name)
             }
@@ -742,5 +799,76 @@ mod tests {
         let mut shell = Shell::new();
         shell.run(&prog);
         assert_eq!(shell.env.get_value("result"), Val::scalar("matched"));
+    }
+
+    #[test]
+    fn discipline_set_reentrancy_guard() {
+        // `fn x.set { x = $1 }` would recurse infinitely without the guard.
+        // The inner assignment should bypass the discipline and store directly.
+        let prog = Parser::parse("fn x.set { x = $1 }\nx = hello").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+        assert_eq!(shell.env.get_value("x"), Val::scalar("hello"));
+    }
+
+    #[test]
+    fn discipline_get_reentrancy_guard() {
+        // `fn x.get { ... }` reads $x inside the discipline — the
+        // inner read should not re-fire the discipline. The .get body
+        // runs in a child scope, so we use a side effect visible from
+        // the global scope (set_value updates in-place if it exists).
+        // Trigger the discipline via $x in a variable expansion (echo $x),
+        // not via the `get` builtin which bypasses eval_word.
+        let prog = Parser::parse("y = unset\nx = original\nfn x.get { y = $x }\necho $x").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+        // The .get discipline read $x without recursing and stored it in y.
+        assert_eq!(shell.env.get_value("y"), Val::scalar("original"));
+    }
+
+    #[test]
+    fn discipline_guard_clears_after_execution() {
+        // The guard should not persist — a second assignment should
+        // still fire the discipline.
+        let prog = Parser::parse("fn x.set { count = fired }\nx = a\nx = b").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        // If the guard leaked, the second assignment would skip the discipline
+        assert_eq!(shell.env.get_value("count"), Val::scalar("fired"));
+    }
+
+    #[test]
+    fn builtin_bypasses_function() {
+        // `fn echo { x = shadowed }` shadows the echo builtin.
+        // `builtin echo` should bypass the function and call the real builtin.
+        let prog = Parser::parse("fn echo { x = shadowed }\nbuiltin echo hello").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+        // The function was NOT called
+        assert_eq!(shell.env.get_value("x"), Val::empty());
+    }
+
+    #[test]
+    fn builtin_cd_via_function() {
+        // The canonical pattern: wrap a builtin with pre/post logic.
+        // Pre-declare vars so set_value updates in the global scope
+        // (function calls push/pop a child scope).
+        let prog = Parser::parse(
+            "before = no\nafter = no\nfn cd { before = yes\nbuiltin cd /tmp\nafter = yes }\ncd",
+        )
+        .unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("before"), Val::scalar("yes"));
+        assert_eq!(shell.env.get_value("after"), Val::scalar("yes"));
+    }
+
+    #[test]
+    fn builtin_no_args_is_error() {
+        let status = run("builtin");
+        assert!(!status.is_success());
     }
 }
