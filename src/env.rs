@@ -155,9 +155,29 @@ impl Env {
     }
 
     /// Import the process environment as exported variables.
+    ///
+    /// Also sets rc-style lowercase aliases for common vars:
+    /// $home = $HOME, $path = $PATH (as list split on :),
+    /// $user = $USER.
     pub fn import_process_env(&mut self) {
         for (key, value) in std::env::vars() {
-            self.scopes[0].set(key, Var::exported(Val::scalar(value)));
+            self.scopes[0].set(key.clone(), Var::exported(Val::scalar(value.clone())));
+
+            // rc-style lowercase aliases
+            match key.as_str() {
+                "HOME" => {
+                    self.scopes[0].set("home".into(), Var::new(Val::scalar(value)));
+                }
+                "PATH" => {
+                    // rc convention: $path is a list, not colon-separated
+                    let dirs: Vec<String> = value.split(':').map(String::from).collect();
+                    self.scopes[0].set("path".into(), Var::new(Val::from(dirs)));
+                }
+                "USER" => {
+                    self.scopes[0].set("user".into(), Var::new(Val::scalar(value)));
+                }
+                _ => {}
+            }
         }
     }
 

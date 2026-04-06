@@ -285,7 +285,20 @@ impl Shell {
         let mut args: Vec<String> = Vec::new();
         for arg in &cmd.args {
             let val = self.eval_word(arg);
-            args.extend(val.0.into_iter());
+            for s in val.0.into_iter() {
+                if has_glob_meta(&s) {
+                    // Expand glob against filesystem.
+                    // If no matches, pass the pattern through literally (rc convention).
+                    let expanded = glob_expand(&s);
+                    if expanded.is_empty() {
+                        args.push(s);
+                    } else {
+                        args.extend(expanded);
+                    }
+                } else {
+                    args.push(s);
+                }
+            }
         }
 
         // `builtin` bypasses function lookup — allows patterns like
@@ -526,7 +539,17 @@ impl Shell {
 
     fn eval_word(&mut self, word: &Word) -> Val {
         match word {
-            Word::Literal(s) => Val::scalar(s.clone()),
+            Word::Literal(s) => {
+                // Tilde expansion: ~/path → $home/path, ~ alone → $home
+                if s == "~" {
+                    return self.env.get_value("home");
+                }
+                if let Some(rest) = s.strip_prefix("~/") {
+                    let home = self.env.get_value("home");
+                    return Val::scalar(format!("{}/{rest}", home.as_str()));
+                }
+                Val::scalar(s.clone())
+            }
             Word::Var(name) => {
                 let disc_name = format!("{name}.get");
                 if let Some(body) = self.env.get_fn(&disc_name).cloned() {
@@ -795,6 +818,74 @@ fn exec_command(name: &str, args: &[String], env: &[(String, String)]) -> String
         libc::execvp(c_name.as_ptr(), c_arg_ptrs.as_ptr());
     }
     std::io::Error::last_os_error().to_string()
+}
+
+/// Check if a string contains glob metacharacters.
+fn has_glob_meta(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+/// Expand a glob pattern against the filesystem.
+///
+/// Handles patterns like `*.rs`, `src/*.rs`, `src/*/mod.rs`.
+/// Splits on `/` to handle directory components. Returns sorted
+/// results (rc convention: glob results are alphabetical).
+fn glob_expand(pattern: &str) -> Vec<String> {
+    // Split into directory prefix and glob component.
+    // For simple cases like *.rs, dir is "." and glob is "*.rs".
+    // For src/*.rs, dir is "src" and glob is "*.rs".
+    // For deeply nested globs, we handle one level at a time.
+    let (dir, file_pat) = match pattern.rsplit_once('/') {
+        Some((d, f)) => {
+            if has_glob_meta(d) {
+                // Directory part has globs — expand dir first,
+                // then expand file pattern in each matched dir.
+                let dirs = glob_expand(d);
+                let mut results = Vec::new();
+                for matched_dir in dirs {
+                    let sub_pattern = format!("{matched_dir}/{f}");
+                    results.extend(glob_expand(&sub_pattern));
+                }
+                results.sort();
+                return results;
+            }
+            (d.to_string(), f)
+        }
+        None => (".".to_string(), pattern),
+    };
+
+    let re = match fnmatch_regex::glob_to_regex(file_pat) {
+        Ok(re) => re,
+        Err(_) => return Vec::new(),
+    };
+
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut results: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            // Don't match dotfiles unless the pattern starts with .
+            if name.starts_with('.') && !file_pat.starts_with('.') {
+                return None;
+            }
+            if re.is_match(&name) {
+                if dir == "." {
+                    Some(name)
+                } else {
+                    Some(format!("{dir}/{name}"))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    results.sort();
+    results
 }
 
 #[cfg(test)]
