@@ -42,6 +42,10 @@ pub enum Word {
     /// Evaluated eagerly — the command runs and its stdout
     /// becomes the value.
     CommandSub(Vec<Command>),
+    /// Process substitution: <{cmd}
+    /// Evaluates to /dev/fd/N, where N is the read end of a
+    /// pipe connected to the command's stdout.
+    ProcessSub(Vec<Command>),
     /// Concatenation: a^b — juxtaposition of words
     Concat(Vec<Word>),
 }
@@ -221,6 +225,7 @@ impl fmt::Display for Word {
             Word::Index(name, idx) => write!(f, "${name}({idx})"),
             Word::Count(name) => write!(f, "$#{name}"),
             Word::CommandSub(_) => write!(f, "`{{...}}"),
+            Word::ProcessSub(_) => write!(f, "<{{...}}"),
             Word::Concat(parts) => {
                 for part in parts {
                     write!(f, "{part}")?;

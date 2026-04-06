@@ -428,14 +428,28 @@ impl Shell {
     }
 
     fn run_simple(&mut self, cmd: &SimpleCommand) -> Status {
-        let name = self.eval_word(&cmd.name);
-        let name_str = name.as_str().to_string();
+        // Resolve the command name. For literals, use the raw string
+        // for builtin/function dispatch (avoids tilde expansion
+        // turning `~` into $home before we can match the builtin).
+        // Tilde expansion only matters for external command paths.
+        let raw_name = match &cmd.name {
+            Word::Literal(s) => Some(s.as_str()),
+            _ => None,
+        };
+        let name_str = raw_name
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.eval_word(&cmd.name).as_str().to_string());
+
+        // rc heritage: ~ takes its patterns literally — glob metacharacters
+        // are match patterns, not filesystem globs. Skip glob expansion
+        // for ~ arguments.
+        let skip_glob = name_str == "~";
 
         let mut args: Vec<String> = Vec::new();
         for arg in &cmd.args {
             let val = self.eval_word(arg);
             for s in val.0.into_iter() {
-                if has_glob_meta(&s) {
+                if !skip_glob && has_glob_meta(&s) {
                     // Expand glob against filesystem.
                     // If no matches, pass the pattern through literally (rc convention).
                     let expanded = glob_expand(&s);
@@ -623,6 +637,16 @@ impl Shell {
         }
     }
 
+    /// Create a pipe with content written to the write end, returning
+    /// the read end. Used for here-documents and here-strings.
+    fn make_heredoc_fd(&self, content: &str) -> Result<OwnedFd, String> {
+        let (read_end, write_end) = rustix::pipe::pipe().map_err(|e| format!("pipe: {e}"))?;
+        // Write content and close the write end so the reader sees EOF.
+        let _ = rustix::io::write(&write_end, content.as_bytes());
+        drop(write_end);
+        Ok(read_end)
+    }
+
     fn run_redirect(&mut self, inner: &Expr, op: &RedirectOp) -> Status {
         match op {
             RedirectOp::Output { fd, target, append } => {
@@ -659,27 +683,40 @@ impl Shell {
                 status
             }
             RedirectOp::Input { fd, target } => {
-                let path = match target {
-                    RedirectTarget::File(word) => self.eval_word(word).as_str().to_string(),
-                    _ => return Status::err("unsupported redirect target"),
-                };
-
-                let file_fd = match rustix::fs::open(
-                    &*path,
-                    rustix::fs::OFlags::RDONLY,
-                    rustix::fs::Mode::empty(),
-                ) {
-                    Ok(fd) => fd,
-                    Err(e) => return Status::err(format!("cannot open {path}: {e}")),
-                };
-
                 let target_raw = *fd as i32;
+
+                let read_fd: OwnedFd = match target {
+                    RedirectTarget::File(word) => {
+                        let path = self.eval_word(word).as_str().to_string();
+                        match rustix::fs::open(
+                            &*path,
+                            rustix::fs::OFlags::RDONLY,
+                            rustix::fs::Mode::empty(),
+                        ) {
+                            Ok(fd) => fd,
+                            Err(e) => return Status::err(format!("cannot open {path}: {e}")),
+                        }
+                    }
+                    RedirectTarget::HereDoc(content) => match self.make_heredoc_fd(content) {
+                        Ok(fd) => fd,
+                        Err(e) => return Status::err(e),
+                    },
+                    RedirectTarget::HereString(word) => {
+                        let mut content = self.eval_word(word).to_string();
+                        content.push('\n');
+                        match self.make_heredoc_fd(&content) {
+                            Ok(fd) => fd,
+                            Err(e) => return Status::err(e),
+                        }
+                    }
+                };
+
                 let saved = match sys_dup(target_raw) {
                     Ok(fd) => fd,
                     Err(e) => return Status::err(e),
                 };
-                sys_dup2(file_fd.as_raw_fd(), target_raw);
-                drop(file_fd);
+                sys_dup2(read_fd.as_raw_fd(), target_raw);
+                drop(read_fd);
 
                 let status = self.run_expr(inner);
 
@@ -736,6 +773,7 @@ impl Shell {
             "print" => self.builtin_print(args),
             "true" => Status::ok(),
             "false" => Status::from_code(1),
+            "~" => self.builtin_match(args),
             "." => self.builtin_source(args),
             "builtin" => {
                 if args.is_empty() {
@@ -826,6 +864,39 @@ impl Shell {
                         } else {
                             Val::scalar(output)
                         }
+                    }
+                }
+            }
+            Word::ProcessSub(stmts) => {
+                // rc heritage: <{cmd} evaluates to /dev/fd/N where N is
+                // the read end of a pipe connected to the command's stdout.
+                let (read_end, write_end) = match rustix::pipe::pipe() {
+                    Ok(fds) => fds,
+                    Err(_) => return Val::empty(),
+                };
+
+                match sys_fork() {
+                    Err(_) => Val::empty(),
+                    Ok(0) => {
+                        drop(read_end);
+                        sys_dup2(write_end.as_raw_fd(), 1);
+                        drop(write_end);
+
+                        let status = self.run_cmds(stmts);
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
+                    }
+                    Ok(_pid) => {
+                        drop(write_end);
+                        let raw_fd = read_end.into_raw_fd();
+                        // Clear CLOEXEC so child processes (e.g., cat, diff)
+                        // can access the fd.
+                        unsafe {
+                            let flags = libc::fcntl(raw_fd, libc::F_GETFD);
+                            libc::fcntl(raw_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                        }
+                        Val::scalar(format!("/dev/fd/{raw_fd}"))
                     }
                 }
             }
@@ -963,6 +1034,31 @@ impl Shell {
             Ok(prog) => self.run(&prog),
             Err(e) => Status::err(format!(".: {}: {e}", args[0])),
         }
+    }
+
+    /// `~ value pattern [pattern...]` — rc match operator.
+    ///
+    /// Returns success if value matches any pattern, failure otherwise.
+    /// Patterns use fnmatch glob syntax (*, ?, [chars]).
+    /// (Duff 1990, §Simple commands — ~ is a builtin)
+    fn builtin_match(&self, args: &[String]) -> Status {
+        if args.len() < 2 {
+            return Status::err("~: usage: ~ value pattern...");
+        }
+        let value = &args[0];
+        for pattern in &args[1..] {
+            if pattern == value {
+                return Status::ok();
+            }
+            if has_glob_meta(pattern) {
+                if let Ok(re) = fnmatch_regex::glob_to_regex(pattern) {
+                    if re.is_match(value) {
+                        return Status::ok();
+                    }
+                }
+            }
+        }
+        Status::from_code(1)
     }
 
     // ── Coprocess builtins ────────────────────────────────────
@@ -1232,12 +1328,26 @@ impl Shell {
     // ── External commands ───────────────────────────────────
 
     fn exec_external(&mut self, name: &str, args: &[String]) -> Status {
+        // Tilde expansion for command paths (~/bin/foo → /home/user/bin/foo).
+        // Builtin/function dispatch already matched the raw name, so this
+        // only affects the execvp path.
+        let expanded;
+        let cmd_name = if name == "~" {
+            expanded = self.env.get_value("home").as_str().to_string();
+            &expanded
+        } else if let Some(rest) = name.strip_prefix("~/") {
+            expanded = format!("{}/{rest}", self.env.get_value("home").as_str());
+            &expanded
+        } else {
+            name
+        };
+
         match sys_fork() {
             Err(e) => Status::err(e),
             Ok(0) => {
-                let mut full_args = vec![name.to_string()];
+                let mut full_args = vec![cmd_name.to_string()];
                 full_args.extend(args.iter().cloned());
-                let err = exec_command(name, &full_args, &self.env.to_process_env());
+                let err = exec_command(cmd_name, &full_args, &self.env.to_process_env());
                 eprintln!("psh: {name}: {err}");
                 unsafe { libc::_exit(127) };
             }
@@ -1802,5 +1912,67 @@ mod tests {
         let prog = Parser::parse("bg %1").unwrap();
         let status = shell.run(&prog);
         assert!(!status.is_success());
+    }
+
+    // ── Here-document / here-string tests ────────────────────
+
+    #[test]
+    fn heredoc_feeds_stdin() {
+        let prog = Parser::parse("x = `{ cat <<EOF\nhello\nworld\nEOF\n}").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::list(["hello", "world"]));
+    }
+
+    #[test]
+    fn herestring_feeds_stdin() {
+        let prog = Parser::parse("x = `{ cat <<<hello }").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::scalar("hello"));
+    }
+
+    // ── Process substitution tests ───────────────────────────
+
+    #[test]
+    fn process_sub_as_argument() {
+        let prog = Parser::parse("x = `{ cat <{echo hello} }").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::scalar("hello"));
+    }
+
+    // ── ~ match operator tests ───────────────────────────────
+
+    #[test]
+    fn match_literal_succeeds() {
+        assert!(run("~ foo foo").is_success());
+    }
+
+    #[test]
+    fn match_literal_fails() {
+        assert!(!run("~ foo bar").is_success());
+    }
+
+    #[test]
+    fn match_glob_succeeds() {
+        assert!(run("~ foo f*").is_success());
+    }
+
+    #[test]
+    fn match_glob_fails() {
+        assert!(!run("~ foo b*").is_success());
+    }
+
+    #[test]
+    fn match_multiple_patterns() {
+        assert!(run("~ foo f* b*").is_success());
+        assert!(run("~ bar f* b*").is_success());
+        assert!(!run("~ baz f* q*").is_success());
+    }
+
+    #[test]
+    fn match_no_args_errors() {
+        assert!(!run("~ foo").is_success());
     }
 }

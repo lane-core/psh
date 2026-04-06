@@ -166,17 +166,23 @@ impl<'a> RecParser<'a> {
     /// Is the current position at something that can start a word?
     fn at_word_start(&self) -> bool {
         match self.peek() {
-            Some(c) => is_word_char(c) || c == '$' || c == '`' || c == '\'',
-            None => false,
+            Some(c) if is_word_char(c) || c == '$' || c == '`' || c == '\'' => true,
+            // <{ starts a process substitution word
+            Some('<') if self.peek2() == Some('{') => true,
+            _ => false,
         }
     }
 
     /// Is the current position at an operator that ends argument collection?
     fn at_operator(&self) -> bool {
-        matches!(
-            self.peek(),
-            Some('|' | '>' | '<' | ';' | '\n' | '}' | ')') | None
-        ) || (self.peek() == Some('&'))
+        match self.peek() {
+            // <{ is process substitution (a word), not a redirect operator
+            Some('<') => self.peek2() != Some('{'),
+            Some('|' | '>' | ';' | '\n' | '}' | ')') => true,
+            Some('&') => true,
+            None => true,
+            _ => false,
+        }
     }
 
     // ── Leaf parsers ───────────────────────────────────────
@@ -231,6 +237,59 @@ impl<'a> RecParser<'a> {
             Some(self.input[start..self.pos].to_string())
         } else {
             None
+        }
+    }
+
+    /// Read here-document content: consume all text until a line
+    /// matching the delimiter appears alone on a line.
+    fn read_heredoc(&mut self, delim: &str) -> Result<String> {
+        // Skip the rest of the current line (after the delimiter word)
+        while let Some(c) = self.peek() {
+            if c == '\n' {
+                self.advance();
+                break;
+            }
+            self.advance();
+        }
+
+        let mut content = String::new();
+        loop {
+            // Read one line
+            let mut line = String::new();
+            loop {
+                match self.peek() {
+                    Some('\n') => {
+                        self.advance();
+                        break;
+                    }
+                    Some(c) => {
+                        self.advance();
+                        line.push(c);
+                    }
+                    None => {
+                        if line.is_empty() {
+                            bail!(
+                                "{}: unterminated here-document (expected '{delim}')",
+                                self.pos_str()
+                            );
+                        }
+                        // EOF before delimiter — check if last line is delimiter
+                        if line == delim {
+                            return Ok(content);
+                        }
+                        bail!(
+                            "{}: unterminated here-document (expected '{delim}')",
+                            self.pos_str()
+                        );
+                    }
+                }
+            }
+
+            if line == delim {
+                return Ok(content);
+            }
+            content.push_str(&line);
+            content.push('\n');
         }
     }
 
@@ -306,6 +365,21 @@ impl<'a> RecParser<'a> {
                 }
                 self.advance();
                 Ok(Word::CommandSub(body))
+            }
+            // rc heritage: <{cmd} process substitution
+            Some('<') if self.peek2() == Some('{') => {
+                self.advance(); // <
+                self.advance(); // {
+                let body = self.command_list()?;
+                self.skip_ws();
+                if self.peek() != Some('}') {
+                    bail!(
+                        "{}: expected '}}' to close process substitution",
+                        self.pos_str()
+                    );
+                }
+                self.advance();
+                Ok(Word::ProcessSub(body))
             }
             Some(c) if is_word_char(c) => {
                 let s = self.read_bare_word().unwrap();
@@ -729,12 +803,42 @@ impl<'a> RecParser<'a> {
                 }
                 Some('<') => {
                     self.advance();
-                    self.skip_ws();
-                    let target = self.word()?;
-                    ops.push(RedirectOp::Input {
-                        fd: 0,
-                        target: RedirectTarget::File(target),
-                    });
+                    if self.peek() == Some('<') {
+                        self.advance();
+                        if self.peek() == Some('<') {
+                            // <<< here-string
+                            self.advance();
+                            self.skip_ws();
+                            let word = self.word()?;
+                            ops.push(RedirectOp::Input {
+                                fd: 0,
+                                target: RedirectTarget::HereString(word),
+                            });
+                        } else {
+                            // << here-document
+                            self.skip_ws();
+                            let delim = self.read_bare_word().ok_or_else(|| {
+                                anyhow::anyhow!("{}: expected delimiter after <<", self.pos_str())
+                            })?;
+                            let content = self.read_heredoc(&delim)?;
+                            ops.push(RedirectOp::Input {
+                                fd: 0,
+                                target: RedirectTarget::HereDoc(content),
+                            });
+                        }
+                    } else if self.peek() == Some('{') {
+                        // <{ process substitution — not a redirect, put back
+                        // and let the caller handle it. This shouldn't happen
+                        // here because <{ is parsed as a word, not a redirect.
+                        bail!("{}: unexpected '<{{' in redirect position", self.pos_str());
+                    } else {
+                        self.skip_ws();
+                        let target = self.word()?;
+                        ops.push(RedirectOp::Input {
+                            fd: 0,
+                            target: RedirectTarget::File(target),
+                        });
+                    }
                 }
                 _ => break,
             }
@@ -1150,6 +1254,53 @@ mod tests {
                 },
             )) => {}
             other => panic!("expected fd output redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn heredoc_parse() {
+        let prog = parse("cat <<EOF\nhello\nworld\nEOF\n");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Input {
+                    fd: 0,
+                    target: RedirectTarget::HereDoc(content),
+                },
+            )) => {
+                assert_eq!(content, "hello\nworld\n");
+            }
+            other => panic!("expected heredoc redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn herestring_parse() {
+        let prog = parse("cat <<<hello");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Input {
+                    fd: 0,
+                    target: RedirectTarget::HereString(Word::Literal(s)),
+                },
+            )) => {
+                assert_eq!(s, "hello");
+            }
+            other => panic!("expected herestring redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn process_sub_parse() {
+        let prog = parse("cat <{echo hello}");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.name, Word::Literal("cat".into()));
+                assert_eq!(cmd.args.len(), 1);
+                assert!(matches!(&cmd.args[0], Word::ProcessSub(_)));
+            }
+            other => panic!("expected simple command with process sub, got {other:?}"),
         }
     }
 }
