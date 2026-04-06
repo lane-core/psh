@@ -58,20 +58,20 @@ impl Shell {
 
     /// Execute a parsed program.
     pub fn run(&mut self, program: &Program) -> Status {
-        self.run_stmts(&program.statements)
+        self.run_cmds(&program.commands)
     }
 
-    fn run_stmts(&mut self, stmts: &[Statement]) -> Status {
+    fn run_cmds(&mut self, cmds: &[Command]) -> Status {
         let mut status = Status::ok();
-        for stmt in stmts {
-            status = self.run_stmt(stmt);
+        for cmd in cmds {
+            status = self.run_cmd(cmd);
         }
         status
     }
 
-    fn run_stmt(&mut self, stmt: &Statement) -> Status {
-        match stmt {
-            Statement::Assignment(name, value) => {
+    fn run_cmd(&mut self, cmd: &Command) -> Status {
+        match cmd {
+            Command::Bind(Binding::Assignment(name, value)) => {
                 let val = self.eval_value(value);
                 let disc_name = format!("{name}.set");
                 // Fire .set discipline if defined and not already active
@@ -80,7 +80,7 @@ impl Shell {
                 if let Some(body) = self.env.get_fn(&disc_name).cloned() {
                     if self.active_disciplines.insert(disc_name.clone()) {
                         self.env.set_value("1", val.clone());
-                        let status = self.run_stmts(&body);
+                        let status = self.run_cmds(&body);
                         self.active_disciplines.remove(&disc_name);
                         self.env.set_value(name, val);
                         status
@@ -93,47 +93,47 @@ impl Shell {
                     Status::ok()
                 }
             }
-            Statement::Exec(expr) => self.run_expr(expr),
-            Statement::If {
+            Command::Bind(Binding::Fn { name, body }) => {
+                self.env.define_fn(name.clone(), body.clone());
+                Status::ok()
+            }
+            Command::Exec(expr) => self.run_expr(expr),
+            Command::If {
                 condition,
                 then_body,
                 else_body,
             } => {
                 let cond_status = self.run_expr(condition);
                 if cond_status.is_success() {
-                    self.run_stmts(then_body)
+                    self.run_cmds(then_body)
                 } else if let Some(else_body) = else_body {
-                    self.run_stmts(else_body)
+                    self.run_cmds(else_body)
                 } else {
                     cond_status
                 }
             }
-            Statement::For { var, list, body } => {
+            Command::For { var, list, body } => {
                 let items = self.eval_value(list);
                 let mut status = Status::ok();
                 for item in &items.0 {
                     self.env.set_value(var, Val::scalar(item.clone()));
-                    status = self.run_stmts(body);
+                    status = self.run_cmds(body);
                 }
                 status
             }
-            Statement::Switch { value, cases } => {
+            Command::Switch { value, cases } => {
                 let val = self.eval_value(value);
                 let val_str = val.as_str().to_string();
                 for (patterns, body) in cases {
                     for pat in patterns {
                         if self.match_pattern(&val_str, pat) {
-                            return self.run_stmts(body);
+                            return self.run_cmds(body);
                         }
                     }
                 }
                 Status::ok()
             }
-            Statement::Fn { name, body } => {
-                self.env.define_fn(name.clone(), body.clone());
-                Status::ok()
-            }
-            Statement::Return(_) => Status::ok(),
+            Command::Return(_) => Status::ok(),
         }
     }
 
@@ -177,11 +177,11 @@ impl Shell {
                     Status::ok()
                 }
             },
-            Expr::Block(stmts) => self.run_stmts(stmts),
+            Expr::Block(stmts) => self.run_cmds(stmts),
             Expr::Subshell(stmts) => match unsafe { libc::fork() } {
                 -1 => Status::err("fork failed"),
                 0 => {
-                    let status = self.run_stmts(stmts);
+                    let status = self.run_cmds(stmts);
                     process::exit(if status.is_success() { 0 } else { 1 });
                 }
                 pid => self.wait_pid(pid),
@@ -224,7 +224,7 @@ impl Shell {
             }
             self.env
                 .set_value("*", Val::list(args.iter().map(|s| s.as_str())));
-            let status = self.run_stmts(&body);
+            let status = self.run_cmds(&body);
             self.env.pop_scope();
             self.env.set_value("status", Val::scalar(&status.0));
             return status;
@@ -422,7 +422,7 @@ impl Shell {
                 if let Some(body) = self.env.get_fn(&disc_name).cloned() {
                     if self.active_disciplines.insert(disc_name.clone()) {
                         self.env.push_scope();
-                        self.run_stmts(&body);
+                        self.run_cmds(&body);
                         self.env.pop_scope();
                         self.active_disciplines.remove(&disc_name);
                     }
@@ -453,7 +453,7 @@ impl Shell {
                             libc::dup2(fds[1], 1);
                             libc::close(fds[1]);
                         }
-                        let status = self.run_stmts(stmts);
+                        let status = self.run_cmds(stmts);
                         process::exit(if status.is_success() { 0 } else { 1 });
                     }
                     pid => {

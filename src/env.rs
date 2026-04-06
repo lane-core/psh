@@ -110,7 +110,7 @@ pub struct Env {
     /// Function definitions (including discipline functions).
     /// Separate from variable scopes — functions are global
     /// in rc, and we follow that convention.
-    functions: HashMap<String, Vec<crate::ast::Statement>>,
+    functions: HashMap<String, Vec<crate::ast::Command>>,
 }
 
 impl Env {
@@ -191,12 +191,12 @@ impl Env {
     }
 
     /// Define a function.
-    pub fn define_fn(&mut self, name: String, body: Vec<crate::ast::Statement>) {
+    pub fn define_fn(&mut self, name: String, body: Vec<crate::ast::Command>) {
         self.functions.insert(name, body);
     }
 
     /// Look up a function by name.
-    pub fn get_fn(&self, name: &str) -> Option<&Vec<crate::ast::Statement>> {
+    pub fn get_fn(&self, name: &str) -> Option<&Vec<crate::ast::Command>> {
         self.functions.get(name)
     }
 

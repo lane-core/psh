@@ -1,13 +1,22 @@
 //! AST for psh.
 //!
-//! Three node families corresponding to the three syntactic sorts
-//! of the linear classical L-calculus:
+//! Four node families reflecting the sequent calculus structure
+//! (λμμ̃-calculus, Curien-Herbelin 2000):
 //!
-//! - Values (positive, CBV): literals, variable references, command
-//!   substitutions. Evaluated eagerly.
-//! - Expressions (profunctor structure): commands with redirections.
+//! - **Word/Value** (producers, positive, CBV): literals, variable
+//!   references, command substitutions. Evaluated eagerly.
+//! - **Expr** (the profunctor layer): commands with redirections.
 //!   Redirections wrap inner expressions (lmap/rmap), not bolted on.
-//! - Statements (cuts): bind values to expressions.
+//! - **Binding** (μ̃-binders): extend the context Γ with a new name.
+//!   Assignment and function definition.
+//! - **Command** (cuts and control): connect producers to consumers
+//!   (Exec), or branch/iterate over values (If, For, Switch).
+//!
+//! The former `Statement` mixed bindings, cuts, and control flow in
+//! one enum. The refactored AST separates them so the sort boundaries
+//! are visible in the type system. A `Command` is the top-level
+//! sequencing unit; it may contain `Binding`s (context extension),
+//! `Expr`s (cuts), or control structures (eliminators).
 //!
 //! Redirections compose by nesting. Each RedirectOp describes one fd
 //! transformation. Linear fd tracking verifies the composition at
@@ -32,7 +41,7 @@ pub enum Word {
     /// Command substitution: `{ cmd }
     /// Evaluated eagerly — the command runs and its stdout
     /// becomes the value.
-    CommandSub(Vec<Statement>),
+    CommandSub(Vec<Command>),
     /// Concatenation: a^b — juxtaposition of words
     Concat(Vec<Word>),
 }
@@ -120,9 +129,9 @@ pub enum Expr {
     /// shell's continuation.
     Background(Box<Expr>),
     /// Block: { cmds }
-    Block(Vec<Statement>),
+    Block(Vec<Command>),
     /// Subshell (isolated namespace): @{ cmds }
-    Subshell(Vec<Statement>),
+    Subshell(Vec<Command>),
     /// Coprocess: cmd |&
     /// Bidirectional cut — the shell holds both read and write
     /// endpoints to the child process.
@@ -140,42 +149,65 @@ pub enum Pattern {
     Star,
 }
 
-/// A statement — binds values to expressions (the "cut" level).
+/// A binding — extends the context Γ with a new name.
+///
+/// μ̃-binders in the sequent calculus: `x = val` binds a value
+/// to a variable name (let-binding). `fn name { body }` binds
+/// a computation to a function name (including discipline
+/// functions like x.get, x.set).
 #[derive(Debug, Clone, PartialEq)]
-pub enum Statement {
+pub enum Binding {
     /// Variable assignment: x = value
+    /// μ̃-binding: evaluate value (CBV), then extend Γ.
     Assignment(String, Value),
-    /// Execute an expression
+    /// Function definition: fn name { body }
+    /// Also handles discipline functions: fn x.get { body }
+    Fn { name: String, body: Vec<Command> },
+}
+
+/// A command — the top-level sequencing unit.
+///
+/// Commands are either cuts (connecting a producer to a consumer),
+/// bindings (extending Γ), or control flow (case analysis on values).
+/// The separation from Binding makes the sort boundaries visible:
+/// bindings extend the context, cuts consume it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    /// A binding — context extension (μ̃).
+    Bind(Binding),
+    /// Execute an expression — the cut ⟨t | e⟩.
+    /// Connects a producer (the command's words) to a consumer
+    /// (stdout, a pipe, a redirect target).
     Exec(Expr),
     /// if(expr) { body } [else { body }]
+    /// Case elimination on exit status.
     If {
         condition: Expr,
-        then_body: Vec<Statement>,
-        else_body: Option<Vec<Statement>>,
+        then_body: Vec<Command>,
+        else_body: Option<Vec<Command>>,
     },
     /// for(x in list) { body }
+    /// Structural recursion over a list value.
     For {
         var: String,
         list: Value,
-        body: Vec<Statement>,
+        body: Vec<Command>,
     },
     /// switch(value) { case pat { body } ... }
+    /// Multi-way case elimination.
     Switch {
         value: Value,
-        cases: Vec<(Vec<Pattern>, Vec<Statement>)>,
+        cases: Vec<(Vec<Pattern>, Vec<Command>)>,
     },
-    /// fn name { body }
-    /// Also handles discipline functions: fn x.get { body }
-    Fn { name: String, body: Vec<Statement> },
     /// Return from a function (implicit via last status,
     /// but explicit return is useful).
     Return(Option<Value>),
 }
 
-/// A complete psh program — a sequence of statements.
+/// A complete psh program — a sequence of commands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub statements: Vec<Statement>,
+    pub commands: Vec<Command>,
 }
 
 impl fmt::Display for Word {

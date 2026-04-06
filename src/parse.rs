@@ -5,11 +5,11 @@
 //!
 //! Grammar (informal):
 //!
-//!   program    = statement*
-//!   statement  = assignment | if | for | while | switch | fn | ref | expr_stmt
-//!   expr_stmt  = pipeline (& | ;  | \n)?
-//!   pipeline   = command (| command)*
-//!   command    = simple_cmd redirection*
+//!   program    = command*
+//!   command    = assignment | if | for | while | switch | fn | ref | expr_cmd
+//!   expr_cmd   = pipeline (& | ;  | \n)?
+//!   pipeline   = cmd_expr (| cmd_expr)*
+//!   cmd_expr   = simple_cmd redirection*
 //!   simple_cmd = word+
 //!   word       = WORD | $var | $#var | $var(idx) | `{ program } | (words) | word^word
 
@@ -115,51 +115,51 @@ impl Parser {
     // ── Grammar rules ───────────────────────────────────────
 
     fn program(&mut self) -> Result<Program> {
-        let stmts = self.statement_list()?;
+        let cmds = self.command_list()?;
         if !self.at(&Token::Eof) {
             let pos = self.peek_pos();
             bail!("{pos}: unexpected token {} at end of input", self.peek());
         }
-        Ok(Program { statements: stmts })
+        Ok(Program { commands: cmds })
     }
 
-    fn statement_list(&mut self) -> Result<Vec<Statement>> {
-        let mut stmts = Vec::new();
+    fn command_list(&mut self) -> Result<Vec<Command>> {
+        let mut cmds = Vec::new();
         self.skip_terminators();
         while !matches!(self.peek(), Token::Eof | Token::RBrace | Token::RParen) {
-            stmts.push(self.statement()?);
+            cmds.push(self.command()?);
             self.skip_terminators();
         }
-        Ok(stmts)
+        Ok(cmds)
     }
 
-    fn body(&mut self) -> Result<Vec<Statement>> {
+    fn body(&mut self) -> Result<Vec<Command>> {
         self.expect(&Token::LBrace)?;
-        let stmts = self.statement_list()?;
+        let cmds = self.command_list()?;
         self.expect(&Token::RBrace)?;
-        Ok(stmts)
+        Ok(cmds)
     }
 
-    fn statement(&mut self) -> Result<Statement> {
+    fn command(&mut self) -> Result<Command> {
         match self.peek().clone() {
-            Token::If => self.if_stmt(),
-            Token::For => self.for_stmt(),
-            Token::While => self.while_stmt(),
-            Token::Switch => self.switch_stmt(),
-            Token::Fn => self.fn_stmt(),
-            Token::Ref => self.ref_stmt(),
+            Token::If => self.if_cmd(),
+            Token::For => self.for_cmd(),
+            Token::While => self.while_cmd(),
+            Token::Switch => self.switch_cmd(),
+            Token::Fn => self.fn_cmd(),
+            Token::Ref => self.ref_cmd(),
             _ => self.simple_or_assign(),
         }
     }
 
-    fn if_stmt(&mut self) -> Result<Statement> {
+    fn if_cmd(&mut self) -> Result<Command> {
         self.expect(&Token::If)?;
         let condition = self.pipeline()?;
         let then_body = self.body()?;
         let else_body = if self.eat(&Token::Else) {
             if self.at(&Token::If) {
-                // else if — wrap in a single-statement body
-                let nested = self.if_stmt()?;
+                // else if — wrap in a single-command body
+                let nested = self.if_cmd()?;
                 Some(vec![nested])
             } else {
                 Some(self.body()?)
@@ -167,31 +167,31 @@ impl Parser {
         } else {
             None
         };
-        Ok(Statement::If {
+        Ok(Command::If {
             condition,
             then_body,
             else_body,
         })
     }
 
-    fn for_stmt(&mut self) -> Result<Statement> {
+    fn for_cmd(&mut self) -> Result<Command> {
         self.expect(&Token::For)?;
         let var = self.expect_word("variable name")?;
         self.expect(&Token::In)?;
         let list = self.value()?;
         let body = self.body()?;
-        Ok(Statement::For { var, list, body })
+        Ok(Command::For { var, list, body })
     }
 
-    fn while_stmt(&mut self) -> Result<Statement> {
+    fn while_cmd(&mut self) -> Result<Command> {
         self.expect(&Token::While)?;
         let condition = self.pipeline()?;
         let body = self.body()?;
         // Desugar while into a recursive if
         // while cond { body } => fn _while { if cond { body; _while } }; _while
         // Actually, just represent it directly as If + loop in the AST.
-        // We'll add While to Statement for clarity.
-        Ok(Statement::If {
+        // We'll add While to Command for clarity.
+        Ok(Command::If {
             condition,
             then_body: {
                 let mut b = body;
@@ -199,7 +199,7 @@ impl Parser {
                 // For now, tag this as a while by wrapping.
                 b.insert(
                     0,
-                    Statement::Exec(Expr::Simple(SimpleCommand {
+                    Command::Exec(Expr::Simple(SimpleCommand {
                         name: Word::Literal("__while_marker".into()),
                         args: vec![],
                         assignments: vec![],
@@ -211,7 +211,7 @@ impl Parser {
         })
     }
 
-    fn switch_stmt(&mut self) -> Result<Statement> {
+    fn switch_cmd(&mut self) -> Result<Command> {
         self.expect(&Token::Switch)?;
         let value = self.value()?;
         self.expect(&Token::LBrace)?;
@@ -237,33 +237,33 @@ impl Parser {
             self.skip_terminators();
         }
         self.expect(&Token::RBrace)?;
-        Ok(Statement::Switch { value, cases })
+        Ok(Command::Switch { value, cases })
     }
 
-    fn fn_stmt(&mut self) -> Result<Statement> {
+    fn fn_cmd(&mut self) -> Result<Command> {
         self.expect(&Token::Fn)?;
         let name = self.expect_word("function name")?;
         let body = self.body()?;
-        Ok(Statement::Fn { name, body })
+        Ok(Command::Bind(Binding::Fn { name, body }))
     }
 
-    fn ref_stmt(&mut self) -> Result<Statement> {
+    fn ref_cmd(&mut self) -> Result<Command> {
         self.expect(&Token::Ref)?;
         let name = self.expect_word("reference name")?;
         self.expect(&Token::Equals)?;
         let target = self.value()?;
-        Ok(Statement::Assignment(
+        Ok(Command::Bind(Binding::Assignment(
             name,
             // Store as a ref by using a special prefix convention
             // The evaluator will recognize this and create a nameref.
             target,
-        ))
+        )))
     }
 
     /// Parse a simple command or assignment.
     /// Assignment: word = value
     /// Command: word word word...
-    fn simple_or_assign(&mut self) -> Result<Statement> {
+    fn simple_or_assign(&mut self) -> Result<Command> {
         // Look ahead for assignment: word = value
         if self.at_word() {
             let saved_pos = self.pos;
@@ -275,7 +275,7 @@ impl Parser {
                 } else {
                     self.value()?
                 };
-                return Ok(Statement::Assignment(name, val));
+                return Ok(Command::Bind(Binding::Assignment(name, val)));
             }
             // Not an assignment — rewind
             self.pos = saved_pos;
@@ -285,10 +285,10 @@ impl Parser {
 
         // Check for background
         if self.eat(&Token::Amp) {
-            return Ok(Statement::Exec(Expr::Background(Box::new(expr))));
+            return Ok(Command::Exec(Expr::Background(Box::new(expr))));
         }
 
-        Ok(Statement::Exec(expr))
+        Ok(Command::Exec(expr))
     }
 
     // ── Expression precedence ───────────────────────────────
@@ -312,7 +312,7 @@ impl Parser {
     }
 
     fn pipeline(&mut self) -> Result<Expr> {
-        let first = self.command()?;
+        let first = self.cmd_expr()?;
 
         if self.eat(&Token::PipeAnd) {
             return Ok(Expr::Coprocess(Box::new(first)));
@@ -324,17 +324,17 @@ impl Parser {
 
         let mut stages = vec![first];
         while self.eat(&Token::Pipe) {
-            stages.push(self.command()?);
+            stages.push(self.cmd_expr()?);
         }
         Ok(Expr::Pipeline(stages))
     }
 
-    fn command(&mut self) -> Result<Expr> {
+    fn cmd_expr(&mut self) -> Result<Expr> {
         let pos = self.peek_pos();
 
         // Negation
         if self.eat(&Token::Bang) {
-            let cmd = self.command()?;
+            let cmd = self.cmd_expr()?;
             return Ok(Expr::Not(Box::new(cmd)));
         }
 
@@ -347,9 +347,9 @@ impl Parser {
 
         // Subshell
         if self.eat(&Token::AtLBrace) {
-            let stmts = self.statement_list()?;
+            let cmds = self.command_list()?;
             self.expect(&Token::RBrace)?;
-            let expr = Expr::Subshell(stmts);
+            let expr = Expr::Subshell(cmds);
             return self.redirections(expr);
         }
 
@@ -526,7 +526,7 @@ impl Parser {
             Token::Backtick => {
                 self.advance();
                 self.expect(&Token::LBrace)?;
-                let body = self.statement_list()?;
+                let body = self.command_list()?;
                 self.expect(&Token::RBrace)?;
                 Ok(Word::CommandSub(body))
             }
@@ -574,9 +574,9 @@ mod tests {
     #[test]
     fn simple_command() {
         let prog = parse("echo hello world");
-        assert_eq!(prog.statements.len(), 1);
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Simple(cmd)) => {
+        assert_eq!(prog.commands.len(), 1);
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
                 assert_eq!(cmd.name, Word::Literal("echo".into()));
                 assert_eq!(cmd.args.len(), 2);
             }
@@ -587,8 +587,8 @@ mod tests {
     #[test]
     fn assignment() {
         let prog = parse("x = hello");
-        match &prog.statements[0] {
-            Statement::Assignment(name, Value::Word(Word::Literal(val))) => {
+        match &prog.commands[0] {
+            Command::Bind(Binding::Assignment(name, Value::Word(Word::Literal(val)))) => {
                 assert_eq!(name, "x");
                 assert_eq!(val, "hello");
             }
@@ -599,8 +599,8 @@ mod tests {
     #[test]
     fn list_assignment() {
         let prog = parse("x = (a b c)");
-        match &prog.statements[0] {
-            Statement::Assignment(name, Value::List(items)) => {
+        match &prog.commands[0] {
+            Command::Bind(Binding::Assignment(name, Value::List(items))) => {
                 assert_eq!(name, "x");
                 assert_eq!(items.len(), 3);
             }
@@ -611,8 +611,8 @@ mod tests {
     #[test]
     fn pipeline() {
         let prog = parse("ls | grep foo | sort");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Pipeline(stages)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Pipeline(stages)) => {
                 assert_eq!(stages.len(), 3);
             }
             other => panic!("expected pipeline, got {other:?}"),
@@ -622,8 +622,8 @@ mod tests {
     #[test]
     fn redirect_output() {
         let prog = parse("echo hello > file");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Redirect(
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
                 inner,
                 RedirectOp::Output {
                     fd: 1,
@@ -640,8 +640,8 @@ mod tests {
     #[test]
     fn background() {
         let prog = parse("sleep 10 &");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Background(inner)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Background(inner)) => {
                 assert!(matches!(inner.as_ref(), Expr::Simple(_)));
             }
             other => panic!("expected background, got {other:?}"),
@@ -651,8 +651,8 @@ mod tests {
     #[test]
     fn if_else() {
         let prog = parse("if test -f foo { echo yes } else { echo no }");
-        match &prog.statements[0] {
-            Statement::If {
+        match &prog.commands[0] {
+            Command::If {
                 condition,
                 then_body,
                 else_body: Some(else_body),
@@ -668,8 +668,8 @@ mod tests {
     #[test]
     fn for_loop() {
         let prog = parse("for x in (a b c) { echo $x }");
-        match &prog.statements[0] {
-            Statement::For { var, list, body } => {
+        match &prog.commands[0] {
+            Command::For { var, list, body } => {
                 assert_eq!(var, "x");
                 assert!(matches!(list, Value::List(_)));
                 assert_eq!(body.len(), 1);
@@ -681,8 +681,8 @@ mod tests {
     #[test]
     fn fn_definition() {
         let prog = parse("fn greet { echo hello }");
-        match &prog.statements[0] {
-            Statement::Fn { name, body } => {
+        match &prog.commands[0] {
+            Command::Bind(Binding::Fn { name, body }) => {
                 assert_eq!(name, "greet");
                 assert_eq!(body.len(), 1);
             }
@@ -693,8 +693,8 @@ mod tests {
     #[test]
     fn discipline_fn() {
         let prog = parse("fn x.get { echo computed }");
-        match &prog.statements[0] {
-            Statement::Fn { name, body } => {
+        match &prog.commands[0] {
+            Command::Bind(Binding::Fn { name, body }) => {
                 assert_eq!(name, "x.get");
                 assert_eq!(body.len(), 1);
             }
@@ -705,8 +705,8 @@ mod tests {
     #[test]
     fn variable_expansion() {
         let prog = parse("echo $x");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Simple(cmd)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
                 assert_eq!(cmd.args[0], Word::Var("x".into()));
             }
             other => panic!("expected command with var, got {other:?}"),
@@ -716,8 +716,8 @@ mod tests {
     #[test]
     fn variable_index() {
         let prog = parse("echo $x(2)");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Simple(cmd)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
                 assert!(matches!(&cmd.args[0], Word::Index(name, _) if name == "x"));
             }
             other => panic!("expected indexed var, got {other:?}"),
@@ -727,8 +727,8 @@ mod tests {
     #[test]
     fn variable_count() {
         let prog = parse("echo $#x");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Simple(cmd)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
                 assert_eq!(cmd.args[0], Word::Count("x".into()));
             }
             other => panic!("expected count, got {other:?}"),
@@ -738,8 +738,8 @@ mod tests {
     #[test]
     fn command_substitution() {
         let prog = parse("echo `{ date }");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Simple(cmd)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
                 assert!(matches!(&cmd.args[0], Word::CommandSub(_)));
             }
             other => panic!("expected command sub, got {other:?}"),
@@ -749,8 +749,8 @@ mod tests {
     #[test]
     fn concatenation() {
         let prog = parse("echo foo^bar");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Simple(cmd)) => {
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
                 assert!(matches!(&cmd.args[0], Word::Concat(_)));
             }
             other => panic!("expected concat, got {other:?}"),
@@ -760,8 +760,8 @@ mod tests {
     #[test]
     fn coprocess() {
         let prog = parse("cmd |&");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Coprocess(_)) => {}
+        match &prog.commands[0] {
+            Command::Exec(Expr::Coprocess(_)) => {}
             other => panic!("expected coprocess, got {other:?}"),
         }
     }
@@ -769,8 +769,8 @@ mod tests {
     #[test]
     fn and_or() {
         let prog = parse("test -f foo && echo yes || echo no");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Or(_, _)) => {}
+        match &prog.commands[0] {
+            Command::Exec(Expr::Or(_, _)) => {}
             other => panic!("expected or, got {other:?}"),
         }
     }
@@ -778,9 +778,9 @@ mod tests {
     #[test]
     fn block() {
         let prog = parse("{ echo a; echo b }");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Block(stmts)) => {
-                assert_eq!(stmts.len(), 2);
+        match &prog.commands[0] {
+            Command::Exec(Expr::Block(cmds)) => {
+                assert_eq!(cmds.len(), 2);
             }
             other => panic!("expected block, got {other:?}"),
         }
@@ -789,26 +789,26 @@ mod tests {
     #[test]
     fn subshell() {
         let prog = parse("@{ echo isolated }");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Subshell(stmts)) => {
-                assert_eq!(stmts.len(), 1);
+        match &prog.commands[0] {
+            Command::Exec(Expr::Subshell(cmds)) => {
+                assert_eq!(cmds.len(), 1);
             }
             other => panic!("expected subshell, got {other:?}"),
         }
     }
 
     #[test]
-    fn multiple_statements() {
+    fn multiple_commands() {
         let prog = parse("echo a; echo b\necho c");
-        assert_eq!(prog.statements.len(), 3);
+        assert_eq!(prog.commands.len(), 3);
     }
 
     #[test]
     fn nested_redirect_left_to_right() {
         // cmd > out >> log — leftmost redirect is outermost (runs first)
         let prog = parse("cmd > out >> log");
-        match &prog.statements[0] {
-            Statement::Exec(Expr::Redirect(
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
                 inner,
                 RedirectOp::Output {
                     fd: 1,
@@ -837,20 +837,20 @@ mod tests {
     #[test]
     fn empty_program() {
         let prog = parse("");
-        assert_eq!(prog.statements.len(), 0);
+        assert_eq!(prog.commands.len(), 0);
     }
 
     #[test]
     fn comments_only() {
         let prog = parse("# just a comment\n# another one\n");
-        assert_eq!(prog.statements.len(), 0);
+        assert_eq!(prog.commands.len(), 0);
     }
 
     #[test]
-    fn switch_stmt() {
+    fn switch_cmd() {
         let prog = parse("switch $x { case foo { echo foo } case * { echo other } }");
-        match &prog.statements[0] {
-            Statement::Switch { value, cases } => {
+        match &prog.commands[0] {
+            Command::Switch { value, cases } => {
                 assert_eq!(cases.len(), 2);
                 assert!(matches!(&cases[1].0[0], Pattern::Star));
             }
