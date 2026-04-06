@@ -32,6 +32,10 @@ use std::fmt;
 pub enum Word {
     /// Literal string: hello, 'quoted string'
     Literal(String),
+    /// Quoted string: 'text' — always produces Val::Str, never
+    /// type-inferred. Distinguishes '42' (Str) from 42 (Int in
+    /// let context).
+    Quoted(String),
     /// Variable reference: $x, $x(2)
     Var(String),
     /// Indexed variable: $x(n)
@@ -156,6 +160,22 @@ pub enum Pattern {
     Star,
 }
 
+/// Type annotation for let bindings.
+///
+/// Validates incoming values at the binding site (Prism check).
+/// Coercion policy: widening (Int→Str, Bool→Str, Path→Str) is
+/// allowed; narrowing (Str→Int) is rejected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeAnnotation {
+    Unit,
+    Bool,
+    Int,
+    Str,
+    Path,
+    /// List or List[ElementType]. None means untyped elements.
+    List(Option<Box<TypeAnnotation>>),
+}
+
 /// A binding — extends the context Γ with a new name.
 ///
 /// μ̃-binders in the sequent calculus: `x = val` binds a value
@@ -166,7 +186,18 @@ pub enum Pattern {
 pub enum Binding {
     /// Variable assignment: x = value
     /// μ̃-binding: evaluate value (CBV), then extend Γ.
+    /// rc heritage: walks scope chain, mutable, no type check.
     Assignment(String, Value),
+    /// let binding: let [mut] [export] name [: Type] = value
+    /// Always creates in current scope, never walks up.
+    /// Immutable by default (use `mut` for mutable).
+    Let {
+        name: String,
+        value: Value,
+        mutable: bool,
+        export: bool,
+        type_ann: Option<TypeAnnotation>,
+    },
     /// Function definition: fn name { body }
     /// Also handles discipline functions: fn x.get { body }
     Fn { name: String, body: Vec<Command> },
@@ -228,6 +259,7 @@ impl fmt::Display for Word {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Word::Literal(s) => write!(f, "{s}"),
+            Word::Quoted(s) => write!(f, "'{s}'"),
             Word::Var(name) => write!(f, "${name}"),
             Word::Index(name, idx) => write!(f, "${name}({idx})"),
             Word::Count(name) => write!(f, "$#{name}"),

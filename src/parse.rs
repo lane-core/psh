@@ -35,7 +35,7 @@ fn is_word_char(c: char) -> bool {
 fn is_keyword(s: &str) -> bool {
     matches!(
         s,
-        "if" | "else" | "for" | "in" | "switch" | "case" | "fn" | "while" | "ref"
+        "if" | "else" | "for" | "in" | "switch" | "case" | "fn" | "while" | "ref" | "let"
     )
 }
 
@@ -321,7 +321,7 @@ impl<'a> RecParser<'a> {
             Some('\'') => {
                 self.advance();
                 let s = self.read_quoted_string()?;
-                Ok(Word::Literal(s))
+                Ok(Word::Quoted(s))
             }
             Some('$') => {
                 self.advance();
@@ -436,7 +436,10 @@ impl<'a> RecParser<'a> {
             if is_word_char(c) && c != '\'' {
                 let saved = self.save();
                 if let Some(w) = self.read_bare_word() {
-                    if matches!(w.as_str(), "if" | "for" | "while" | "switch" | "fn" | "ref") {
+                    if matches!(
+                        w.as_str(),
+                        "if" | "for" | "while" | "switch" | "fn" | "ref" | "let"
+                    ) {
                         self.restore(saved);
                         return Ok(None);
                     }
@@ -521,6 +524,7 @@ impl<'a> RecParser<'a> {
                         "switch" => return self.switch_cmd(),
                         "fn" => return self.fn_cmd(),
                         "ref" => return self.ref_cmd(),
+                        "let" => return self.let_cmd(),
                         _ => {
                             self.restore(saved);
                         }
@@ -626,6 +630,138 @@ impl<'a> RecParser<'a> {
         self.advance();
         let target = self.expect_word_string("reference target")?;
         Ok(Command::Bind(Binding::Ref { name, target }))
+    }
+
+    /// Parse `let [mut] [export] name [: Type] = value`
+    fn let_cmd(&mut self) -> Result<Command> {
+        // "let" already consumed
+        self.skip_ws();
+
+        let mut mutable = false;
+        let mut export = false;
+
+        // Check for `mut` and `export` modifiers (in any order)
+        loop {
+            let saved = self.save();
+            if let Some(w) = self.read_bare_word() {
+                match w.as_str() {
+                    "mut" if !mutable => {
+                        mutable = true;
+                        self.skip_ws();
+                        continue;
+                    }
+                    "export" if !export => {
+                        export = true;
+                        self.skip_ws();
+                        continue;
+                    }
+                    _ => {
+                        // Not a modifier — this must be the name
+                        self.restore(saved);
+                        break;
+                    }
+                }
+            } else {
+                self.restore(saved);
+                break;
+            }
+        }
+
+        let name = self.expect_word_string("variable name")?;
+        self.skip_ws();
+
+        // Optional type annotation: `: Type` or `: [Type]`
+        let type_ann = if self.peek() == Some(':') {
+            self.advance();
+            self.skip_ws();
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+
+        self.skip_ws();
+        if self.peek() != Some('=') {
+            bail!("{}: expected '=' in let binding", self.pos_str());
+        }
+        self.advance();
+        self.skip_ws();
+
+        let val = if self.at_terminator() {
+            Value::List(vec![])
+        } else {
+            self.value()?
+        };
+
+        Ok(Command::Bind(Binding::Let {
+            name,
+            value: val,
+            mutable,
+            export,
+            type_ann,
+        }))
+    }
+
+    /// Read a type name — alphabetic characters only (no brackets, no digits).
+    fn read_type_name(&mut self) -> Option<String> {
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if c.is_ascii_alphabetic() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.pos > start {
+            Some(self.input[start..self.pos].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Parse a type annotation after `:`.
+    /// Handles: Int, Str, Bool, Path, Unit, List, List[Int], [Int] (sugar for List[Int])
+    fn parse_type_annotation(&mut self) -> Result<TypeAnnotation> {
+        // [Type] sugar for List[Type]
+        if self.peek() == Some('[') {
+            self.advance();
+            self.skip_ws();
+            let inner = self.parse_type_annotation()?;
+            self.skip_ws();
+            if self.peek() != Some(']') {
+                bail!("{}: expected ']' in type annotation", self.pos_str());
+            }
+            self.advance();
+            return Ok(TypeAnnotation::List(Some(Box::new(inner))));
+        }
+
+        let type_name = self
+            .read_type_name()
+            .ok_or_else(|| anyhow::anyhow!("{}: expected type name", self.pos_str()))?;
+
+        match type_name.as_str() {
+            "Unit" => Ok(TypeAnnotation::Unit),
+            "Bool" => Ok(TypeAnnotation::Bool),
+            "Int" => Ok(TypeAnnotation::Int),
+            "Str" => Ok(TypeAnnotation::Str),
+            "Path" => Ok(TypeAnnotation::Path),
+            "List" => {
+                // Check for [ElementType]
+                if self.peek() == Some('[') {
+                    self.advance();
+                    self.skip_ws();
+                    let inner = self.parse_type_annotation()?;
+                    self.skip_ws();
+                    if self.peek() != Some(']') {
+                        bail!("{}: expected ']' after List element type", self.pos_str());
+                    }
+                    self.advance();
+                    Ok(TypeAnnotation::List(Some(Box::new(inner))))
+                } else {
+                    Ok(TypeAnnotation::List(None))
+                }
+            }
+            other => bail!("{}: unknown type '{other}'", self.pos_str()),
+        }
     }
 
     /// Check for and consume a specific keyword.
@@ -1343,6 +1479,144 @@ mod tests {
                 assert_eq!(target, "/pane/editor/attrs/cursor");
             }
             other => panic!("expected ref binding with path, got {other:?}"),
+        }
+    }
+
+    // ── Let binding parse tests ────────────────────────────────
+
+    #[test]
+    fn let_basic() {
+        let prog = parse("let x = 42");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                name,
+                mutable,
+                export,
+                type_ann,
+                ..
+            }) => {
+                assert_eq!(name, "x");
+                assert!(!mutable);
+                assert!(!export);
+                assert!(type_ann.is_none());
+            }
+            other => panic!("expected let binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_mut() {
+        let prog = parse("let mut x = hello");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                name,
+                mutable,
+                export,
+                ..
+            }) => {
+                assert_eq!(name, "x");
+                assert!(mutable);
+                assert!(!export);
+            }
+            other => panic!("expected let mut binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_export() {
+        let prog = parse("let export x = hello");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                name,
+                export,
+                mutable,
+                ..
+            }) => {
+                assert_eq!(name, "x");
+                assert!(export);
+                assert!(!mutable);
+            }
+            other => panic!("expected let export binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_mut_export() {
+        let prog = parse("let mut export x = hello");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                mutable, export, ..
+            }) => {
+                assert!(mutable);
+                assert!(export);
+            }
+            other => panic!("expected let mut export binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_typed() {
+        let prog = parse("let x : Int = 42");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { name, type_ann, .. }) => {
+                assert_eq!(name, "x");
+                assert_eq!(type_ann, &Some(TypeAnnotation::Int));
+            }
+            other => panic!("expected typed let binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_list_typed() {
+        let prog = parse("let x : List[Int] = (1 2 3)");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { type_ann, .. }) => {
+                assert_eq!(
+                    type_ann,
+                    &Some(TypeAnnotation::List(Some(Box::new(TypeAnnotation::Int))))
+                );
+            }
+            other => panic!("expected List[Int] typed let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_bracket_sugar() {
+        let prog = parse("let x : [Int] = (1 2)");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { type_ann, .. }) => {
+                assert_eq!(
+                    type_ann,
+                    &Some(TypeAnnotation::List(Some(Box::new(TypeAnnotation::Int))))
+                );
+            }
+            other => panic!("expected [Int] sugar typed let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn let_quoted_word() {
+        let prog = parse("let x = '42'");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                value: Value::Word(Word::Quoted(s)),
+                ..
+            }) => {
+                assert_eq!(s, "42");
+            }
+            other => panic!("expected let with quoted word, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quoted_stays_quoted() {
+        // Quoted strings in non-let context too
+        let prog = parse("echo '42'");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Quoted("42".into()));
+            }
+            other => panic!("expected quoted arg, got {other:?}"),
         }
     }
 }

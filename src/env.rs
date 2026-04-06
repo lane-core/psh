@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::value::Val;
+use crate::{ast::TypeAnnotation, value::Val};
 
 /// A discipline function pair — the shell-level MonadicLens.
 ///
@@ -34,6 +34,12 @@ pub struct Var {
     pub exported: bool,
     /// Whether this variable is read-only.
     pub readonly: bool,
+    /// Whether this variable can be reassigned.
+    /// true for `x = val` (rc heritage) and `let mut`; false for plain `let`.
+    pub mutable: bool,
+    /// Type annotation from `let x : Type = val`. When present,
+    /// reassignment validates against this type (Prism check).
+    pub type_ann: Option<TypeAnnotation>,
     /// Discipline functions, if any.
     pub discipline: Option<Discipline>,
     /// ksh93 heritage: nameref target. When set, all accesses
@@ -47,6 +53,8 @@ impl Var {
             value,
             exported: false,
             readonly: false,
+            mutable: true,
+            type_ann: None,
             discipline: None,
             nameref: None,
         }
@@ -57,6 +65,8 @@ impl Var {
             value,
             exported: true,
             readonly: false,
+            mutable: true,
+            type_ann: None,
             discipline: None,
             nameref: None,
         }
@@ -68,6 +78,8 @@ impl Var {
             value: Val::empty(),
             exported: false,
             readonly: false,
+            mutable: true,
+            type_ann: None,
             discipline: None,
             nameref: Some(target),
         }
@@ -242,12 +254,12 @@ impl Env {
     /// Otherwise creates in the current (topmost) scope.
     /// Follows namerefs: if `name` is a nameref, the target is set instead.
     ///
-    /// Returns `true` on success, `false` if the variable is readonly
-    /// or the current scope is readonly. The caller must report the error.
-    pub fn set_value(&mut self, name: &str, value: Val) -> bool {
+    /// Returns Ok(()) on success, Err(message) if the variable is readonly,
+    /// immutable, or the value fails type validation.
+    pub fn set_value(&mut self, name: &str, value: Val) -> Result<(), String> {
         // If the topmost scope is readonly, reject all mutations
         if self.is_readonly() {
-            return false;
+            return Err(format!("{name}: readonly scope"));
         }
 
         // Resolve nameref chain before mutating
@@ -257,16 +269,55 @@ impl Env {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(var) = scope.get_mut(&resolved) {
                 if var.readonly {
-                    return false;
+                    return Err(format!("{resolved}: readonly variable"));
                 }
-                var.value = value;
-                return true;
+                if !var.mutable {
+                    return Err(format!("{resolved}: immutable variable (use let mut)"));
+                }
+                // Type-check if annotation present
+                if let Some(ref ann) = var.type_ann {
+                    let validated = validate_type(&value, ann)?;
+                    var.value = validated;
+                } else {
+                    var.value = value;
+                }
+                return Ok(());
             }
         }
         // Not found — create in current scope
         let scope = self.scopes.last_mut().unwrap();
         scope.set(resolved, Var::new(value));
-        true
+        Ok(())
+    }
+
+    /// Create a let-bound variable in the current (topmost) scope.
+    /// Never walks up the scope chain — always local.
+    pub fn let_value(
+        &mut self,
+        name: &str,
+        value: Val,
+        mutable: bool,
+        exported: bool,
+        type_ann: Option<TypeAnnotation>,
+    ) -> Result<(), String> {
+        let validated = if let Some(ref ann) = type_ann {
+            validate_type(&value, ann)?
+        } else {
+            value
+        };
+
+        let var = Var {
+            value: validated,
+            exported,
+            readonly: false,
+            mutable,
+            type_ann,
+            discipline: None,
+            nameref: None,
+        };
+        let scope = self.scopes.last_mut().unwrap();
+        scope.set(name.to_string(), var);
+        Ok(())
     }
 
     /// Get a mutable reference to a variable (for tests and internal use).
@@ -335,6 +386,63 @@ impl Env {
     }
 }
 
+/// Validate a value against a type annotation.
+///
+/// Coercion policy: widening (Int→Str, Bool→Str, Path→Str) is
+/// allowed. Narrowing (Str→Int) is rejected. List[T] validates
+/// each element.
+fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
+    match (val, ann) {
+        (Val::Unit, TypeAnnotation::Unit) => Ok(Val::Unit),
+        (Val::Bool(_), TypeAnnotation::Bool) => Ok(val.clone()),
+        (Val::Int(_), TypeAnnotation::Int) => Ok(val.clone()),
+        (Val::Str(_), TypeAnnotation::Str) => Ok(val.clone()),
+        (Val::Path(_), TypeAnnotation::Path) => Ok(val.clone()),
+        (Val::List(_), TypeAnnotation::List(None)) => Ok(val.clone()),
+        (Val::List(items), TypeAnnotation::List(Some(elem_ann))) => {
+            let mut validated = Vec::with_capacity(items.len());
+            for (i, item) in items.iter().enumerate() {
+                validated.push(
+                    validate_type(item, elem_ann).map_err(|e| format!("element {}: {e}", i + 1))?,
+                );
+            }
+            Ok(Val::List(validated))
+        }
+        // Widening coercions: narrow type → Str
+        (Val::Int(n), TypeAnnotation::Str) => Ok(Val::Str(n.to_string())),
+        (Val::Bool(b), TypeAnnotation::Str) => Ok(Val::Str(b.to_string())),
+        (Val::Path(p), TypeAnnotation::Str) => Ok(Val::Str(p.display().to_string())),
+        // All other combinations are type errors
+        _ => Err(format!(
+            "type mismatch: expected {}, got {}",
+            type_ann_name(ann),
+            val_type_name(val),
+        )),
+    }
+}
+
+fn type_ann_name(ann: &TypeAnnotation) -> &'static str {
+    match ann {
+        TypeAnnotation::Unit => "Unit",
+        TypeAnnotation::Bool => "Bool",
+        TypeAnnotation::Int => "Int",
+        TypeAnnotation::Str => "Str",
+        TypeAnnotation::Path => "Path",
+        TypeAnnotation::List(_) => "List",
+    }
+}
+
+fn val_type_name(val: &Val) -> &'static str {
+    match val {
+        Val::Unit => "Unit",
+        Val::Bool(_) => "Bool",
+        Val::Int(_) => "Int",
+        Val::Str(_) => "Str",
+        Val::Path(_) => "Path",
+        Val::List(_) => "List",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,7 +450,7 @@ mod tests {
     #[test]
     fn scope_resolution() {
         let mut env = Env::new();
-        env.set_value("x", Val::scalar("global"));
+        let _ = env.set_value("x", Val::scalar("global"));
         assert_eq!(env.get_value("x"), Val::scalar("global"));
 
         env.push_scope();
@@ -350,7 +458,7 @@ mod tests {
         assert_eq!(env.get_value("x"), Val::scalar("global"));
 
         // Inner scope shadows outer
-        env.set_value("x", Val::scalar("local"));
+        let _ = env.set_value("x", Val::scalar("local"));
         assert_eq!(env.get_value("x"), Val::scalar("local"));
 
         env.pop_scope();
@@ -364,7 +472,7 @@ mod tests {
     fn new_var_in_current_scope() {
         let mut env = Env::new();
         env.push_scope();
-        env.set_value("y", Val::scalar("inner"));
+        let _ = env.set_value("y", Val::scalar("inner"));
         assert_eq!(env.get_value("y"), Val::scalar("inner"));
 
         env.pop_scope();
@@ -393,10 +501,10 @@ mod tests {
     #[test]
     fn readonly_scope_rejects_mutation() {
         let mut env = Env::new();
-        env.set_value("x", Val::scalar("original"));
+        let _ = env.set_value("x", Val::scalar("original"));
         env.push_readonly_scope();
-        let ok = env.set_value("x", Val::scalar("changed"));
-        assert!(!ok);
+        let result = env.set_value("x", Val::scalar("changed"));
+        assert!(result.is_err());
         env.pop_scope();
         assert_eq!(env.get_value("x"), Val::scalar("original"));
     }
@@ -411,19 +519,21 @@ mod tests {
                 value: Val::scalar("frozen"),
                 exported: false,
                 readonly: true,
+                mutable: true,
+                type_ann: None,
                 discipline: None,
                 nameref: None,
             },
         );
-        let ok = env.set_value("ro", Val::scalar("changed"));
-        assert!(!ok);
+        let result = env.set_value("ro", Val::scalar("changed"));
+        assert!(result.is_err());
         assert_eq!(env.get_value("ro"), Val::scalar("frozen"));
     }
 
     #[test]
     fn nameref_resolves_read() {
         let mut env = Env::new();
-        env.set_value("target", Val::scalar("data"));
+        let _ = env.set_value("target", Val::scalar("data"));
         env.set_nameref("alias", "target".into());
         assert_eq!(env.get_value("alias"), Val::scalar("data"));
     }
@@ -431,16 +541,16 @@ mod tests {
     #[test]
     fn nameref_resolves_write() {
         let mut env = Env::new();
-        env.set_value("target", Val::scalar("old"));
+        let _ = env.set_value("target", Val::scalar("old"));
         env.set_nameref("alias", "target".into());
-        env.set_value("alias", Val::scalar("new"));
+        let _ = env.set_value("alias", Val::scalar("new"));
         assert_eq!(env.get_value("target"), Val::scalar("new"));
     }
 
     #[test]
     fn nameref_chain_resolves() {
         let mut env = Env::new();
-        env.set_value("base", Val::scalar("value"));
+        let _ = env.set_value("base", Val::scalar("value"));
         env.set_nameref("mid", "base".into());
         env.set_nameref("top", "mid".into());
         assert_eq!(env.get_value("top"), Val::scalar("value"));

@@ -167,7 +167,7 @@ and the pane project's `docs/shell.md`.
 
 | Pattern | Rule |
 |---------|------|
-| Value model | Lists of strings (rc). No typed variables. |
+| Value model | Typed enum (Unit, Bool, Int, Str, Path, List). Bare assignment stays Str (rc heritage); `let` bindings run type inference. |
 | AST structure | Three sorts: values (Word), expressions (Expr), statements (Statement). Profunctor redirections. |
 | Error convention | ⊕ only (Status returns). No longjmp, no panic for control flow. |
 | Evaluation | CBV for words, CBN for pipelines. |

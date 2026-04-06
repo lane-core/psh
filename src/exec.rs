@@ -267,25 +267,41 @@ impl Shell {
                 // recursion from `fn x.set { x = $1 }`).
                 if let Some(body) = self.env.get_fn(&disc_name).cloned() {
                     if self.active_disciplines.insert(disc_name.clone()) {
-                        self.env.set_value("1", val.clone());
+                        let _ = self.env.set_value("1", val.clone());
                         let status = self.run_cmds(&body);
                         self.active_disciplines.remove(&disc_name);
-                        if !self.env.set_value(name, val) {
-                            return Status::err(format!("{name}: readonly variable"));
+                        if let Err(e) = self.env.set_value(name, val) {
+                            return Status::err(format!("{name}: {e}"));
                         }
                         status
                     } else {
-                        if !self.env.set_value(name, val) {
-                            return Status::err(format!("{name}: readonly variable"));
+                        if let Err(e) = self.env.set_value(name, val) {
+                            return Status::err(format!("{name}: {e}"));
                         }
                         Status::ok()
                     }
                 } else {
-                    if !self.env.set_value(name, val) {
-                        return Status::err(format!("{name}: readonly variable"));
+                    if let Err(e) = self.env.set_value(name, val) {
+                        return Status::err(format!("{name}: {e}"));
                     }
                     Status::ok()
                 }
+            }
+            Command::Bind(Binding::Let {
+                name,
+                value,
+                mutable,
+                export,
+                type_ann,
+            }) => {
+                let val = self.eval_value_for_let(value);
+                if let Err(e) = self
+                    .env
+                    .let_value(name, val, *mutable, *export, type_ann.clone())
+                {
+                    return Status::err(format!("{name}: {e}"));
+                }
+                Status::ok()
             }
             Command::Bind(Binding::Fn { name, body }) => {
                 self.env.define_fn(name.clone(), body.clone());
@@ -313,8 +329,8 @@ impl Shell {
             Command::For { var, list, body } => {
                 let items = self.eval_value(list);
                 let mut status = Status::ok();
-                for item in &items.0 {
-                    self.env.set_value(var, Val::scalar(item.clone()));
+                for item in items.iter_elements() {
+                    let _ = self.env.set_value(var, item.clone());
                     status = self.run_cmds(body);
                 }
                 status
@@ -345,8 +361,8 @@ impl Shell {
             Command::Return(val) => {
                 if let Some(v) = val {
                     let evaluated = self.eval_value(v);
-                    let s = evaluated.as_str().to_string();
-                    self.env.set_value("status", Val::scalar(&s));
+                    let s = evaluated.to_string();
+                    let _ = self.env.set_value("status", Val::scalar(&s));
                     if s.is_empty() {
                         Status::ok()
                     } else {
@@ -354,7 +370,7 @@ impl Shell {
                     }
                 } else {
                     let current = self.env.get_value("status");
-                    Status(current.as_str().to_string())
+                    Status(current.to_string())
                 }
             }
         }
@@ -452,7 +468,7 @@ impl Shell {
         let mut args: Vec<String> = Vec::new();
         for arg in &cmd.args {
             let val = self.eval_word(arg);
-            for s in val.0.into_iter() {
+            for s in val.to_args() {
                 if !skip_glob && has_glob_meta(&s) {
                     // Expand glob against filesystem.
                     // If no matches, pass the pattern through literally (rc convention).
@@ -473,13 +489,13 @@ impl Shell {
         if name_str == "builtin" {
             if args.is_empty() {
                 let status = Status::err("builtin: usage: builtin command [args...]");
-                self.env.set_value("status", Val::scalar(&status.0));
+                let _ = self.env.set_value("status", Val::scalar(&status.0));
                 return status;
             }
             let builtin_name = &args[0];
             let builtin_args = &args[1..];
             let status = self.dispatch_builtin(builtin_name, builtin_args);
-            self.env.set_value("status", Val::scalar(&status.0));
+            let _ = self.env.set_value("status", Val::scalar(&status.0));
             return status;
         }
 
@@ -487,21 +503,23 @@ impl Shell {
         if let Some(body) = self.env.get_fn(&name_str).cloned() {
             self.env.push_scope();
             for (i, arg) in args.iter().enumerate() {
-                self.env
+                let _ = self
+                    .env
                     .set_value(&(i + 1).to_string(), Val::scalar(arg.clone()));
             }
-            self.env
+            let _ = self
+                .env
                 .set_value("*", Val::list(args.iter().map(|s| s.as_str())));
             let status = self.run_cmds(&body);
             self.env.pop_scope();
-            self.env.set_value("status", Val::scalar(&status.0));
+            let _ = self.env.set_value("status", Val::scalar(&status.0));
             return status;
         }
 
         // Builtins
         let status = self.dispatch_builtin(&name_str, &args);
 
-        self.env.set_value("status", Val::scalar(&status.0));
+        let _ = self.env.set_value("status", Val::scalar(&status.0));
         status
     }
 
@@ -575,7 +593,7 @@ impl Shell {
             statuses.push(self.wait_pid(*pid));
         }
 
-        self.env.set_value(
+        let _ = self.env.set_value(
             "pipestatus",
             Val::list(statuses.iter().map(|s| s.0.as_str())),
         );
@@ -806,6 +824,8 @@ impl Shell {
                 }
                 Val::scalar(s.clone())
             }
+            // Quoted strings always produce Str — no inference
+            Word::Quoted(s) => Val::Str(s.clone()),
             Word::Var(name) => {
                 let disc_name = format!("{name}.get");
                 if let Some(body) = self.env.get_fn(&disc_name).cloned() {
@@ -828,7 +848,7 @@ impl Shell {
             }
             Word::Count(name) => {
                 let val = self.env.get_value(name);
-                Val::scalar(val.count().to_string())
+                Val::Int(val.count() as i64)
             }
             Word::CommandSub(stmts) => {
                 let (read_end, write_end) = match rustix::pipe::pipe() {
@@ -925,12 +945,92 @@ impl Shell {
         match value {
             Value::Word(word) => self.eval_word(word),
             Value::List(words) => {
+                if words.is_empty() {
+                    return Val::Unit;
+                }
                 let mut items = Vec::new();
                 for word in words {
                     let val = self.eval_word(word);
-                    items.extend(val.0);
+                    match val {
+                        Val::List(inner) => items.extend(inner),
+                        Val::Unit => {}
+                        other => items.push(other),
+                    }
                 }
-                Val(items.into_iter().collect())
+                if items.is_empty() {
+                    Val::Unit
+                } else {
+                    Val::List(items)
+                }
+            }
+        }
+    }
+
+    /// Evaluate a word in let context — runs type inference on
+    /// Literal values but preserves Quoted values as Str.
+    fn eval_word_for_let(&mut self, word: &Word) -> Val {
+        match word {
+            // Quoted strings always stay Str — no inference
+            Word::Quoted(s) => Val::Str(s.clone()),
+            // Literals get type inference in let context
+            Word::Literal(s) => {
+                if s == "~" {
+                    return self.env.get_value("home");
+                }
+                if let Some(rest) = s.strip_prefix("~/") {
+                    let home = self.env.get_value("home");
+                    return Val::infer(&format!("{}/{rest}", home.as_str()));
+                }
+                Val::infer(s)
+            }
+            // Count produces Int directly
+            Word::Count(name) => {
+                let val = self.env.get_value(name);
+                Val::Int(val.count() as i64)
+            }
+            // Everything else evaluates normally, then infer if Str
+            _ => {
+                let val = self.eval_word(word);
+                match val {
+                    Val::Str(s) => Val::infer(&s),
+                    Val::List(items) => Val::List(
+                        items
+                            .into_iter()
+                            .map(|v| match v {
+                                Val::Str(s) => Val::infer(&s),
+                                other => other,
+                            })
+                            .collect(),
+                    ),
+                    other => other,
+                }
+            }
+        }
+    }
+
+    /// Evaluate a Value in let context — runs type inference
+    /// on Literal words but not Quoted words.
+    fn eval_value_for_let(&mut self, value: &Value) -> Val {
+        match value {
+            Value::Word(word) => self.eval_word_for_let(word),
+            Value::List(words) => {
+                if words.is_empty() {
+                    return Val::Unit;
+                }
+                let mut items = Vec::new();
+                for word in words {
+                    let val = self.eval_word_for_let(word);
+                    match val {
+                        Val::List(inner) => items.extend(inner),
+                        Val::Unit => {}
+                        other => items.push(other),
+                    }
+                }
+                if items.is_empty() {
+                    Val::Unit
+                } else {
+                    Val::List(items)
+                }
             }
         }
     }
@@ -1026,8 +1126,8 @@ impl Shell {
             }
         }
 
-        if !self.env.set_value(name, value) {
-            return Status::err(format!("set: {name}: readonly variable"));
+        if let Err(e) = self.env.set_value(name, value) {
+            return Status::err(format!("set: {name}: {e}"));
         }
         Status::ok()
     }
@@ -1089,7 +1189,7 @@ impl Shell {
             if val.count() == 1 {
                 self.fd_write_line(&format!("{name} = {val}"));
             } else {
-                let items: Vec<&str> = val.0.iter().map(|s| s.as_str()).collect();
+                let items: Vec<String> = val.to_args();
                 self.fd_write_line(&format!("{name} = ({})", items.join(" ")));
             }
             found = true;
@@ -1115,7 +1215,7 @@ impl Shell {
             };
         }
         let path_val = self.env.get_value("path");
-        for dir in &path_val.0 {
+        for dir in path_val.to_args() {
             let full = format!("{dir}/{name}");
             if std::fs::metadata(&full).is_ok_and(|m| !m.is_dir()) {
                 return Some(full);
@@ -1205,7 +1305,7 @@ impl Shell {
             }
         }
 
-        self.env.set_value(&var_name, Val::scalar(line));
+        let _ = self.env.set_value(&var_name, Val::scalar(line));
         Status::ok()
     }
 
@@ -1887,7 +1987,7 @@ mod tests {
     #[test]
     fn readonly_var_assignment_returns_error() {
         let mut shell = Shell::new();
-        shell.env.set_value("ro", Val::scalar("frozen"));
+        let _ = shell.env.set_value("ro", Val::scalar("frozen"));
         if let Some(var) = shell.env.get_mut_var("ro") {
             var.readonly = true;
         }
@@ -2197,5 +2297,163 @@ mod tests {
             shell.env.get_nameref_target("cursor"),
             Some("/pane/editor/attrs/cursor")
         );
+    }
+
+    // ── Let binding tests ──────────────────────────────────────
+
+    #[test]
+    fn let_basic_inference() {
+        let prog = Parser::parse("let x = 42").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::Int(42));
+    }
+
+    #[test]
+    fn let_str_inference() {
+        let prog = Parser::parse("let x = hello").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn let_bool_inference() {
+        let prog = Parser::parse("let x = true").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::Bool(true));
+    }
+
+    #[test]
+    fn let_path_inference() {
+        let prog = Parser::parse("let x = /tmp").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(
+            shell.env.get_value("x"),
+            Val::Path(std::path::PathBuf::from("/tmp"))
+        );
+    }
+
+    #[test]
+    fn let_immutable_rejects_reassign() {
+        let prog = Parser::parse("let x = 42\nx = 99").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
+        // x should still be 42
+        assert_eq!(shell.env.get_value("x"), Val::Int(42));
+    }
+
+    #[test]
+    fn let_mut_allows_reassign() {
+        let prog = Parser::parse("let mut x = 42\nx = 99").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+    }
+
+    #[test]
+    fn let_typed_accepts_matching() {
+        let prog = Parser::parse("let x : Int = 42").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+        assert_eq!(shell.env.get_value("x"), Val::Int(42));
+    }
+
+    #[test]
+    fn let_typed_rejects_mismatch() {
+        let prog = Parser::parse("let x : Int = hello").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
+    }
+
+    #[test]
+    fn let_list_typed() {
+        let prog = Parser::parse("let x : List[Int] = (1 2 3)").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+        assert_eq!(
+            shell.env.get_value("x"),
+            Val::List(vec![Val::Int(1), Val::Int(2), Val::Int(3)])
+        );
+    }
+
+    #[test]
+    fn let_list_typed_rejects_mixed() {
+        let prog = Parser::parse("let x : List[Int] = (1 hello)").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(!status.is_success());
+    }
+
+    #[test]
+    fn let_bracket_sugar() {
+        // [Int] is sugar for List[Int]
+        let prog = Parser::parse("let x : [Int] = (1 2)").unwrap();
+        let mut shell = Shell::new();
+        let status = shell.run(&prog);
+        assert!(status.is_success());
+        assert_eq!(
+            shell.env.get_value("x"),
+            Val::List(vec![Val::Int(1), Val::Int(2)])
+        );
+    }
+
+    #[test]
+    fn let_quoted_stays_str() {
+        // '42' stays Str even in let context
+        let prog = Parser::parse("let x = '42'").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::Str("42".into()));
+    }
+
+    #[test]
+    fn let_export() {
+        let prog = Parser::parse("let export x = hello").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        let var = shell.env.get("x").unwrap();
+        assert!(var.exported);
+    }
+
+    #[test]
+    fn let_mut_export() {
+        let prog = Parser::parse("let mut export x = hello").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        let var = shell.env.get("x").unwrap();
+        assert!(var.exported);
+        assert!(var.mutable);
+    }
+
+    #[test]
+    fn bare_assignment_stays_str() {
+        // rc heritage: bare x = 42 stays Str (no inference)
+        let prog = Parser::parse("x = 42").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::Str("42".into()));
+    }
+
+    #[test]
+    fn count_returns_int() {
+        let prog = Parser::parse("x = (a b c)\nlet n = $#x").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("n"), Val::Int(3));
+    }
+
+    #[test]
+    fn let_leading_zero_stays_str() {
+        let prog = Parser::parse("let x = 042").unwrap();
+        let mut shell = Shell::new();
+        shell.run(&prog);
+        assert_eq!(shell.env.get_value("x"), Val::Str("042".into()));
     }
 }
