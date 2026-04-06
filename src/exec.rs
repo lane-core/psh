@@ -254,7 +254,9 @@ impl Shell {
                 Err(e) => Status::err(e),
                 Ok(0) => {
                     let status = self.run_expr(inner);
-                    process::exit(if status.is_success() { 0 } else { 1 });
+                    // _exit in forked children: don't run atexit handlers or
+                    // Rust destructors. The kernel closes all fds on process exit.
+                    unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
                 }
                 Ok(pid) => {
                     eprintln!("[{pid}]");
@@ -266,7 +268,9 @@ impl Shell {
                 Err(e) => Status::err(e),
                 Ok(0) => {
                     let status = self.run_cmds(stmts);
-                    process::exit(if status.is_success() { 0 } else { 1 });
+                    // _exit in forked children: don't run atexit handlers or
+                    // Rust destructors. The kernel closes all fds on process exit.
+                    unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
                 }
                 Ok(pid) => self.wait_pid(pid),
             },
@@ -360,7 +364,9 @@ impl Shell {
                     drop(pipe_fds);
 
                     let status = self.run_expr(stage);
-                    process::exit(if status.is_success() { 0 } else { 1 });
+                    // _exit in forked children: don't run atexit handlers or
+                    // Rust destructors. The kernel closes all fds on process exit.
+                    unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
                 }
                 Ok(pid) => {
                     if pgid == 0 {
@@ -562,7 +568,9 @@ impl Shell {
                         // Flush buffered Rust stdout before exit
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
-                        process::exit(if status.is_success() { 0 } else { 1 });
+                        // _exit in forked children: don't run atexit handlers or
+                        // Rust destructors. The kernel closes all fds on process exit.
+                        unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
                     }
                     Ok(pid) => {
                         drop(write_end);
@@ -731,7 +739,7 @@ impl Shell {
                 full_args.extend(args.iter().cloned());
                 let err = exec_command(name, &full_args, &self.env.to_process_env());
                 eprintln!("psh: {name}: {err}");
-                process::exit(127);
+                unsafe { libc::_exit(127) };
             }
             Ok(pid) => self.wait_pid(pid),
         }
