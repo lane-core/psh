@@ -479,10 +479,27 @@ with structural identity.
     `{program}        run program, capture stdout, split on
                       newlines into a list
 
+**Desugaring.** `` `{cmd} `` desugars to `try { cmd }.ok` —
+run the computation, capture both stdout and exit status as
+`Result[T]`, then project the ok branch. On failure, the
+result is `Unit` (empty). The exit status is discarded.
+
+    `{date}           ≡  try { date }.ok
+    `{false}          ≡  try { false }.ok  →  Unit (exit 1)
+
+This means `try` is the primitive capture mechanism. `` `{ } ``
+is sugar that unwraps the success branch and silently drops
+errors. Both share one implementation path — `try` captures
+stdout + exit status into `Result[T]`, and `` `{ } `` applies
+the `.ok` Prism to extract the success value.
+
+If you need the exit status, use `try` directly:
+
+    let result = try { cmd }        # Tagged("ok", val) or Tagged("err", ExitCode(n))
+    let val = `{ cmd }              # just the val, or Unit on failure
+
 rc heritage. psh splits on newlines only — no `$ifs`. The
-captured output has its trailing newline stripped. Command
-substitution is the ↓→↑ polarity shift: force a computation
-into value position (specification.md §The shift operators).
+captured output has its trailing newline stripped.
 
 ### Process substitution
 

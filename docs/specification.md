@@ -339,12 +339,21 @@ door on ⅋.
 
 Three concrete constructs are polarity shifts:
 
-**Command substitution** `` `{ cmd } `` is ↓→↑: force a computation
-into value position. `eval_word` handles `Word::CommandSub` by
-forking a child, piping stdout back, running the commands in the
-child (↓), collecting the output, returning a `Val` (↑). The fork
-boundary makes the shift total: the child's entire environment is
-discarded on exit. No state leaks back except the pipe's bytes.
+**`try { cmd }` is the primitive ↓→↑ shift**: force a computation
+into value position, preserving both stdout and exit status. The
+evaluator forks a child, pipes stdout back, runs the commands in
+the child (↓), collects the output and exit status, returns a
+`Result[T]` = `Tagged("ok", captured_val) | Tagged("err",
+ExitCode(n))` (↑). The fork boundary makes the shift total: the
+child's entire environment is discarded on exit.
+
+**Command substitution** `` `{ cmd } `` **desugars to**
+`try { cmd }.ok` — run the ↓→↑ shift, then project the ok
+branch via the Prism. On failure, the result is `Unit`. The
+exit status is discarded. This desugaring enforces that `try`
+and `` `{ } `` share one capture mechanism. There is no separate
+command substitution implementation — only the `try` capture
+path with an `.ok` unwrap applied.
 
 **Assignment** `x = value` is μ̃-binding. `Command::Bind(Binding::
 Assignment(...))` evaluates the right-hand side (CBV — `eval_value`
