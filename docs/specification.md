@@ -604,14 +604,31 @@ must keep discipline dispatch synchronous and serialized.
 The duploid governs evaluation order within the interpreter — how
 words become values, how pipelines compose, where polarity boundaries
 fall. `par` governs communication protocols — the typed exchange
-sequences between psh and a pane server, between coprocess endpoints,
-or between job handles and the shell.
+sequences between psh and a pane server.
 
-These are different concerns at different layers. The duploid
-determines *when* a `par` session begins and ends (inside a cut).
-`par` determines *what happens* during the session. They compose
-without interference because word expansion finishes, the builtin
-dispatches, and only then does the session-typed exchange begin.
+par is NOT a direct dependency of psh. It enters through pane-session
+(feature-gated). psh's internal machinery — profunctor redirections,
+discipline functions, scope chains, pipeline wiring, job handles —
+uses Rust's ownership, raw fds, and `oneshot` channels. These are
+sufficient: the profunctor structure is in the AST nesting, the
+MonadicLens is in the discipline protocol, the affine fd discipline
+is in `dup`/`close` bracketing.
+
+par enters psh at one boundary: when `get`/`set` builtins connect
+to a pane server, pane-session manages the par handshake internally.
+The evaluator produces fully-evaluated arguments, hands them to the
+builtin, and the builtin opens a session. The session is consumed
+within that synchronous builtin call and returns a `Val` or `Status`.
+Word expansion finishes before the session begins; the session
+finishes before the next command starts. The two layers compose
+without interference because they never overlap in time.
+
+Job handles use `oneshot::Receiver<ExitStatus>` with a `JobHandle`
+wrapper providing Drop compensation (disown on drop). This is the
+ReplyPort pattern from pane, without par — the obligation is
+enforced by `#[must_use]` and Drop, not by session type duality.
+Coprocesses use raw `socketpair`. Signals use self-pipe. These are
+kernel I/O operations, not typed protocols.
 
 
 ## References

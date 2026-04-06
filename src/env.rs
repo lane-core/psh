@@ -66,12 +66,30 @@ impl Var {
 #[derive(Debug)]
 pub struct Scope {
     vars: HashMap<String, Var>,
+    /// When true, mutations through this scope are rejected.
+    /// Used by .get discipline bodies to enforce purity.
+    pub readonly: bool,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Scope {
     pub fn new() -> Self {
         Scope {
             vars: HashMap::new(),
+            readonly: false,
+        }
+    }
+
+    /// Create a readonly scope (.get discipline purity enforcement).
+    pub fn readonly() -> Self {
+        Scope {
+            vars: HashMap::new(),
+            readonly: true,
         }
     }
 
@@ -113,6 +131,12 @@ pub struct Env {
     functions: HashMap<String, Vec<crate::ast::Command>>,
 }
 
+impl Default for Env {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Env {
     pub fn new() -> Self {
         let mut global = Scope::new();
@@ -142,11 +166,21 @@ impl Env {
         self.scopes.push(Scope::new());
     }
 
+    /// Push a readonly scope (.get discipline body).
+    pub fn push_readonly_scope(&mut self) {
+        self.scopes.push(Scope::readonly());
+    }
+
     /// Pop the innermost scope (function return).
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
         }
+    }
+
+    /// Whether the current (topmost) scope is readonly.
+    pub fn is_readonly(&self) -> bool {
+        self.scopes.last().is_some_and(|s| s.readonly)
     }
 
     /// Look up a variable by name. Walks scopes from top to bottom.
@@ -168,20 +202,39 @@ impl Env {
 
     /// Set a variable. If it exists in any scope, updates in place.
     /// Otherwise creates in the current (topmost) scope.
-    pub fn set_value(&mut self, name: &str, value: Val) {
+    ///
+    /// Returns `true` on success, `false` if the variable is readonly
+    /// or the current scope is readonly. The caller must report the error.
+    pub fn set_value(&mut self, name: &str, value: Val) -> bool {
+        // If the topmost scope is readonly, reject all mutations
+        if self.is_readonly() {
+            return false;
+        }
+
         // Search existing scopes for the variable
         for scope in self.scopes.iter_mut().rev() {
             if let Some(var) = scope.get_mut(name) {
                 if var.readonly {
-                    return; // silently refuse — interpreter should report error
+                    return false;
                 }
                 var.value = value;
-                return;
+                return true;
             }
         }
         // Not found — create in current scope
         let scope = self.scopes.last_mut().unwrap();
         scope.set(name.into(), Var::new(value));
+        true
+    }
+
+    /// Get a mutable reference to a variable (for tests and internal use).
+    pub fn get_mut_var(&mut self, name: &str) -> Option<&mut Var> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(name) {
+                return Some(var);
+            }
+        }
+        None
     }
 
     /// Check if a variable has a discipline function.
@@ -266,5 +319,34 @@ mod tests {
         env.define_fn("x.get".into(), vec![]);
         assert!(env.has_discipline("x", "get"));
         assert!(!env.has_discipline("x", "set"));
+    }
+
+    #[test]
+    fn readonly_scope_rejects_mutation() {
+        let mut env = Env::new();
+        env.set_value("x", Val::scalar("original"));
+        env.push_readonly_scope();
+        let ok = env.set_value("x", Val::scalar("changed"));
+        assert!(!ok);
+        env.pop_scope();
+        assert_eq!(env.get_value("x"), Val::scalar("original"));
+    }
+
+    #[test]
+    fn readonly_var_rejects_mutation() {
+        let mut env = Env::new();
+        // Manually create a readonly var
+        env.scopes[0].set(
+            "ro".into(),
+            Var {
+                value: Val::scalar("frozen"),
+                exported: false,
+                readonly: true,
+                discipline: None,
+            },
+        );
+        let ok = env.set_value("ro", Val::scalar("changed"));
+        assert!(!ok);
+        assert_eq!(env.get_value("ro"), Val::scalar("frozen"));
     }
 }

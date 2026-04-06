@@ -199,6 +199,9 @@ pub enum Command {
         value: Value,
         cases: Vec<(Vec<Pattern>, Vec<Command>)>,
     },
+    /// while(expr) { body }
+    /// Iterative looping — re-evaluates condition after each body.
+    While { condition: Expr, body: Vec<Command> },
     /// Return from a function (implicit via last status,
     /// but explicit return is useful).
     Return(Option<Value>),

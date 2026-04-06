@@ -1,164 +1,465 @@
 //! Parser for psh.
 //!
-//! Transforms a token stream into the AST. rc-derived grammar
-//! with ksh93 extensions (discipline functions, coprocesses, ref).
+//! Recursive descent parser operating directly on `&str` — no
+//! separate lexer or token stream. Handles rc's quoting rules
+//! (single quotes only, '' for literal quote) and the context-
+//! sensitive boundaries between words, operators, and whitespace.
 //!
 //! Grammar (informal):
 //!
-//!   program    = command*
-//!   command    = assignment | if | for | while | switch | fn | ref | expr_cmd
-//!   expr_cmd   = pipeline (& | ;  | \n)?
-//!   pipeline   = cmd_expr (| cmd_expr)*
-//!   cmd_expr   = simple_cmd redirection*
-//!   simple_cmd = word+
-//!   word       = WORD | $var | $#var | $var(idx) | `{ program } | (words) | word^word
+//!   program     = command*
+//!   command     = assignment | if | for | while | switch | fn | ref | expr_cmd
+//!   expr_cmd    = or_expr (& | ; | \n)?
+//!   or_expr     = and_expr (|| and_expr)*
+//!   and_expr    = pipeline (&& pipeline)*
+//!   pipeline    = cmd_expr (| cmd_expr)*  (plus |& for coprocess)
+//!   cmd_expr    = ! cmd_expr | { body } | @{ body } | simple_command redirection*
+//!   simple_cmd  = word+
+//!   word        = word_atom (^ word_atom)*
+//!   word_atom   = literal | $var | $#var | $var(idx) | `{ program } | quoted
+//!   value       = word | (word*)
+//!   redirect    = > target | >> target | < target | >[fd] target | >[fd=fd] | >[fd=]
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
-use crate::{
-    ast::*,
-    lex::{Lexer, Pos, Spanned, Token},
-};
+use crate::ast::*;
 
-/// Parser state — walks a pre-lexed token stream.
-pub struct Parser {
-    tokens: Vec<Spanned>,
-    pos: usize,
+fn is_word_char(c: char) -> bool {
+    matches!(c,
+        'a'..='z' | 'A'..='Z' | '0'..='9' |
+        '_' | '-' | '.' | '/' | ':' | '+' |
+        ',' | '%' | '~' | '*' | '?' | '[' | ']'
+    )
 }
 
-impl Parser {
-    pub fn new(tokens: Vec<Spanned>) -> Self {
-        Parser { tokens, pos: 0 }
-    }
+fn is_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "if" | "else" | "for" | "in" | "switch" | "case" | "fn" | "while" | "ref"
+    )
+}
 
+/// Parse the psh language. Public entry point.
+pub struct PshParser;
+
+impl PshParser {
     pub fn parse(input: &str) -> Result<Program> {
-        let tokens = Lexer::new(input).tokenize_all()?;
-        let mut parser = Parser::new(tokens);
-        parser.program()
-    }
-
-    // ── Token access ────────────────────────────────────────
-
-    fn peek(&self) -> &Token {
-        self.tokens
-            .get(self.pos)
-            .map(|s| &s.token)
-            .unwrap_or(&Token::Eof)
-    }
-
-    fn peek_pos(&self) -> Pos {
-        self.tokens
-            .get(self.pos)
-            .map(|s| s.pos)
-            .unwrap_or(Pos { line: 0, col: 0 })
-    }
-
-    fn advance(&mut self) -> &Token {
-        let tok = self
-            .tokens
-            .get(self.pos)
-            .map(|s| &s.token)
-            .unwrap_or(&Token::Eof);
-        if self.pos < self.tokens.len() {
-            self.pos += 1;
+        let mut p = RecParser::new(input);
+        let cmds = p.command_list()?;
+        p.skip_ws();
+        if !p.at_end() {
+            bail!(
+                "{}:{}: unexpected character '{}'",
+                p.line,
+                p.col,
+                p.peek().unwrap()
+            );
         }
-        tok
+        Ok(Program { commands: cmds })
     }
+}
 
-    fn expect(&mut self, expected: &Token) -> Result<()> {
-        let pos = self.peek_pos();
-        let got = self.advance().clone();
-        if &got != expected {
-            bail!("{pos}: expected {expected}, got {got}");
+pub use PshParser as Parser;
+
+/// Recursive descent parser state.
+struct RecParser<'a> {
+    input: &'a str,
+    pos: usize,
+    line: u32,
+    col: u32,
+}
+
+impl<'a> RecParser<'a> {
+    fn new(input: &'a str) -> Self {
+        RecParser {
+            input,
+            pos: 0,
+            line: 1,
+            col: 1,
         }
-        Ok(())
     }
 
-    fn at(&self, tok: &Token) -> bool {
-        self.peek() == tok
+    fn at_end(&self) -> bool {
+        self.pos >= self.input.len()
     }
 
-    fn at_word(&self) -> bool {
-        matches!(self.peek(), Token::Word(_))
+    fn peek(&self) -> Option<char> {
+        self.input[self.pos..].chars().next()
     }
 
-    fn eat(&mut self, tok: &Token) -> bool {
-        if self.at(tok) {
-            self.advance();
-            true
+    fn peek2(&self) -> Option<char> {
+        let mut chars = self.input[self.pos..].chars();
+        chars.next();
+        chars.next()
+    }
+
+    fn advance(&mut self) -> Option<char> {
+        let c = self.peek()?;
+        self.pos += c.len_utf8();
+        if c == '\n' {
+            self.line += 1;
+            self.col = 1;
         } else {
-            false
+            self.col += 1;
+        }
+        Some(c)
+    }
+
+    fn pos_str(&self) -> String {
+        format!("{}:{}", self.line, self.col)
+    }
+
+    fn save(&self) -> (usize, u32, u32) {
+        (self.pos, self.line, self.col)
+    }
+
+    fn restore(&mut self, saved: (usize, u32, u32)) {
+        self.pos = saved.0;
+        self.line = saved.1;
+        self.col = saved.2;
+    }
+
+    /// Skip horizontal whitespace and comments (NOT newlines).
+    fn skip_ws(&mut self) {
+        loop {
+            match self.peek() {
+                Some(' ' | '\t' | '\r') => {
+                    self.advance();
+                }
+                Some('#') => {
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                _ => break,
+            }
         }
     }
 
+    /// Skip terminators: newlines, semicolons, whitespace, comments.
     fn skip_terminators(&mut self) {
-        while matches!(self.peek(), Token::Newline | Token::Semi) {
-            self.advance();
+        loop {
+            match self.peek() {
+                Some(' ' | '\t' | '\r' | '\n' | ';') => {
+                    self.advance();
+                }
+                Some('#') => {
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                _ => break,
+            }
         }
     }
 
     fn at_terminator(&self) -> bool {
-        matches!(
-            self.peek(),
-            Token::Newline | Token::Semi | Token::Eof | Token::RBrace | Token::RParen
-        )
+        matches!(self.peek(), None | Some('\n' | ';' | '}' | ')'))
     }
 
-    /// Is the current position at something that could start a word?
+    /// Is the current position at something that can start a word?
     fn at_word_start(&self) -> bool {
-        matches!(
-            self.peek(),
-            Token::Word(_) | Token::Dollar | Token::DollarHash | Token::Backtick | Token::LParen
-        )
+        match self.peek() {
+            Some(c) => is_word_char(c) || c == '$' || c == '`' || c == '\'',
+            None => false,
+        }
     }
 
-    // ── Grammar rules ───────────────────────────────────────
+    /// Is the current position at an operator that ends argument collection?
+    fn at_operator(&self) -> bool {
+        matches!(
+            self.peek(),
+            Some('|' | '>' | '<' | ';' | '\n' | '}' | ')') | None
+        ) || (self.peek() == Some('&'))
+    }
 
-    fn program(&mut self) -> Result<Program> {
-        let cmds = self.command_list()?;
-        if !self.at(&Token::Eof) {
-            let pos = self.peek_pos();
-            bail!("{pos}: unexpected token {} at end of input", self.peek());
+    // ── Leaf parsers ───────────────────────────────────────
+
+    /// Read a bare word (sequence of word characters).
+    fn read_bare_word(&mut self) -> Option<String> {
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if is_word_char(c) {
+                self.advance();
+            } else {
+                break;
+            }
         }
-        Ok(Program { commands: cmds })
+        if self.pos > start {
+            Some(self.input[start..self.pos].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Read a single-quoted string (opening quote already consumed).
+    fn read_quoted_string(&mut self) -> Result<String> {
+        let mut s = String::new();
+        loop {
+            match self.advance() {
+                Some('\'') => {
+                    if self.peek() == Some('\'') {
+                        self.advance();
+                        s.push('\'');
+                    } else {
+                        return Ok(s);
+                    }
+                }
+                Some(c) => s.push(c),
+                None => bail!("{}:{}: unterminated quoted string", self.line, self.col),
+            }
+        }
+    }
+
+    /// Read a sequence of digits (for fd numbers in redirections).
+    fn read_digits(&mut self) -> Option<String> {
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if c.is_ascii_digit() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.pos > start {
+            Some(self.input[start..self.pos].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Expect a bare-or-quoted word string (used for names in keyword positions).
+    fn expect_word_string(&mut self, what: &str) -> Result<String> {
+        self.skip_ws();
+        if self.peek() == Some('\'') {
+            self.advance();
+            return self.read_quoted_string();
+        }
+        match self.read_bare_word() {
+            Some(s) => Ok(s),
+            None => bail!("{}: expected {what}", self.pos_str()),
+        }
+    }
+
+    // ── Word parsing ───────────────────────────────────────
+
+    /// Parse a word atom — the indivisible unit before ^concat.
+    /// Skips leading whitespace.
+    fn word_atom(&mut self) -> Result<Word> {
+        self.skip_ws();
+        self.word_atom_nows()
+    }
+
+    /// Parse a word atom without skipping leading whitespace.
+    fn word_atom_nows(&mut self) -> Result<Word> {
+        match self.peek() {
+            Some('\'') => {
+                self.advance();
+                let s = self.read_quoted_string()?;
+                Ok(Word::Literal(s))
+            }
+            Some('$') => {
+                self.advance();
+                if self.peek() == Some('#') {
+                    self.advance();
+                    let name = self.read_bare_word().ok_or_else(|| {
+                        anyhow::anyhow!("{}: expected variable name after $#", self.pos_str())
+                    })?;
+                    Ok(Word::Count(name))
+                } else {
+                    let name = self.read_bare_word().ok_or_else(|| {
+                        anyhow::anyhow!("{}: expected variable name after $", self.pos_str())
+                    })?;
+                    if self.peek() == Some('(') {
+                        self.advance();
+                        let idx = self.word()?;
+                        if self.peek() != Some(')') {
+                            bail!("{}: expected ')' after index", self.pos_str());
+                        }
+                        self.advance();
+                        Ok(Word::Index(name, Box::new(idx)))
+                    } else {
+                        Ok(Word::Var(name))
+                    }
+                }
+            }
+            Some('`') => {
+                self.advance();
+                self.skip_ws();
+                if self.peek() != Some('{') {
+                    bail!("{}: expected '{{' after `", self.pos_str());
+                }
+                self.advance();
+                let body = self.command_list()?;
+                self.skip_ws();
+                if self.peek() != Some('}') {
+                    bail!(
+                        "{}: expected '}}' to close command substitution",
+                        self.pos_str()
+                    );
+                }
+                self.advance();
+                Ok(Word::CommandSub(body))
+            }
+            Some(c) if is_word_char(c) => {
+                let s = self.read_bare_word().unwrap();
+                Ok(Word::Literal(s))
+            }
+            other => bail!(
+                "{}: expected word, got {}",
+                self.pos_str(),
+                match other {
+                    Some(c) => format!("'{c}'"),
+                    None => "end of input".into(),
+                }
+            ),
+        }
+    }
+
+    /// Parse a word — atoms joined by ^ (concatenation).
+    fn word(&mut self) -> Result<Word> {
+        let base = self.word_atom()?;
+        self.concat_rest(base)
+    }
+
+    /// After parsing a word atom, check for ^concat continuation.
+    fn concat_rest(&mut self, base: Word) -> Result<Word> {
+        if self.peek() == Some('^') {
+            let mut parts = vec![base];
+            while self.peek() == Some('^') {
+                self.advance();
+                parts.push(self.word_atom_nows()?);
+            }
+            Ok(Word::Concat(parts))
+        } else {
+            Ok(base)
+        }
+    }
+
+    /// Parse a word in argument position — skips ws first and
+    /// stops at operators, terminators, and command-starting keywords.
+    fn arg_word(&mut self) -> Result<Option<Word>> {
+        self.skip_ws();
+        if self.at_terminator() || self.at_operator() || !self.at_word_start() {
+            return Ok(None);
+        }
+
+        // Check for unquoted keyword that starts a command — stop
+        if let Some(c) = self.peek() {
+            if is_word_char(c) && c != '\'' {
+                let saved = self.save();
+                if let Some(w) = self.read_bare_word() {
+                    if matches!(w.as_str(), "if" | "for" | "while" | "switch" | "fn" | "ref") {
+                        self.restore(saved);
+                        return Ok(None);
+                    }
+                    // Not a stopping keyword — it's a literal
+                    let base = Word::Literal(w);
+                    return Ok(Some(self.concat_rest(base)?));
+                }
+                self.restore(saved);
+            }
+        }
+
+        // Parse as a word atom (handles $, `, ')
+        if self.at_word_start() {
+            let atom = self.word_atom_nows()?;
+            Ok(Some(self.concat_rest(atom)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn value(&mut self) -> Result<Value> {
+        self.skip_ws();
+        if self.peek() == Some('(') {
+            self.advance();
+            let mut items = Vec::new();
+            loop {
+                self.skip_ws();
+                if self.peek() == Some(')') {
+                    self.advance();
+                    break;
+                }
+                if self.at_end() {
+                    bail!("{}: expected ')' to close list", self.pos_str());
+                }
+                items.push(self.word()?);
+            }
+            Ok(Value::List(items))
+        } else {
+            Ok(Value::Word(self.word()?))
+        }
+    }
+
+    // ── Body and command list ──────────────────────────────
+
+    fn body(&mut self) -> Result<Vec<Command>> {
+        self.skip_ws();
+        if self.peek() != Some('{') {
+            bail!("{}: expected '{{' to open body", self.pos_str());
+        }
+        self.advance();
+        let cmds = self.command_list()?;
+        self.skip_ws();
+        if self.peek() != Some('}') {
+            bail!("{}: expected '}}' to close body", self.pos_str());
+        }
+        self.advance();
+        Ok(cmds)
     }
 
     fn command_list(&mut self) -> Result<Vec<Command>> {
         let mut cmds = Vec::new();
         self.skip_terminators();
-        while !matches!(self.peek(), Token::Eof | Token::RBrace | Token::RParen) {
+        while !self.at_end() && self.peek() != Some('}') && self.peek() != Some(')') {
             cmds.push(self.command()?);
             self.skip_terminators();
         }
         Ok(cmds)
     }
 
-    fn body(&mut self) -> Result<Vec<Command>> {
-        self.expect(&Token::LBrace)?;
-        let cmds = self.command_list()?;
-        self.expect(&Token::RBrace)?;
-        Ok(cmds)
-    }
+    // ── Commands ───────────────────────────────────────────
 
     fn command(&mut self) -> Result<Command> {
-        match self.peek().clone() {
-            Token::If => self.if_cmd(),
-            Token::For => self.for_cmd(),
-            Token::While => self.while_cmd(),
-            Token::Switch => self.switch_cmd(),
-            Token::Fn => self.fn_cmd(),
-            Token::Ref => self.ref_cmd(),
-            _ => self.simple_or_assign(),
+        self.skip_ws();
+        let saved = self.save();
+        if let Some(c) = self.peek() {
+            if is_word_char(c) {
+                if let Some(w) = self.read_bare_word() {
+                    match w.as_str() {
+                        "if" => return self.if_cmd(),
+                        "for" => return self.for_cmd(),
+                        "while" => return self.while_cmd(),
+                        "switch" => return self.switch_cmd(),
+                        "fn" => return self.fn_cmd(),
+                        "ref" => return self.ref_cmd(),
+                        _ => {
+                            self.restore(saved);
+                        }
+                    }
+                } else {
+                    self.restore(saved);
+                }
+            }
         }
+        self.simple_or_assign()
     }
 
     fn if_cmd(&mut self) -> Result<Command> {
-        self.expect(&Token::If)?;
+        // "if" already consumed
         let condition = self.pipeline()?;
         let then_body = self.body()?;
-        let else_body = if self.eat(&Token::Else) {
-            if self.at(&Token::If) {
-                // else if — wrap in a single-command body
+        self.skip_ws();
+        let else_body = if self.check_keyword("else") {
+            self.skip_ws();
+            if self.check_keyword("if") {
                 let nested = self.if_cmd()?;
                 Some(vec![nested])
             } else {
@@ -175,52 +476,36 @@ impl Parser {
     }
 
     fn for_cmd(&mut self) -> Result<Command> {
-        self.expect(&Token::For)?;
-        let var = self.expect_word("variable name")?;
-        self.expect(&Token::In)?;
+        let var = self.expect_word_string("variable name")?;
+        self.skip_ws();
+        if !self.check_keyword("in") {
+            bail!("{}: expected 'in' after for variable", self.pos_str());
+        }
         let list = self.value()?;
         let body = self.body()?;
         Ok(Command::For { var, list, body })
     }
 
     fn while_cmd(&mut self) -> Result<Command> {
-        self.expect(&Token::While)?;
         let condition = self.pipeline()?;
         let body = self.body()?;
-        // Desugar while into a recursive if
-        // while cond { body } => fn _while { if cond { body; _while } }; _while
-        // Actually, just represent it directly as If + loop in the AST.
-        // We'll add While to Command for clarity.
-        Ok(Command::If {
-            condition,
-            then_body: {
-                let mut b = body;
-                // The evaluator will handle while loops directly.
-                // For now, tag this as a while by wrapping.
-                b.insert(
-                    0,
-                    Command::Exec(Expr::Simple(SimpleCommand {
-                        name: Word::Literal("__while_marker".into()),
-                        args: vec![],
-                        assignments: vec![],
-                    })),
-                );
-                b
-            },
-            else_body: None,
-        })
+        Ok(Command::While { condition, body })
     }
 
     fn switch_cmd(&mut self) -> Result<Command> {
-        self.expect(&Token::Switch)?;
-        let value = self.value()?;
-        self.expect(&Token::LBrace)?;
+        let val = self.value()?;
+        self.skip_ws();
+        if self.peek() != Some('{') {
+            bail!("{}: expected '{{' after switch value", self.pos_str());
+        }
+        self.advance();
         let mut cases = Vec::new();
         self.skip_terminators();
-        while self.eat(&Token::Case) {
+        while self.check_keyword("case") {
             let mut patterns = Vec::new();
             loop {
-                let pat = self.expect_word("pattern")?;
+                self.skip_ws();
+                let pat = self.expect_word_string("pattern")?;
                 patterns.push(if pat == "*" {
                     Pattern::Star
                 } else if pat.contains('*') || pat.contains('?') || pat.contains('[') {
@@ -228,7 +513,8 @@ impl Parser {
                 } else {
                     Pattern::Literal(pat)
                 });
-                if !self.eat(&Token::Or) {
+                self.skip_ws();
+                if self.peek() == Some('{') {
                     break;
                 }
             }
@@ -236,77 +522,111 @@ impl Parser {
             cases.push((patterns, body));
             self.skip_terminators();
         }
-        self.expect(&Token::RBrace)?;
-        Ok(Command::Switch { value, cases })
+        self.skip_ws();
+        if self.peek() != Some('}') {
+            bail!("{}: expected '}}' to close switch", self.pos_str());
+        }
+        self.advance();
+        Ok(Command::Switch { value: val, cases })
     }
 
     fn fn_cmd(&mut self) -> Result<Command> {
-        self.expect(&Token::Fn)?;
-        let name = self.expect_word("function name")?;
+        let name = self.expect_word_string("function name")?;
         let body = self.body()?;
         Ok(Command::Bind(Binding::Fn { name, body }))
     }
 
     fn ref_cmd(&mut self) -> Result<Command> {
-        self.expect(&Token::Ref)?;
-        let name = self.expect_word("reference name")?;
-        self.expect(&Token::Equals)?;
+        let name = self.expect_word_string("reference name")?;
+        self.skip_ws();
+        if self.peek() != Some('=') {
+            bail!("{}: expected '=' after ref name", self.pos_str());
+        }
+        self.advance();
         let target = self.value()?;
-        Ok(Command::Bind(Binding::Assignment(
-            name,
-            // Store as a ref by using a special prefix convention
-            // The evaluator will recognize this and create a nameref.
-            target,
-        )))
+        Ok(Command::Bind(Binding::Assignment(name, target)))
     }
 
-    /// Parse a simple command or assignment.
-    /// Assignment: word = value
-    /// Command: word word word...
-    fn simple_or_assign(&mut self) -> Result<Command> {
-        // Look ahead for assignment: word = value
-        if self.at_word() {
-            let saved_pos = self.pos;
-            let name = self.expect_word("word")?;
-            if self.eat(&Token::Equals) {
-                let val = if self.at_terminator() {
-                    // x = (empty, clears the variable)
-                    Value::List(vec![])
-                } else {
-                    self.value()?
-                };
-                return Ok(Command::Bind(Binding::Assignment(name, val)));
+    /// Check for and consume a specific keyword.
+    fn check_keyword(&mut self, kw: &str) -> bool {
+        self.skip_ws();
+        let saved = self.save();
+        if let Some(w) = self.read_bare_word() {
+            if w == kw {
+                return true;
             }
-            // Not an assignment — rewind
-            self.pos = saved_pos;
+        }
+        self.restore(saved);
+        false
+    }
+
+    fn simple_or_assign(&mut self) -> Result<Command> {
+        self.skip_ws();
+
+        // Look ahead for assignment: word = value
+        let saved = self.save();
+        if let Some(c) = self.peek() {
+            if is_word_char(c) || c == '\'' {
+                if let Ok(Word::Literal(ref name)) = self.word_atom_nows() {
+                    if !is_keyword(name) {
+                        self.skip_ws();
+                        if self.peek() == Some('=') {
+                            self.advance();
+                            self.skip_ws();
+                            let val = if self.at_terminator() {
+                                Value::List(vec![])
+                            } else {
+                                self.value()?
+                            };
+                            return Ok(Command::Bind(Binding::Assignment(name.clone(), val)));
+                        }
+                    }
+                }
+                self.restore(saved);
+            }
         }
 
         let expr = self.or_expr()?;
 
-        // Check for background
-        if self.eat(&Token::Amp) {
+        self.skip_ws();
+        if self.peek() == Some('&') && self.peek2() != Some('&') {
+            self.advance();
             return Ok(Command::Exec(Expr::Background(Box::new(expr))));
         }
 
         Ok(Command::Exec(expr))
     }
 
-    // ── Expression precedence ───────────────────────────────
+    // ── Expression precedence ──────────────────────────────
 
     fn or_expr(&mut self) -> Result<Expr> {
         let mut left = self.and_expr()?;
-        while self.eat(&Token::Or) {
-            let right = self.and_expr()?;
-            left = Expr::Or(Box::new(left), Box::new(right));
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('|') && self.peek2() == Some('|') {
+                self.advance();
+                self.advance();
+                let right = self.and_expr()?;
+                left = Expr::Or(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
         }
         Ok(left)
     }
 
     fn and_expr(&mut self) -> Result<Expr> {
         let mut left = self.pipeline()?;
-        while self.eat(&Token::And) {
-            let right = self.pipeline()?;
-            left = Expr::And(Box::new(left), Box::new(right));
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('&') && self.peek2() == Some('&') {
+                self.advance();
+                self.advance();
+                let right = self.pipeline()?;
+                left = Expr::And(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
         }
         Ok(left)
     }
@@ -314,73 +634,80 @@ impl Parser {
     fn pipeline(&mut self) -> Result<Expr> {
         let first = self.cmd_expr()?;
 
-        if self.eat(&Token::PipeAnd) {
+        self.skip_ws();
+        // Check for |& (coprocess)
+        if self.peek() == Some('|') && self.peek2() == Some('&') {
+            self.advance();
+            self.advance();
             return Ok(Expr::Coprocess(Box::new(first)));
         }
 
-        if !self.at(&Token::Pipe) {
+        // Check for | (pipe) — not || (or)
+        if self.peek() != Some('|') || self.peek2() == Some('|') {
             return Ok(first);
         }
 
         let mut stages = vec![first];
-        while self.eat(&Token::Pipe) {
+        while self.peek() == Some('|') && self.peek2() != Some('|') && self.peek2() != Some('&') {
+            self.advance(); // consume |
             stages.push(self.cmd_expr()?);
+            self.skip_ws();
         }
         Ok(Expr::Pipeline(stages))
     }
 
     fn cmd_expr(&mut self) -> Result<Expr> {
-        let pos = self.peek_pos();
+        self.skip_ws();
 
         // Negation
-        if self.eat(&Token::Bang) {
+        if self.peek() == Some('!') {
+            self.advance();
             let cmd = self.cmd_expr()?;
             return Ok(Expr::Not(Box::new(cmd)));
         }
 
-        // Block
-        if self.at(&Token::LBrace) {
-            let body = self.body()?;
-            let expr = Expr::Block(body);
-            return self.redirections(expr);
+        // Subshell: @{
+        if self.peek() == Some('@') && self.peek2() == Some('{') {
+            self.advance(); // @
+            self.advance(); // {
+            let cmds = self.command_list()?;
+            self.skip_ws();
+            if self.peek() != Some('}') {
+                bail!("{}: expected '}}' to close subshell", self.pos_str());
+            }
+            self.advance();
+            let expr = Expr::Subshell(cmds);
+            return self.parse_redirections(expr);
         }
 
-        // Subshell
-        if self.eat(&Token::AtLBrace) {
-            let cmds = self.command_list()?;
-            self.expect(&Token::RBrace)?;
-            let expr = Expr::Subshell(cmds);
-            return self.redirections(expr);
+        // Block: { ... }
+        if self.peek() == Some('{') {
+            let body = self.body()?;
+            let expr = Expr::Block(body);
+            return self.parse_redirections(expr);
         }
 
         // Simple command
         if !self.at_word_start() {
-            bail!("{pos}: expected command, got {}", self.peek());
+            bail!(
+                "{}: expected command, got {}",
+                self.pos_str(),
+                match self.peek() {
+                    Some(c) => format!("'{c}'"),
+                    None => "end of input".into(),
+                }
+            );
         }
 
-        let cmd = self.simple_command()?;
-        self.redirections(Expr::Simple(cmd))
+        let cmd = self.parse_simple_command()?;
+        self.parse_redirections(Expr::Simple(cmd))
     }
 
-    fn simple_command(&mut self) -> Result<SimpleCommand> {
+    fn parse_simple_command(&mut self) -> Result<SimpleCommand> {
         let name = self.word()?;
         let mut args = Vec::new();
-        while self.at_word_start() && !self.at_terminator() {
-            // Stop at operators
-            if matches!(
-                self.peek(),
-                Token::Pipe
-                    | Token::PipeAnd
-                    | Token::And
-                    | Token::Or
-                    | Token::Amp
-                    | Token::Great
-                    | Token::GreatGreat
-                    | Token::Less
-            ) {
-                break;
-            }
-            args.push(self.word()?);
+        while let Some(w) = self.arg_word()? {
+            args.push(w);
         }
         Ok(SimpleCommand {
             name,
@@ -389,34 +716,20 @@ impl Parser {
         })
     }
 
-    /// Wrap an expression in zero or more redirection nodes.
-    ///
-    /// rc evaluates redirections left-to-right. Our AST nests
-    /// them as Redirect(inner, op), where execution recurses
-    /// into inner before applying op. To get left-to-right
-    /// evaluation, the leftmost redirect must be outermost
-    /// (applied first). We collect all redirects, then wrap
-    /// in reverse order so the first redirect is outermost.
-    fn redirections(&mut self, expr: Expr) -> Result<Expr> {
+    /// Parse zero or more redirections, wrapping the expression.
+    fn parse_redirections(&mut self, expr: Expr) -> Result<Expr> {
         let mut ops = Vec::new();
         loop {
-            match self.peek().clone() {
-                Token::Great => {
+            self.skip_ws();
+            match self.peek() {
+                Some('>') => {
                     self.advance();
-                    let (_fd, op) = self.redirect_target(1, false)?;
+                    let op = self.parse_output_redirect()?;
                     ops.push(op);
                 }
-                Token::GreatGreat => {
+                Some('<') => {
                     self.advance();
-                    let target = self.word()?;
-                    ops.push(RedirectOp::Output {
-                        fd: 1,
-                        target: RedirectTarget::File(target),
-                        append: true,
-                    });
-                }
-                Token::Less => {
-                    self.advance();
+                    self.skip_ws();
                     let target = self.word()?;
                     ops.push(RedirectOp::Input {
                         fd: 0,
@@ -426,8 +739,7 @@ impl Parser {
                 _ => break,
             }
         }
-        // Wrap in reverse: last redirect innermost, first outermost.
-        // Execution recurses inward, so outermost runs first = left-to-right.
+        // Wrap in reverse for left-to-right evaluation
         let mut result = expr;
         for op in ops.into_iter().rev() {
             result = Expr::Redirect(Box::new(result), op);
@@ -435,127 +747,71 @@ impl Parser {
         Ok(result)
     }
 
-    /// Parse redirect target after > — handles >[fd], >[fd=fd], >file
-    fn redirect_target(&mut self, default_fd: u32, append: bool) -> Result<(u32, RedirectOp)> {
-        if self.eat(&Token::LParen) {
-            // >[fd] or >[fd=fd] or >[fd=]
-            // Actually rc uses [] not () for fd redirections.
-            // But we already consumed (, so let's handle it.
-            // TODO: decide on [] vs () for fd redirects
-            let fd_str = self.expect_word("fd number")?;
-            let fd: u32 = fd_str.parse().context("invalid fd number")?;
-            if self.eat(&Token::Equals) {
-                // >[fd=src] or >[fd=] (close)
-                if self.at(&Token::RParen) {
-                    self.expect(&Token::RParen)?;
-                    return Ok((fd, RedirectOp::Close { fd }));
-                }
-                let src_str = self.expect_word("source fd")?;
-                let src: u32 = src_str.parse().context("invalid source fd")?;
-                self.expect(&Token::RParen)?;
-                return Ok((fd, RedirectOp::Dup { dst: fd, src }));
-            }
-            self.expect(&Token::RParen)?;
+    /// Parse what follows '>' — handles >>, >[fd], >[fd=fd], >[fd=], >target.
+    fn parse_output_redirect(&mut self) -> Result<RedirectOp> {
+        // >> (append)
+        if self.peek() == Some('>') {
+            self.advance();
+            self.skip_ws();
             let target = self.word()?;
-            return Ok((
-                fd,
-                RedirectOp::Output {
-                    fd,
-                    target: RedirectTarget::File(target),
-                    append,
-                },
-            ));
-        }
-
-        // Just >file
-        let target = self.word()?;
-        Ok((
-            default_fd,
-            RedirectOp::Output {
-                fd: default_fd,
+            return Ok(RedirectOp::Output {
+                fd: 1,
                 target: RedirectTarget::File(target),
-                append,
-            },
-        ))
-    }
+                append: true,
+            });
+        }
 
-    // ── Words and values ────────────────────────────────────
+        // >[fd...] — fd redirections use []
+        if self.peek() == Some('[') {
+            self.advance();
+            let fd_str = self
+                .read_digits()
+                .ok_or_else(|| anyhow::anyhow!("{}: expected fd number", self.pos_str()))?;
+            let fd: u32 = fd_str
+                .parse()
+                .map_err(|_| anyhow::anyhow!("{}: invalid fd number '{fd_str}'", self.pos_str()))?;
 
-    fn word(&mut self) -> Result<Word> {
-        let pos = self.peek_pos();
-        let base = self.word_atom()?;
-
-        // Check for concatenation: word^word
-        if self.eat(&Token::Caret) {
-            let right = self.word()?;
-            match base {
-                Word::Concat(mut parts) => {
-                    parts.push(right);
-                    Ok(Word::Concat(parts))
+            if self.peek() == Some('=') {
+                self.advance();
+                // >[fd=] (close) or >[fd=src]
+                if self.peek() == Some(']') {
+                    self.advance();
+                    return Ok(RedirectOp::Close { fd });
                 }
-                _ => Ok(Word::Concat(vec![base, right])),
-            }
-        } else {
-            Ok(base)
-        }
-    }
-
-    fn word_atom(&mut self) -> Result<Word> {
-        let pos = self.peek_pos();
-        match self.peek().clone() {
-            Token::Word(s) => {
-                self.advance();
-                Ok(Word::Literal(s))
-            }
-            Token::DollarHash => {
-                self.advance();
-                let name = self.expect_word("variable name")?;
-                Ok(Word::Count(name))
-            }
-            Token::Dollar => {
-                self.advance();
-                let name = self.expect_word("variable name")?;
-                if self.eat(&Token::LParen) {
-                    let idx = self.word()?;
-                    self.expect(&Token::RParen)?;
-                    Ok(Word::Index(name, Box::new(idx)))
-                } else {
-                    Ok(Word::Var(name))
+                let src_str = self
+                    .read_digits()
+                    .ok_or_else(|| anyhow::anyhow!("{}: expected source fd", self.pos_str()))?;
+                let src: u32 = src_str.parse().map_err(|_| {
+                    anyhow::anyhow!("{}: invalid source fd '{src_str}'", self.pos_str())
+                })?;
+                if self.peek() != Some(']') {
+                    bail!("{}: expected ']'", self.pos_str());
                 }
-            }
-            Token::Backtick => {
                 self.advance();
-                self.expect(&Token::LBrace)?;
-                let body = self.command_list()?;
-                self.expect(&Token::RBrace)?;
-                Ok(Word::CommandSub(body))
+                return Ok(RedirectOp::Dup { dst: fd, src });
             }
-            _ => {
-                bail!("{pos}: expected word, got {}", self.peek());
-            }
-        }
-    }
 
-    fn value(&mut self) -> Result<Value> {
-        if self.eat(&Token::LParen) {
-            // List: (word word word)
-            let mut items = Vec::new();
-            while !self.at(&Token::RParen) && !self.at(&Token::Eof) {
-                items.push(self.word()?);
+            if self.peek() != Some(']') {
+                bail!("{}: expected ']' or '='", self.pos_str());
             }
-            self.expect(&Token::RParen)?;
-            Ok(Value::List(items))
-        } else {
-            Ok(Value::Word(self.word()?))
+            self.advance();
+            self.skip_ws();
+            let target = self.word()?;
+            return Ok(RedirectOp::Output {
+                fd,
+                target: RedirectTarget::File(target),
+                append: false,
+            });
         }
-    }
 
-    fn expect_word(&mut self, what: &str) -> Result<String> {
-        let pos = self.peek_pos();
-        match self.advance().clone() {
-            Token::Word(s) => Ok(s),
-            other => bail!("{pos}: expected {what}, got {other}"),
-        }
+        // > target (simple, fd defaults to 1)
+        self.skip_ws();
+        let target = self.word()?;
+        Ok(RedirectOp::Output {
+            fd: 1,
+            target: RedirectTarget::File(target),
+            append: false,
+        })
     }
 }
 
@@ -565,10 +821,6 @@ mod tests {
 
     fn parse(input: &str) -> Program {
         Parser::parse(input).expect("parse failed")
-    }
-
-    fn parse_err(input: &str) -> String {
-        Parser::parse(input).unwrap_err().to_string()
     }
 
     #[test]
@@ -675,6 +927,18 @@ mod tests {
                 assert_eq!(body.len(), 1);
             }
             other => panic!("expected for, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn while_loop() {
+        let prog = parse("while true { echo looping }");
+        match &prog.commands[0] {
+            Command::While { condition, body } => {
+                assert!(matches!(condition, Expr::Simple(_)));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("expected while, got {other:?}"),
         }
     }
 
@@ -805,7 +1069,6 @@ mod tests {
 
     #[test]
     fn nested_redirect_left_to_right() {
-        // cmd > out >> log — leftmost redirect is outermost (runs first)
         let prog = parse("cmd > out >> log");
         match &prog.commands[0] {
             Command::Exec(Expr::Redirect(
@@ -816,8 +1079,6 @@ mod tests {
                     ..
                 },
             )) => {
-                // Outermost is > out (first redirect, runs first)
-                // Inner is >> log (second redirect, runs second)
                 assert!(matches!(
                     inner.as_ref(),
                     Expr::Redirect(
@@ -850,11 +1111,45 @@ mod tests {
     fn switch_cmd() {
         let prog = parse("switch $x { case foo { echo foo } case * { echo other } }");
         match &prog.commands[0] {
-            Command::Switch { value, cases } => {
+            Command::Switch { value: _, cases } => {
                 assert_eq!(cases.len(), 2);
                 assert!(matches!(&cases[1].0[0], Pattern::Star));
             }
             other => panic!("expected switch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fd_redirect_bracket() {
+        let prog = parse("cmd >[2=1]");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(_, RedirectOp::Dup { dst: 2, src: 1 })) => {}
+            other => panic!("expected dup redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fd_close_bracket() {
+        let prog = parse("cmd >[2=]");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(_, RedirectOp::Close { fd: 2 })) => {}
+            other => panic!("expected close redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fd_output_bracket() {
+        let prog = parse("cmd >[2] file");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Output {
+                    fd: 2,
+                    append: false,
+                    ..
+                },
+            )) => {}
+            other => panic!("expected fd output redirect, got {other:?}"),
         }
     }
 }

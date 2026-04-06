@@ -6,23 +6,30 @@
 
 use std::fmt;
 
+use smallvec::SmallVec;
+
 /// A psh value — a list of strings.
 ///
 /// This is rc's value model. No maps, no typed values, no
 /// structured data. Structured data lives in the namespace,
 /// not in the shell.
+///
+/// SmallVec<[String; 4]> avoids heap allocation for the common
+/// case: scalars and short lists stay on the stack.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Val(pub Vec<String>);
+pub struct Val(pub SmallVec<[String; 4]>);
 
 impl Val {
     /// The empty list — false.
     pub fn empty() -> Self {
-        Val(Vec::new())
+        Val(SmallVec::new())
     }
 
     /// A single-element list from a string.
     pub fn scalar(s: impl Into<String>) -> Self {
-        Val(vec![s.into()])
+        let mut v = SmallVec::new();
+        v.push(s.into());
+        Val(v)
     }
 
     /// A list from multiple strings.
@@ -123,7 +130,7 @@ impl From<&str> for Val {
 
 impl From<Vec<String>> for Val {
     fn from(v: Vec<String>) -> Self {
-        Val(v)
+        Val(v.into_iter().collect())
     }
 }
 

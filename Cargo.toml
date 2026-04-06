@@ -2,14 +2,17 @@
 name = "psh"
 version = "0.1.0"
 edition = "2021"
-description = "The pane system shell. rc heritage, ksh93 discipline functions, session-typed internals."
+description = "The pane system shell. rc heritage, ksh93 discipline functions, duploid-structured internals."
 
 [dependencies]
-par = { version = "0.3.10", default-features = false }
-libc = "0.2"
-winnow = "1"
-bpaf = "0.9"
 anyhow = "1"
+bpaf = { version = "0.9", features = ["derive"] }
+combine = "4"
+fnmatch-regex = "0.3"
+libc = "0.2"
+rustix = { version = "1", features = ["pipe", "process", "stdio", "termios", "fs"] }
+signals_receipts = { version = "0.2", features = ["premade", "channel_notify_facility"] }
+smallvec = { version = "1", features = ["union"] }
 
 [features]
 default = []
