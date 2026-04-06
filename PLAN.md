@@ -3,6 +3,15 @@
 Current implementation roadmap. Living document — update when tasks
 complete, priorities change, or new work is identified.
 
+## Design position
+
+psh is an excellent standalone shell first. It must be usable as a
+login shell on Linux, macOS, and other Unix-likes without pane
+deployed. The pane namespace integration is a superpower, not a
+requirement. Adoption comes from the shell being good — clean
+syntax, typed values, discipline functions, principled design —
+not from being tied to a specific system.
+
 ## Current state (2026-04-06)
 
 14 commits, 5940 lines across 8 source files, 157 tests passing.
