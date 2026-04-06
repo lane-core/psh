@@ -11,6 +11,21 @@ enforces resource discipline that ksh93 maintained by convention.
 psh descends from rc, not from the Bourne shell. The analysis starts
 there.
 
+## Design position
+
+psh is an excellent standalone shell first. It must be usable as a
+login shell on Linux, macOS, and other Unix-likes without pane or
+any other infrastructure deployed. The pane namespace integration
+is a superpower that activates when available, not a prerequisite
+for using the shell.
+
+The theoretical foundations — sequent calculus structure, duploid
+polarity, profunctor redirections, typed values — serve the
+standalone shell. They make pipelines compose correctly, catch
+errors at binding time, and give the interactive experience richer
+context for completion and highlighting. The theory earns its keep
+by making psh a better shell, not by enabling a specific platform.
+
 
 ## rc's execution model as sequent calculus
 
