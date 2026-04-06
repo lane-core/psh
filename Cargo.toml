@@ -10,7 +10,7 @@ bpaf = { version = "0.9", features = ["derive"] }
 combine = "4"
 fnmatch-regex = "0.3"
 libc = "0.2"
-rustix = { version = "1", features = ["pipe", "process", "stdio", "termios", "fs"] }
+rustix = { version = "1", features = ["pipe", "process", "stdio", "termios", "fs", "net"] }
 signals_receipts = { version = "0.2", features = ["premade", "channel_notify_facility"] }
 smallvec = { version = "1", features = ["union"] }
 

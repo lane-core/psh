@@ -116,6 +116,20 @@ fn sys_getpid() -> libc::pid_t {
 /// Kept decomposed — job table, environment, and discipline state
 /// are separate concerns. (STYLEGUIDE.md: "Shell struct: keep
 /// decomposed.")
+/// Active coprocess state.
+///
+/// ksh93 heritage (io.c coprocess). Plan 9 heritage: bidirectional
+/// socketpair rather than two unidirectional pipes. The shell holds
+/// one end; the child holds the other. Both sides can read and write.
+struct Coproc {
+    /// Shell's end of the socketpair. Bidirectional.
+    fd: OwnedFd,
+    /// Child PID for wait semantics.
+    pid: libc::pid_t,
+    /// Job table index.
+    job_id: usize,
+}
+
 pub struct Shell {
     pub env: Env,
     /// ksh93 heritage: reentrancy guard for discipline functions.
@@ -128,6 +142,8 @@ pub struct Shell {
     interactive: bool,
     /// The shell's own process group id.
     shell_pgid: libc::pid_t,
+    /// Active coprocess (ksh93: only one at a time).
+    coproc: Option<Coproc>,
 }
 
 impl Default for Shell {
@@ -146,6 +162,7 @@ impl Shell {
             jobs: JobTable::new(),
             interactive: false,
             shell_pgid: 0,
+            coproc: None,
         }
     }
 
@@ -406,7 +423,7 @@ impl Shell {
                 }
                 Ok(pid) => self.wait_pid(pid),
             },
-            Expr::Coprocess(_inner) => Status::err("coprocesses not yet implemented"),
+            Expr::Coprocess(inner) => self.run_coprocess(inner),
         }
     }
 
@@ -548,6 +565,64 @@ impl Shell {
         statuses.pop().unwrap_or_else(Status::ok)
     }
 
+    /// Start a coprocess: `cmd |&`
+    ///
+    /// Creates a socketpair (Plan 9-style bidirectional pipe).
+    /// The child gets one end on stdin/stdout; the shell holds
+    /// the other for read -p / print -p.
+    fn run_coprocess(&mut self, inner: &Expr) -> Status {
+        if self.coproc.is_some() {
+            return Status::err("coprocess: a coprocess is already running");
+        }
+
+        // socketpair gives two bidirectional endpoints
+        let (shell_end, child_end) = match rustix::net::socketpair(
+            rustix::net::AddressFamily::UNIX,
+            rustix::net::SocketType::STREAM,
+            rustix::net::SocketFlags::empty(),
+            None,
+        ) {
+            Ok(pair) => pair,
+            Err(e) => return Status::err(format!("coprocess: socketpair: {e}")),
+        };
+
+        match sys_fork() {
+            Err(e) => Status::err(e),
+            Ok(0) => {
+                // Child: wire child_end to stdin and stdout
+                let child_raw = child_end.as_raw_fd();
+                sys_dup2(child_raw, 0);
+                sys_dup2(child_raw, 1);
+                drop(child_end);
+                drop(shell_end);
+
+                let status = self.run_expr(inner);
+                unsafe { libc::_exit(if status.is_success() { 0 } else { 1 }) };
+            }
+            Ok(pid) => {
+                drop(child_end);
+
+                // Track in job table
+                let cmd_str = format!("coprocess (pid {})", pid);
+                let job_id = self.jobs.insert(Job {
+                    pgid: pid,
+                    pids: vec![pid],
+                    command: cmd_str,
+                    status: JobStatus::Running,
+                });
+
+                self.coproc = Some(Coproc {
+                    fd: shell_end,
+                    pid,
+                    job_id,
+                });
+
+                eprintln!("[{}] {}", job_id, pid);
+                Status::ok()
+            }
+        }
+    }
+
     fn run_redirect(&mut self, inner: &Expr, op: &RedirectOp) -> Status {
         match op {
             RedirectOp::Output { fd, target, append } => {
@@ -657,6 +732,8 @@ impl Shell {
             "jobs" => self.builtin_jobs(args),
             "fg" => self.builtin_fg(args),
             "bg" => self.builtin_bg(args),
+            "read" => self.builtin_read(args),
+            "print" => self.builtin_print(args),
             "true" => Status::ok(),
             "false" => Status::from_code(1),
             "." => self.builtin_source(args),
@@ -885,6 +962,94 @@ impl Shell {
         match crate::parse::Parser::parse(&content) {
             Ok(prog) => self.run(&prog),
             Err(e) => Status::err(format!(".: {}: {e}", args[0])),
+        }
+    }
+
+    // ── Coprocess builtins ────────────────────────────────────
+
+    /// `read [-p] var` — read a line from stdin (or coprocess with -p).
+    ///
+    /// Stores the result in $var. Returns success if a line was read,
+    /// failure on EOF.
+    fn builtin_read(&mut self, args: &[String]) -> Status {
+        let (from_coproc, var_args) = if args.first().is_some_and(|a| a == "-p") {
+            (true, &args[1..])
+        } else {
+            (false, &args[..])
+        };
+
+        let var_name = match var_args.first() {
+            Some(name) => name.clone(),
+            None => return Status::err("read: usage: read [-p] var"),
+        };
+
+        let mut line = String::new();
+
+        if from_coproc {
+            // Read from coprocess
+            let coproc_fd = match &self.coproc {
+                Some(c) => c.fd.as_raw_fd(),
+                None => return Status::err("read: no coprocess"),
+            };
+            // Read one byte at a time until newline or EOF
+            let mut buf = [0u8; 1];
+            loop {
+                let fd = unsafe { rustix::fd::BorrowedFd::borrow_raw(coproc_fd) };
+                match rustix::io::read(fd, &mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        if buf[0] == b'\n' {
+                            break;
+                        }
+                        line.push(buf[0] as char);
+                    }
+                    Err(_) => break,
+                }
+            }
+        } else {
+            // Read from stdin
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            match stdin.lock().read_line(&mut line) {
+                Ok(0) => return Status::from_code(1), // EOF
+                Ok(_) => {
+                    if line.ends_with('\n') {
+                        line.pop();
+                    }
+                }
+                Err(_) => return Status::from_code(1),
+            }
+        }
+
+        self.env.set_value(&var_name, Val::scalar(line));
+        Status::ok()
+    }
+
+    /// `print [-p] args...` — print to stdout (or coprocess with -p).
+    ///
+    /// ksh93 heritage. Like echo but with -p for coprocess output.
+    fn builtin_print(&mut self, args: &[String]) -> Status {
+        let (to_coproc, print_args) = if args.first().is_some_and(|a| a == "-p") {
+            (true, &args[1..])
+        } else {
+            (false, &args[..])
+        };
+
+        let output = format!("{}\n", print_args.join(" "));
+
+        if to_coproc {
+            let coproc_fd = match &self.coproc {
+                Some(c) => c.fd.as_raw_fd(),
+                None => return Status::err("print: no coprocess"),
+            };
+            let fd = unsafe { rustix::fd::BorrowedFd::borrow_raw(coproc_fd) };
+            match rustix::io::write(fd, output.as_bytes()) {
+                Ok(_) => Status::ok(),
+                Err(e) => Status::err(format!("print: write: {e}")),
+            }
+        } else {
+            self.fd_write_line(&print_args.join(" "));
+            Status::ok()
         }
     }
 
