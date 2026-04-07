@@ -565,6 +565,14 @@ a list — the match succeeds if any pattern matches.
 so `=~` cannot appear inside a bare word. No disambiguation
 needed.
 
+`=~` is a primitive, not sugar for `match`. Both use the same
+`glob_match()` pattern engine (fnmatch semantics), but `=~`
+is a pure predicate — no scope management, no structural arm
+dispatch, no Sum decomposition. `match` is a control flow
+construct. They share the pattern function, not the evaluation
+path. rc made the same factoring with `~` (predicate) and
+`switch` (control flow).
+
 rc heritage for the glob semantics (Duff 1990, §Simple
 commands). Perl/Ruby heritage for the `=~` infix syntax.
 
