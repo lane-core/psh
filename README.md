@@ -75,8 +75,7 @@ Heritage
 --------
 
 rc (Duff 1990), ksh93 (discipline functions, coprocesses,
-namerefs), Plan 9 (namespace, simplicity), Be (MonadicLens,
-structured dispatch).
+namerefs).
 
 License
 -------
