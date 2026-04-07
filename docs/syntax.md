@@ -604,7 +604,19 @@ scalar and the other is a non-empty list, the scalar broadcasts.
 
     echo pre-^$list         # pre-a pre-b pre-c
 
-rc heritage (Duff 1990, §Concatenation).
+Scalar broadcast over lists replaces Bourne-style brace
+expansion. The equivalences:
+
+    # bash                      psh
+    file.{c,h,o}               file.^(c h o)
+    src/{bin,lib}               src/^(bin lib)
+    file{,.bak}                 file^('' .bak)
+
+List × list is pairwise, not cross-product.
+`(a b)^(1 2)` produces `(a1 b2)`, not `(a1 a2 b1 b2)`.
+Mismatched lengths produce Unit. Cross-product is
+combinatorial explosion; broadcast covers the common case
+(Duff 1990, §Concatenation).
 
 
 ## Type system
