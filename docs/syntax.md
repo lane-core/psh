@@ -112,7 +112,7 @@ with `$1` bound to the new value. Reentrancy guard prevents
 resolves through `target` on every access. The target is a
 literal name, not an expression. Disciplines are keyed to the
 syntactic name, not the resolved target: `$y` where `ref y = x`
-does NOT fire `fn x.get`. ksh93 heritage.
+does not fire `fn x.get`. ksh93 heritage.
 
 ### Control flow
 
@@ -208,7 +208,7 @@ structural `else`, which makes `=>` + `;` the natural arm syntax.
 keyword with `case` for arms inside. psh uses `match` — a new
 keyword for a new construct. rc's `case` was an arm-introducer
 (sub-keyword inside `switch`). Reusing `case` as a block-
-introducer would create a false cognate — it looks like rc
+introducer creates a false cognate — it looks like rc
 heritage but has a different syntactic role. `match` is honest:
 it names the operation (pattern matching / coproduct elimination)
 without pretending to be rc's `case`.
@@ -238,7 +238,7 @@ arms have the form `pattern =>`. The `$` after the tag name
 distinguishes structural from glob arms.
 
 **Value-producing blocks.** When a body appears in value
-position (RHS of `let`, etc.), it may end with `return value`
+position (RHS of `let`, etc.), it ends with `return value`
 to produce a typed value. Commands in the body run for effects;
 `return` injects a value from the command sort into the value
 sort (CBPV's `return : A → F(A)`). Without `return`, the
@@ -363,13 +363,13 @@ by concatenation.
     lambda      = '\' (NAME+ | '(' ')') '=>' ('{' program '}' | command)
 
 **Accessors** **[planned]** project into structured values. Since
-`.` is NOT in `var_char`, after `$pos` the parser sees `.0` as
+`.` is not in `var_char`, after `$pos` the parser sees `.0` as
 the start of a new token. The `accessor` production captures this:
 `$pos.0` is tuple projection (π₀), `$result.ok` is tagged
 decomposition (Prism preview), `$e.code` is ExitCode extraction.
 The accessor chains compose: `$result.ok.name` is Prism then
 Lens (AffineTraversal). Without the accessor production, the free
-caret rule would produce `$pos ^ .0` (string concatenation), not
+caret rule produces `$pos ^ .0` (string concatenation), not
 structural access. The accessor takes priority over free carets
 when the token immediately following a `var_ref` is `.` followed
 by a digit or `NAME`.
@@ -444,7 +444,7 @@ Examples:
 production is implemented, `$pos.0` is parsed as a projection
 (accessor), not a free caret. The accessor production takes
 priority over free carets after a `var_ref`. This means
-`$stem.c` would also parse as an accessor — a breaking change
+`$stem.c` also parses as an accessor — a breaking change
 from rc's `$stem ^ .c` idiom. The resolution: rc's pattern
 uses explicit caret (`$stem^.c`) or brace delimiting
 (`${stem}.c`) when the accessor production is active. This
@@ -758,7 +758,7 @@ body runs.
 
 Thunks with no free variables (the common case) have empty
 captures. Named function definitions (`fn name { body }`) do
-NOT capture — they use dynamic resolution and positional params
+not capture — they use dynamic resolution and positional params
 as before. Capture is a lambda-only feature, consistent with
 the sort split: lambdas are values (frozen snapshots), named
 functions are commands (live scope access).
@@ -860,8 +860,8 @@ struct Var {
 ```
 
 For stored variables (tiers 1-2), `error` is always `None`.
-For computed variables (`let x = try { }`), the value IS the
-Sum result — `Sum("ok", T)` or `Sum("err",
+For computed variables (`let x = try { }`), the stored value
+holds the Sum result — `Sum("ok", T)` or `Sum("err",
 ExitCode(n))`. The `$x.err` accessor is a Prism preview into
 the err branch of that Sum result, not a separate metadata
 channel. The `error` field preserves the error *string* (the
@@ -955,7 +955,7 @@ value world only through `try`. Thunk is produced by the
 ### Coercion
 
 Widening (total, information-preserving) is allowed. Narrowing
-(partial, may fail) is attempted at reassignment to typed
+(partial, fails on mismatch) is attempted at reassignment to typed
 `let mut` variables.
 
 **Widening (always succeeds):**
@@ -965,7 +965,7 @@ Widening (total, information-preserving) is allowed. Narrowing
     Path → Str        /tmp → "/tmp"
     ExitCode → Str    0 → "0"
 
-**Narrowing (attempted at reassignment, may fail):**
+**Narrowing (attempted at reassignment, fails on mismatch):**
 
     Str → Int         "42" → Int(42), "hello" → error
     Str → Bool        "true" → Bool(true), "x" → error
@@ -1009,7 +1009,7 @@ inline; the value form stores it for later inspection.
 
 ## Live re-evaluation via `.get` disciplines
 
-For tier-3 variables that should re-query on every access
+For tier-3 variables that re-query on every access
 (pane namespace, computed values), use a `.get` discipline:
 
     let mut cursor : Int = 0

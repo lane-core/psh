@@ -1,22 +1,9 @@
 # psh plugin and host API
 
-The plugin API is the shell itself. Three existing mechanisms —
-discipline functions, the unified namespace, and function conventions
-— constitute the extensibility surface. No plugin framework.
-
-This document specifies the plugin model, the host interface, and
-the visual protocol. It is the output of a four-agent roundtable
-(Plan 9, Be, session type, optics) synthesized and refined by Lane.
-
-
-## Thesis
-
-Discipline functions ARE the plugin interface. The namespace IS the
-plugin data layer. Function conventions ARE the visual protocol.
-`menu` IS the interactive primitive. A plugin is a psh script that
-defines functions and disciplines.
-
-No plugin system needs to be designed.
+Three existing mechanisms — discipline functions, the unified
+namespace, and function conventions — constitute the extensibility
+surface. A plugin is a psh script that defines functions and
+disciplines. No plugin framework.
 
 
 ## The three mechanisms
@@ -70,9 +57,10 @@ whether functions exist.
 ## The `menu` protocol
 
 `menu` is a builtin that sends a structured request to the host
-and returns the user's selection. It is a MonadicPrism — effectful
-partial decomposition. The user interaction (rendering, input) is
-the effect; the selection (or its absence) is the prism result.
+and returns the user's selection. The user interaction (rendering,
+input) is the effect; the selection (or its absence) is the result.
+In optic terms, `menu` is a MonadicPrism — effectful partial
+decomposition.
 
 ### Return type: three-tag Sum
 
@@ -98,8 +86,8 @@ from "host unavailable":
 ### Menu styles (hints, not commands)
 
 The shell sends a style hint. The host renders however it can.
-A terminal host may ignore `popup` and render as a numbered
-list. A pane-terminal host may render a compositor popup.
+A terminal host ignores `popup` and renders as a numbered
+list. A pane-terminal host renders a compositor popup.
 
     menu -popup $items           # popup overlay
     menu -vertical $items        # scrollable vertical list
@@ -109,7 +97,7 @@ list. A pane-terminal host may render a compositor popup.
 
 ### Menu request as Val
 
-The menu request IS a Val — no special wire format. Items are
+The menu request is a Val — no special wire format. Items are
 a List. Richer items are Tuples or Sums:
 
     # Simple: List[Str]
@@ -230,7 +218,7 @@ pub trait Host {
 }
 ```
 
-The shell never describes how to render — only what to present.
+The shell describes what to present, never how to render.
 Each method takes structured data and returns a result. The host
 decides the visual form.
 
@@ -295,8 +283,8 @@ pub struct CompleteRequest {
 
 ## Syntax highlighting
 
-Syntax highlighting is NOT an optic — it is a stateful transducer.
-A separate fast lexer (`highlight.rs`) classifies tokens. The host
+Syntax highlighting is a stateful transducer, not an optic — a
+separate fast lexer (`highlight.rs`) classifies tokens and the host
 maps semantic roles to colors.
 
 The shell produces semantic markup:
@@ -326,8 +314,8 @@ impl TerminalHost {
 
 The lexer runs on the visible line only, in under a millisecond.
 It handles incomplete input (unclosed quotes, partial commands)
-gracefully. It is NOT the full parser — it is a separate, simpler
-state machine optimized for speed over correctness at boundaries.
+gracefully. It is not the full parser — a separate, simpler state
+machine optimized for speed over correctness at boundaries.
 
 
 ## Semantic colors
@@ -346,18 +334,19 @@ pub enum SemanticColor {
 }
 ```
 
-This is psh's equivalent of Be's `ui_color()` / `color_which`.
-Plugins that want "error = red" use `SemanticColor::Error`. The
-host decides what error looks like. A dark theme, a light theme,
-and a no-color mode all work with the same plugin code.
+psh's equivalent of Be's `ui_color()` / `color_which`
+(src/kits/interface/InterfaceDefs.cpp). Plugins that want
+"error = red" use `SemanticColor::Error`. The host decides
+what error looks like. A dark theme, a light theme, and a
+no-color mode all work with the same plugin code.
 
 
 ## Plugin composition
 
 ### Function composition: last wins
 
-rc model. The last `fn cd` definition replaces earlier ones.
-Explicit chaining via thunk capture:
+rc model (Duff 1990, §Functions). The last `fn cd` definition
+replaces earlier ones. Explicit chaining via thunk capture:
 
     let _prev_cd = \args => { builtin cd $args }
     fn cd {
@@ -365,9 +354,9 @@ Explicit chaining via thunk capture:
         echo 'now in '`{ pwd }
     }
 
-No handler chains. No union semantics. No framework. The thunk
-sort is the mechanism for capturing a function as a value — the
-`\` lambda snapshots behavior that `fn` can then wrap.
+No handler chains. No union semantics. The thunk sort captures
+a function as a value — `\` snapshots behavior that `fn` then
+wraps.
 
 ### Plugin loading: explicit sourcing
 
@@ -413,40 +402,18 @@ For lazy discovery without sourcing entire plugins:
 
 Optics break at: syntax highlighting (stateful transducer),
 event streams (session types), geometry-dependent layout (Glass
-optic — exotic, Val doesn't provide).
+optic — exotic, Val does not provide).
 
 
-## Open design decisions
-
-### 1. Function disciplines (.before/.after)
-
-Should psh support `fn cd.before { }` and `fn cd.after { }`
-for composable hooks? Session type analysis confirms the
-protocols compose (sequential). Plan 9 and Be prefer explicit
-wrapping via thunks (simpler, debuggable).
-
-Current position: deferred. Explicit wrapping is sufficient
-for v1. Function disciplines can be added if real-world plugin
-composition demands them.
-
-### 2. .get readonly resolution
+## Readonly resolution
 
 The live re-evaluation pattern (`fn cursor.get { cursor = ... }`)
-contradicts the readonly scope claim. Resolution: `.get` is
-readonly except for the discipline's own variable. The
-reentrancy bound is depth-2: `.get` fires → body assigns to
-own variable → `.set` fires (if defined) → `.set` guarded
-against re-triggering `.get`. The bound is not obvious; it
-must be documented.
-
-### 3. Namespace discoverability
-
-Plan 9 let you `ls` the namespace to discover what was
-available. psh's functions aren't in the namespace — `get /fn/cd`
-doesn't work. `whatis` provides the information through a
-separate mechanism. Whether to unify this (make functions
-discoverable through the namespace) is a design question for
-later.
+appears to contradict the readonly scope claim. The resolution:
+`.get` runs in a readonly scope except for the discipline's own
+variable. The reentrancy bound is depth-2: `.get` fires, the body
+assigns to the own variable, `.set` fires (if defined), `.set`
+is guarded against re-triggering `.get`. This bound must be
+documented clearly at the API surface.
 
 
 ## The acid test: package manager

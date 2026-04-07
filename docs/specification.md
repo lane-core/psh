@@ -79,11 +79,11 @@ table) and the environment (Plan 9's `/env`, in-core per process group
 |---|---|---|
 | Shell variables | `$x` — scope chain lookup, innermost first | Weakening (unset vars = empty list), contraction (multiple reads), exchange (no ordering). Scope push/pop on function call/return. |
 | Process environment | `env.PATH` — flat key-value store | Weakening, contraction, exchange. Inherited by child processes (fork copies). |
-| Pane namespace | `/pane/editor/attrs/cursor` — session-typed query to pane server | Weakening (server unavailable = concrete error, not empty value). **No contraction** — each `get` is a fresh query, results may differ. **No exchange** — ordering matters when mutations interleave with reads. |
+| Pane namespace | `/pane/editor/attrs/cursor` — session-typed query to pane server | Weakening (server unavailable = concrete error, not empty value). **No contraction** — each `get` is a fresh query, results differ if the remote state changed. **No exchange** — ordering matters when mutations interleave with reads. |
 
 The first two tiers admit all three structural rules, making them
 classical contexts. The pane namespace tier restricts contraction —
-reading a remote attribute twice may yield different values, and
+reading a remote attribute twice yields different values when the remote state changes, and
 read/write ordering is significant. Exchange holds (filter views
 commute). This is an **affine** resource discipline: weakening and
 exchange, no contraction.
@@ -145,7 +145,7 @@ evaluation.
 `run_redirect` (exec.rs) uses save/restore: `dup(fd)` to save,
 `dup2` to redirect, execute inner, `dup2` to restore. This is the
 same shift pattern as ksh93's polarity frames [2, §The save/restore
-pattern IS the shift] — save context, enter redirected context,
+pattern implements the shift] — save context, enter redirected context,
 restore on exit.
 
 ### fd tracking
@@ -176,7 +176,7 @@ redirecting is a no-op). This is ksh93's `filemap[]` / `sh.topfd`
 pattern [2, sfio-analysis/10-ksh-integration.md] translated to a
 typed Rust structure.
 
-The fd table does NOT mirror kernel state — it records only what
+The fd table does not mirror kernel state — it records only what
 the kernel can't tell you (semantic role). Plan 9 would store this
 in a per-process directory under `/proc`; on commodity kernels, a
 small `BTreeMap` is the honest translation. Target: under 100 lines.
@@ -231,7 +231,7 @@ invokes continuation).
 ### Discipline functions (from ksh93, not rc)
 
 rc had no variable-access hooks. psh adds `.get` (co-Kleisli — pure
-observation, may recompute) and `.set` (Kleisli — effectful mutation)
+observation, recomputes on access) and `.set` (Kleisli — effectful mutation)
 from ksh93. This serves the namespace model: a local variable with a
 `.set` discipline behaves identically to a remote pane attribute with
 an `AttrWriter`. Same polarity, different location.
@@ -411,7 +411,7 @@ Redirect(
 )
 ```
 
-Inner-to-outer nesting IS left-to-right evaluation. The tree
+Inner-to-outer nesting produces left-to-right evaluation. The tree
 structure makes the only legal evaluation order the correct one.
 `run_redirect` recurses inward: save fd, apply operation, evaluate
 inner, restore. Each layer is a self-contained scope. The profunctor
@@ -435,11 +435,10 @@ A variable with `.get` and `.set` disciplines is a MonadicLens:
   side effects (to stderr), but the value flows through unchanged.
 
 - `fn x.set { ... }` is the **update** (Kleisli). It takes a value
-  (`$1`) and may produce effects. The interpreter stores the value
+  (`$1`) and produces effects. The interpreter stores the value
   afterward regardless. Reentrancy guard prevents infinite recursion.
 
-**Why `.get` is notification-only, not a view transformer.** The
-roundtable deliberated this extensively. A transforming `.get` (where
+**Why `.get` is notification-only, not a view transformer.** A transforming `.get` (where
 the body's stdout replaces the returned value) would break the
 MonadicLens laws: PutGet fails because `view(set(s, b))` returns
 whatever `.get` computes, not `b`. GetPut fails because storing the
@@ -464,7 +463,7 @@ AttrWriter (Kleisli).
 hold for tiers 1-2 (local variables, environment) where the store
 is process-local and stable. For tier 3 (pane namespace, computed
 variables), PutGet degrades — `get` after `set` is not guaranteed
-to return the set value because the remote store may have changed.
+to return the set value because the remote store changes independently.
 The lens laws become an affine contract: the shell does not
 guarantee round-trip fidelity for remote attributes. This matches
 the structural-rule distinction: tiers 1-2 admit contraction
@@ -504,7 +503,7 @@ snapshotted into captures — `Vec<(String, Val)>`, positive,
 Clone, no references. This enables currying: `\x => \y =>
 expr $x + $y` works because the inner thunk captures `x` from
 the outer lambda's scope. Named functions (`fn name { body }`)
-do NOT capture — they use dynamic resolution and positional
+do not capture — they use dynamic resolution and positional
 params. Capture is a lambda-only feature, consistent with the
 sort split.
 
@@ -526,8 +525,8 @@ annotation and in the runtime Sum value.
 ### Error metadata on variables
 
 For stored variables (tiers 1-2), the value is always clean data.
-For computed variables (`let x = try { }`), the value IS the
-Sum result — `Sum("ok", T)` on success, `Sum("err",
+For computed variables (`let x = try { }`), the stored value
+holds the Sum result — `Sum("ok", T)` on success, `Sum("err",
 ExitCode(n))` on failure. The `$x.err` accessor is a Prism
 preview into the err branch of that Sum result. The `$x.ok`
 accessor previews the ok branch.
@@ -760,7 +759,7 @@ words become values, how pipelines compose, where polarity boundaries
 fall. `par` governs communication protocols — the typed exchange
 sequences between psh and a pane server.
 
-par is NOT a direct dependency of psh. It enters through pane-session
+par is not a direct dependency of psh. It enters through pane-session
 (feature-gated). psh's internal machinery — profunctor redirections,
 discipline functions, scope chains, pipeline wiring, job handles —
 uses Rust's ownership, raw fds, and `oneshot` channels. These are
