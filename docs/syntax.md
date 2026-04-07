@@ -371,7 +371,8 @@ redirections, pipelines, and operators.
 
     expr_cmd    = or_expr ('&')?
     or_expr     = and_expr ('||' and_expr)*
-    and_expr    = pipeline ('&&' pipeline)*
+    and_expr    = match_expr ('&&' match_expr)*
+    match_expr  = pipeline ('=~' value)?
     pipeline    = cmd_expr ('|' cmd_expr)*
                 | cmd_expr '|&'
     cmd_expr    = '!' cmd_expr
@@ -529,23 +530,43 @@ runtime value model. psh extension — rc had no types.
 
 ### Tilde expansion
 
-`~` is not a word character. It receives special handling:
+`~` is not a word character. It expands to `$home`:
 
 - **`~/path`** — expands to `$home/path`. The `~` must be at
   word start, immediately followed by `/`.
-- **Bare `~`** — expands to `$home` when in argument position.
-- **`~ value pattern...`** — in command position, dispatches to
-  the match builtin (rc heritage).
+- **Bare `~`** — expands to `$home`.
 
-The parser resolves the ambiguity by position: in command-name
-position, `~` is the match operator. In argument position, `~`
-is tilde expansion.
+`~` is always tilde expansion. There is no parse-position
+ambiguity — pattern matching uses the `=~` operator (see
+§Pattern matching below), not `~`.
 
-**Divergence from rc:** rc treated `~` as a keyword and had no
-tilde expansion (Plan 9 used `$home` exclusively). psh adds
-tilde expansion from the POSIX/ksh tradition and resolves the
-conflict by parse-position dispatch. The match builtin retains
-rc's semantics: `~ $x *.c` succeeds if `$x` matches `*.c`.
+**Divergence from rc:** rc treated `~` as a keyword for pattern
+matching and had no tilde expansion (Plan 9 used `$home`
+exclusively). psh separates the two: `~` is tilde expansion
+(POSIX/ksh heritage), `=~` is pattern matching (Perl/Ruby
+heritage with rc glob semantics).
+
+### Pattern matching (`=~`)
+
+The `=~` operator tests whether a value matches one or more
+glob patterns. Infix: value on the left, patterns on the right.
+Returns success (exit 0) if any pattern matches, failure
+otherwise.
+
+    if $x =~ *.txt { echo 'text file' }
+    if $name =~ (foo bar baz) { echo 'known' }
+    $filename =~ (*.c *.h) && echo 'C source'
+
+Patterns use fnmatch glob syntax (`*`, `?`, `[chars]`). The
+value is compared as a string. Multiple patterns are given as
+a list — the match succeeds if any pattern matches.
+
+`=~` is a two-character operator. `=` is not in `word_char`,
+so `=~` cannot appear inside a bare word. No disambiguation
+needed.
+
+rc heritage for the glob semantics (Duff 1990, §Simple
+commands). Perl/Ruby heritage for the `=~` infix syntax.
 
 ### Brace-delimited variable names
 
@@ -1278,11 +1299,11 @@ Functions, builtins, and external commands follow rc's
 rc's keywords: `for in while if not switch fn ~ ! @`.
 
 psh drops `not` (replaced by `else`), `switch` (replaced by
-`match`), and `case` (arms in `match` are bare patterns, no
-sub-keyword needed). Replaces bare `@` with `@{`. Adds `let`,
-`ref`, `else`, `match`, `try`, `return`, `mut`, `export`.
-Treats `~` as a builtin command with parse-position dispatch,
-not as a keyword (see §Tilde expansion).
+`match`), `case` (arms in `match` are bare patterns, no
+sub-keyword needed), and `~` as a match keyword (replaced by
+the `=~` infix operator — see §Pattern matching). Replaces
+bare `@` with `@{`. Adds `let`, `ref`, `else`, `match`, `try`,
+`return`, `mut`, `export`.
 
 `!` and `@` are prefix operators, not keywords. `!` negates
 a command's exit status (`! cmd` succeeds if `cmd` fails).
