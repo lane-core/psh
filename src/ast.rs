@@ -67,7 +67,8 @@ pub enum Value {
     /// List literal: (a b c)
     List(Vec<Word>),
     /// Lambda: \params => body — value-level thunk literal.
-    /// CBPV's U(A → F(B)). Named params, no closure capture.
+    /// CBPV's U(A → F(B)). Named params, capture-by-value for
+    /// free variables (enables currying).
     Lambda {
         params: Vec<String>,
         body: Vec<Command>,

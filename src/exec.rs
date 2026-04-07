@@ -289,13 +289,32 @@ impl Shell {
                     Val::List(vals)
                 }
             }
-            Value::Lambda { params, body } => Val::Thunk {
-                params: params.clone(),
-                body: body.clone(),
-                // No closure capture — dynamic name resolution at force
-                // time (roundtable decision #4, CBPV convention).
-                captures: vec![],
-            },
+            Value::Lambda { params, body } => {
+                // Capture-by-value: snapshot free variables at construction
+                // time. Walk the body AST, collect $var references, subtract
+                // the lambda's own params, and snapshot bound values from
+                // the current scope. Enables currying — inner lambdas close
+                // over outer params. Named functions (fn) do NOT capture;
+                // capture is lambda-only (spec §Thunks).
+                let mut referenced = free_vars_in_commands(body);
+                for p in params {
+                    referenced.remove(p);
+                }
+                let mut captures: Vec<(String, Val)> = Vec::new();
+                for name in &referenced {
+                    let val = self.env.get_value(name);
+                    if val != Val::Unit {
+                        captures.push((name.clone(), val));
+                    }
+                }
+                // Sort for deterministic PartialEq on thunks
+                captures.sort_by(|a, b| a.0.cmp(&b.0));
+                Val::Thunk {
+                    params: params.clone(),
+                    body: body.clone(),
+                    captures,
+                }
+            }
             Value::Tagged(tag, payload) => {
                 let val = self.eval_value(payload);
                 Val::Sum(tag.clone(), Box::new(val))
@@ -477,8 +496,13 @@ impl Shell {
         let cmd_name = cmd_val.to_string();
 
         // Thunk forcing: if command name evaluates to Val::Thunk, force it
-        if let Val::Thunk { params, body, .. } = cmd_val {
-            return self.force_thunk(&params, &body, &sc.args);
+        if let Val::Thunk {
+            params,
+            body,
+            captures,
+        } = cmd_val
+        {
+            return self.force_thunk(&params, &body, &captures, &sc.args);
         }
 
         // Evaluate arguments
@@ -518,28 +542,50 @@ impl Shell {
         self.run_external(&argv)
     }
 
-    /// Force a thunk: push scope, bind params, run body, pop scope.
-    fn force_thunk(&mut self, params: &[String], body: &[Command], args: &[Word]) -> Status {
+    /// Force a thunk: push scope, restore captures, bind params, run body, pop scope.
+    ///
+    /// Captures are restored first so that named params can shadow them —
+    /// a param with the same name as a capture wins, which is correct for
+    /// curried lambdas where the inner lambda's own param overrides the
+    /// outer's captured variable.
+    fn force_thunk(
+        &mut self,
+        params: &[String],
+        body: &[Command],
+        captures: &[(String, Val)],
+        args: &[Word],
+    ) -> Status {
         self.env.push_scope();
 
-        // Bind named parameters
+        // Restore captured variables into the thunk's scope. Uses let_value
+        // (current-scope-only) rather than set_value (walks chain) so captures
+        // shadow outer bindings of the same name rather than mutating them.
+        for (name, val) in captures {
+            let _ = self.env.let_value(name, val.clone(), true, false, None);
+        }
+
+        // Bind named parameters (may shadow captures — correct behavior).
+        // Also uses let_value to stay in the thunk scope.
         let arg_vals: Vec<Val> = args.iter().map(|a| self.eval_word(a)).collect();
         for (i, param) in params.iter().enumerate() {
             let val = arg_vals.get(i).cloned().unwrap_or(Val::Unit);
-            let _ = self.env.set_value(param, val);
+            let _ = self.env.let_value(param, val, true, false, None);
         }
 
         // Bind positional parameters ($1, $2, ..., $*)
         for (i, val) in arg_vals.iter().enumerate() {
-            let _ = self.env.set_value(&(i + 1).to_string(), val.clone());
+            let _ = self.env.let_value(&(i + 1).to_string(), val.clone(), true, false, None);
         }
-        let _ = self.env.set_value(
+        let _ = self.env.let_value(
             "*",
             if arg_vals.is_empty() {
                 Val::Unit
             } else {
                 Val::List(arg_vals)
             },
+            true,
+            false,
+            None,
         );
 
         let outcome = self.run_cmds(body);
@@ -1535,6 +1581,189 @@ fn fnmatch_match(pattern: &str, value: &str) -> bool {
 // ── Make is_var_char accessible for heredoc expansion ──────────
 // The function is in parse.rs and pub(crate)
 
+// ── Free variable collection ───────────────────────────────────
+
+/// Collect all variable names referenced in a command body.
+///
+/// Walks the AST and returns every `$var` reference — the caller
+/// subtracts the lambda's own params to get true free variables.
+/// Used by capture-by-value at lambda construction time.
+fn free_vars_in_commands(cmds: &[Command]) -> HashSet<String> {
+    let mut vars = HashSet::new();
+    for cmd in cmds {
+        free_vars_command(cmd, &mut vars);
+    }
+    vars
+}
+
+fn free_vars_command(cmd: &Command, vars: &mut HashSet<String>) {
+    match cmd {
+        Command::Exec(expr) => free_vars_expr(expr, vars),
+        Command::Bind(binding) => free_vars_binding(binding, vars),
+        Command::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            free_vars_expr(condition, vars);
+            for c in then_body {
+                free_vars_command(c, vars);
+            }
+            if let Some(eb) = else_body {
+                for c in eb {
+                    free_vars_command(c, vars);
+                }
+            }
+        }
+        Command::For {
+            var: _,
+            list,
+            body,
+        } => {
+            free_vars_value(list, vars);
+            for c in body {
+                free_vars_command(c, vars);
+            }
+        }
+        Command::Match { value, arms } => {
+            free_vars_value(value, vars);
+            for (patterns, body) in arms {
+                for pat in patterns {
+                    if let Pattern::Structural { binding, .. } = pat {
+                        // The binding is introduced, not referenced —
+                        // but we don't subtract it here because this
+                        // function collects all references, not free
+                        // variables proper. The caller subtracts params.
+                        let _ = binding;
+                    }
+                }
+                for c in body {
+                    free_vars_command(c, vars);
+                }
+            }
+        }
+        Command::While { condition, body } => {
+            free_vars_expr(condition, vars);
+            for c in body {
+                free_vars_command(c, vars);
+            }
+        }
+        Command::Try {
+            body,
+            else_var: _,
+            else_body,
+        } => {
+            for c in body {
+                free_vars_command(c, vars);
+            }
+            if let Some(eb) = else_body {
+                for c in eb {
+                    free_vars_command(c, vars);
+                }
+            }
+        }
+        Command::Return(val) => {
+            if let Some(v) = val {
+                free_vars_value(v, vars);
+            }
+        }
+    }
+}
+
+fn free_vars_expr(expr: &Expr, vars: &mut HashSet<String>) {
+    match expr {
+        Expr::Simple(sc) => {
+            free_vars_word(&sc.name, vars);
+            for arg in &sc.args {
+                free_vars_word(arg, vars);
+            }
+            for (_, val) in &sc.assignments {
+                free_vars_value(val, vars);
+            }
+        }
+        Expr::Redirect(inner, _) => free_vars_expr(inner, vars),
+        Expr::Pipeline(stages) => {
+            for s in stages {
+                free_vars_expr(s, vars);
+            }
+        }
+        Expr::And(l, r) | Expr::Or(l, r) => {
+            free_vars_expr(l, vars);
+            free_vars_expr(r, vars);
+        }
+        Expr::Not(inner) | Expr::Background(inner) | Expr::Coprocess(inner) => {
+            free_vars_expr(inner, vars);
+        }
+        Expr::Block(cmds) | Expr::Subshell(cmds) => {
+            for c in cmds {
+                free_vars_command(c, vars);
+            }
+        }
+    }
+}
+
+fn free_vars_binding(binding: &Binding, vars: &mut HashSet<String>) {
+    match binding {
+        Binding::Assignment(_, val) | Binding::Let { value: val, .. } => {
+            free_vars_value(val, vars);
+        }
+        Binding::Fn { body, .. } => {
+            for c in body {
+                free_vars_command(c, vars);
+            }
+        }
+        Binding::Ref { .. } => {}
+    }
+}
+
+fn free_vars_value(val: &Value, vars: &mut HashSet<String>) {
+    match val {
+        Value::Word(w) => free_vars_word(w, vars),
+        Value::List(words) => {
+            for w in words {
+                free_vars_word(w, vars);
+            }
+        }
+        Value::Lambda { params: _, body } => {
+            // Recurse into nested lambda bodies — their free vars
+            // are our free vars too (the nested lambda will capture
+            // them at its own construction time, but we still need
+            // to identify them as referenced here).
+            for c in body {
+                free_vars_command(c, vars);
+            }
+        }
+        Value::Tagged(_, payload) => free_vars_value(payload, vars),
+    }
+}
+
+fn free_vars_word(word: &Word, vars: &mut HashSet<String>) {
+    match word {
+        Word::Var(name)
+        | Word::Count(name)
+        | Word::Stringify(name)
+        | Word::BraceVar(name) => {
+            vars.insert(name.clone());
+        }
+        Word::Index(name, idx) => {
+            vars.insert(name.clone());
+            free_vars_word(idx, vars);
+        }
+        Word::Concat(parts) => {
+            for p in parts {
+                free_vars_word(p, vars);
+            }
+        }
+        Word::CommandSub(cmds) | Word::ProcessSub(cmds) => {
+            for c in cmds {
+                free_vars_command(c, vars);
+            }
+        }
+        // Literals, quoted strings, tilde — no variable references
+        Word::Literal(_) | Word::Quoted(_) | Word::Tilde | Word::TildePath(_) => {}
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1779,6 +2008,137 @@ mod tests {
         assert!(matches!(shell.env.get_value("f"), Val::Thunk { .. }));
     }
 
+    #[test]
+    fn lambda_captures_by_value() {
+        // Captured at construction time — later mutation doesn't affect thunk
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = 42");
+        run_with_shell(&mut shell, "let f = \\() => echo $x");
+        run_with_shell(&mut shell, "x = 99");
+        // The thunk should have captured x=42
+        if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
+            assert_eq!(captures.len(), 1);
+            assert_eq!(captures[0], ("x".to_string(), Val::Int(42)));
+        } else {
+            panic!("expected Thunk");
+        }
+    }
+
+    #[test]
+    fn lambda_capture_currying() {
+        // Currying: outer lambda returns inner lambda that captures $x.
+        // The braced body form is needed because => after a lambda
+        // value is not single-command parseable without braces.
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = outer");
+        run_with_shell(&mut shell, "let f = \\() => { let g = \\() => echo $x; $g }");
+        // f captures x=outer at construction time
+        if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
+            assert!(
+                captures.iter().any(|(n, v)| n == "x" && *v == Val::Str("outer".into())),
+                "expected x=outer in captures, got {captures:?}"
+            );
+        } else {
+            panic!("expected Thunk");
+        }
+    }
+
+    #[test]
+    fn lambda_no_capture_of_own_params() {
+        // A lambda's own params are NOT captured — they are bound at force time
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let f = \\x => echo $x");
+        if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
+            assert!(
+                captures.is_empty(),
+                "params should not appear in captures: {captures:?}"
+            );
+        } else {
+            panic!("expected Thunk");
+        }
+    }
+
+    #[test]
+    fn lambda_captures_multiple_vars() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let a = hello");
+        run_with_shell(&mut shell, "let b = world");
+        run_with_shell(&mut shell, "let f = \\() => echo $a $b");
+        if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
+            assert_eq!(captures.len(), 2);
+            // Sorted alphabetically for deterministic order
+            assert!(captures.iter().any(|(n, _)| n == "a"));
+            assert!(captures.iter().any(|(n, _)| n == "b"));
+        } else {
+            panic!("expected Thunk");
+        }
+    }
+
+    #[test]
+    fn lambda_no_free_vars_empty_captures() {
+        // A lambda with no free variables has empty captures
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let f = \\x => echo $x");
+        if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
+            assert!(captures.is_empty());
+        } else {
+            panic!("expected Thunk");
+        }
+    }
+
+    #[test]
+    fn lambda_unbound_vars_not_captured() {
+        // Variables not in scope at construction time are not captured
+        // (they resolve to Unit, which we skip)
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let f = \\() => echo $unbound_var");
+        if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
+            assert!(
+                !captures.iter().any(|(n, _)| n == "unbound_var"),
+                "unbound vars should not be captured: {captures:?}"
+            );
+        } else {
+            panic!("expected Thunk");
+        }
+    }
+
+    #[test]
+    fn lambda_captures_restored_at_force_time() {
+        // Verify captured values are visible in the thunk body at force time.
+        // Use `let mut` so the variable can be reassigned, and pre-declare
+        // `result` so the thunk body's assignment walks the scope chain.
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let mut x = captured_value");
+        run_with_shell(&mut shell, "result = none");
+        run_with_shell(&mut shell, "let f = \\() => { result = $x }");
+        // Mutate x after capture
+        run_with_shell(&mut shell, "x = mutated");
+        // Force the thunk — it should see x=captured_value, not mutated
+        run_with_shell(&mut shell, "$f");
+        assert_eq!(
+            shell.env.get_value("result"),
+            Val::Str("captured_value".into()),
+            "thunk body should see captured value, not current scope"
+        );
+    }
+
+    #[test]
+    fn lambda_param_shadows_capture() {
+        // If a lambda param has the same name as a captured var, the param wins.
+        // Pre-declare `result` so the thunk body's assignment walks the chain.
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = from_outer");
+        run_with_shell(&mut shell, "result = none");
+        // f has `x` as a param — x is NOT captured (subtracted from free vars)
+        run_with_shell(&mut shell, "let f = \\x => { result = $x }");
+        run_with_shell(&mut shell, "$f from_param");
+        assert_eq!(
+            shell.env.get_value("result"),
+            Val::Str("from_param".into()),
+            "param should shadow capture"
+        );
+    }
+
     // ── Tilde match operator ───────────────────────────────
 
     #[test]
@@ -1902,5 +2262,39 @@ mod tests {
         // $#x should be 3
         let val = shell.eval_word(&Word::Count("x".into()));
         assert_eq!(val, Val::Int(3));
+    }
+
+    // ── Free variable collection ──────────────────────────
+
+    #[test]
+    fn free_vars_simple_var() {
+        let prog = PshParser::parse("echo $x $y").unwrap();
+        let vars = free_vars_in_commands(&prog.commands);
+        assert!(vars.contains("x"));
+        assert!(vars.contains("y"));
+        assert_eq!(vars.len(), 2);
+    }
+
+    #[test]
+    fn free_vars_no_vars() {
+        let prog = PshParser::parse("echo hello world").unwrap();
+        let vars = free_vars_in_commands(&prog.commands);
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn free_vars_count_and_stringify() {
+        let prog = PshParser::parse("echo $#x $\"y").unwrap();
+        let vars = free_vars_in_commands(&prog.commands);
+        assert!(vars.contains("x"));
+        assert!(vars.contains("y"));
+    }
+
+    #[test]
+    fn free_vars_nested_in_if() {
+        let prog = PshParser::parse("if true { echo $a } else { echo $b }").unwrap();
+        let vars = free_vars_in_commands(&prog.commands);
+        assert!(vars.contains("a"));
+        assert!(vars.contains("b"));
     }
 }
