@@ -735,27 +735,55 @@ binding named parameters, and running the body. This is CBPV's
 computation.
 
 The thunk is positive (inert, Clone, PartialEq). The body is
-data (AST). No live resources, no continuations, no captured
-mutable state. Negativity (computation, side effects) appears
-only at force time. This is CBPV's U operator — the thunk wraps
-a negative computation in a positive envelope.
+data (AST). No live resources, no continuations. Negativity
+(computation, side effects) appears only at force time. This
+is CBPV's U operator — the thunk wraps a negative computation
+in a positive envelope.
 
-**Dynamic resolution, not closures.** Free variables in the body
-resolve against the calling scope at force time, not the defining
-scope at creation time. This matches how `fn name { body }`
-already works. Closures (capture-by-value at creation time) are
-a possible future extension but not part of the initial design.
-Currying (`\x => \y => expr $x + $y`) does not work — the
-inner thunk does not close over `$x`.
+**Capture-by-value for currying.** When a lambda is constructed,
+any variable that is (a) free in the body and (b) currently
+bound in scope is snapshotted into the thunk's captures. This
+enables currying:
+
+    let add = \x => \y => expr $x + $y
+    let add3 = `{ $add 3 }    # inner thunk captures x=3
+    $add3 5                     # 8
+
+At thunk construction time, the evaluator walks the body AST,
+collects free `$var` references, subtracts the thunk's own
+params, and snapshots the remaining bound values. These captures
+are `Vec<(String, Val)>` — positive, Clone, no references. At
+force time, captures are restored into the scope before the
+body runs.
+
+Thunks with no free variables (the common case) have empty
+captures. Named function definitions (`fn name { body }`) do
+NOT capture — they use dynamic resolution and positional params
+as before. Capture is a lambda-only feature, consistent with
+the sort split: lambdas are values (frozen snapshots), named
+functions are commands (live scope access).
+
+**Thunk representation:**
+
+```rust
+pub struct Thunk {
+    pub params: Vec<String>,
+    pub body: Vec<Command>,
+    pub captures: Vec<(String, Val)>,
+}
+```
+
+PartialEq on thunks is structural (same params + same AST +
+same captures = equal), preserving the Lens laws for Tuples
+or Lists containing thunks.
 
 **Thunk as optic leaf.** A thunk has no internal optic structure
 for the user — no `.params` or `.body` accessor. It is atomic
 from the accessor perspective, like ExitCode. A Tuple containing
 a thunk is Lens-accessible at the thunk's position, but the
-thunk itself is opaque. PartialEq on thunks is structural (same
-params + same AST = equal), which preserves the Lens laws.
+thunk itself is opaque.
 
-Display: `fn(x y){...}` — diagnostic. Not round-trippable.
+Display: `\(x y){...}` — diagnostic. Not round-trippable.
 Truthiness: always true (a thunk exists).
 Concat: coerces to display string.
 
@@ -806,6 +834,7 @@ pub enum Val {
 pub struct Thunk {
     pub params: Vec<String>,
     pub body: Vec<Command>,
+    pub captures: Vec<(String, Val)>,
 }
 ```
 

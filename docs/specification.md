@@ -497,15 +497,24 @@ with tag strings — the void-pointer pattern the type system
 exists to prevent.
 
 Thunk is CBPV's U(A → F(B)) — a computation thunked into the
-value sort. It carries parameter names and a body (AST) but no
-captured environment; free variables resolve dynamically at force
-time. Thunk is an optic leaf — atomic from the accessor
-perspective, like ExitCode. PartialEq on Thunk is structural
-(same params + same AST = equal), which preserves the Lens laws
-in any Tuple or List containing a Thunk. The optic hierarchy
-gains no new optic from Thunk (Grate exists but is inert for
-read-only accessors); it simply gains a new atomic value that
-composes cleanly with existing Lenses and Prisms.
+value sort. It carries parameter names, a body (AST), and
+captured bindings. At thunk construction time, variables that
+are free in the body and bound in the current scope are
+snapshotted into captures — `Vec<(String, Val)>`, positive,
+Clone, no references. This enables currying: `\x => \y =>
+expr $x + $y` works because the inner thunk captures `x` from
+the outer lambda's scope. Named functions (`fn name { body }`)
+do NOT capture — they use dynamic resolution and positional
+params. Capture is a lambda-only feature, consistent with the
+sort split.
+
+Thunk is an optic leaf — atomic from the accessor perspective,
+like ExitCode. PartialEq on Thunk is structural (same params +
+same AST + same captures = equal), which preserves the Lens
+laws in any Tuple or List containing a Thunk. The optic
+hierarchy gains no new optic from Thunk (Grate exists but is
+inert for read-only accessors); it simply gains a new atomic
+value that composes cleanly with existing Lenses and Prisms.
 
 ExitCode is a reified computation outcome. It enters the value
 world through `try` (the ↑ shift). `try { body }` runs the body
