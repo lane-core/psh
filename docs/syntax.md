@@ -274,7 +274,7 @@ receives the Status string of the failing command.
         let title = `{ get /pane/focused/attrs/title }
         let cursor = `{ get /pane/focused/attrs/cursor }
         echo $title' ['$cursor']'
-    } else $e {
+    } else e {
         echo 'pane unavailable: '$e
     }
 

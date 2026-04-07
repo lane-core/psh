@@ -447,7 +447,7 @@ syntax.md grammar:
                 try {
                     rm ~/.psh/lib/$2^.psh
                     echo 'pkg: removed '$2
-                } else $e {
+                } else e {
                     echo 'pkg: '$2' not installed'
                 }
             };
