@@ -112,7 +112,6 @@ pub struct Coproc {
 /// Result of capture_subprocess — shared by `{cmd} and try-in-value.
 struct CaptureResult {
     stdout: String,
-    #[allow(dead_code)] // Used by try-in-value (Phase 8)
     exit_code: i32,
 }
 
@@ -178,6 +177,10 @@ impl Shell {
             Word::Literal(s) => Val::Str(s.clone()),
             Word::Quoted(s) => Val::Str(s.clone()),
             Word::Var(name) => self.resolve_var(name),
+            Word::VarAccess(name, accessors) => {
+                let val = self.resolve_var(name);
+                self.apply_accessors(val, accessors)
+            }
             Word::Index(name, idx_word) => {
                 let val = self.resolve_var(name);
                 let idx_val = self.eval_word(idx_word);
@@ -277,6 +280,26 @@ impl Shell {
         self.env.get_value(name)
     }
 
+    /// Apply an accessor chain left-to-right. Prism miss → Unit
+    /// (absorbing element — once Unit, stays Unit through remaining
+    /// accessors). See syntax.md §Accessors.
+    fn apply_accessors(&self, mut val: Val, accessors: &[Accessor]) -> Val {
+        for acc in accessors {
+            val = match acc {
+                Accessor::Index(i) => val.tuple_index(*i),
+                Accessor::Tag(tag) => match val {
+                    Val::Sum(ref t, ref payload) if t == tag => *payload.clone(),
+                    _ => Val::Unit,
+                },
+                Accessor::Code => match val {
+                    Val::ExitCode(code) => Val::Int(code as i64),
+                    _ => Val::Unit,
+                },
+            };
+        }
+        val
+    }
+
     /// Evaluate a Value (word | list | lambda | tagged).
     pub fn eval_value(&mut self, value: &Value) -> Val {
         match value {
@@ -313,6 +336,21 @@ impl Shell {
                     params: params.clone(),
                     body: body.clone(),
                     captures,
+                }
+            }
+            Value::Try(cmds) => {
+                let result = self.capture_subprocess(cmds);
+                if result.exit_code == 0 {
+                    // Success: wrap captured stdout as ok payload
+                    let text = result.stdout.trim_end_matches('\n').to_string();
+                    let val = if text.is_empty() {
+                        Val::Unit
+                    } else {
+                        Val::Str(text)
+                    };
+                    Val::Sum("ok".into(), Box::new(val))
+                } else {
+                    Val::Sum("err".into(), Box::new(Val::ExitCode(result.exit_code)))
                 }
             }
             Value::Tagged(tag, payload) => {
@@ -574,7 +612,9 @@ impl Shell {
 
         // Bind positional parameters ($1, $2, ..., $*)
         for (i, val) in arg_vals.iter().enumerate() {
-            let _ = self.env.let_value(&(i + 1).to_string(), val.clone(), true, false, None);
+            let _ = self
+                .env
+                .let_value(&(i + 1).to_string(), val.clone(), true, false, None);
         }
         let _ = self.env.let_value(
             "*",
@@ -799,9 +839,7 @@ impl Shell {
                 let saved = unsafe { libc::dup(*fd as i32) };
                 if saved == -1 {
                     unsafe { libc::close(new_fd) };
-                    return Status::err(format!(
-                        "dup: {}", std::io::Error::last_os_error()
-                    ));
+                    return Status::err(format!("dup: {}", std::io::Error::last_os_error()));
                 }
                 unsafe { libc::dup2(new_fd, *fd as i32) };
                 unsafe { libc::close(new_fd) };
@@ -821,9 +859,7 @@ impl Shell {
                     let saved = unsafe { libc::dup(*fd as i32) };
                     if saved == -1 {
                         unsafe { libc::close(new_fd) };
-                        return Status::err(format!(
-                            "dup: {}", std::io::Error::last_os_error()
-                        ));
+                        return Status::err(format!("dup: {}", std::io::Error::last_os_error()));
                     }
                     unsafe { libc::dup2(new_fd, *fd as i32) };
                     unsafe { libc::close(new_fd) };
@@ -859,9 +895,7 @@ impl Shell {
                 let saved = unsafe { libc::dup(*fd as i32) };
                 if saved == -1 {
                     unsafe { libc::close(new_fd) };
-                    return Status::err(format!(
-                        "dup: {}", std::io::Error::last_os_error()
-                    ));
+                    return Status::err(format!("dup: {}", std::io::Error::last_os_error()));
                 }
                 unsafe { libc::dup2(new_fd, *fd as i32) };
                 unsafe { libc::close(new_fd) };
@@ -873,9 +907,7 @@ impl Shell {
             RedirectOp::Dup { dst, src } => {
                 let saved = unsafe { libc::dup(*dst as i32) };
                 if saved == -1 {
-                    return Status::err(format!(
-                        "dup: {}", std::io::Error::last_os_error()
-                    ));
+                    return Status::err(format!("dup: {}", std::io::Error::last_os_error()));
                 }
                 unsafe { libc::dup2(*src as i32, *dst as i32) };
                 let result = self.run_expr(inner);
@@ -886,9 +918,7 @@ impl Shell {
             RedirectOp::Close { fd } => {
                 let saved = unsafe { libc::dup(*fd as i32) };
                 if saved == -1 {
-                    return Status::err(format!(
-                        "dup: {}", std::io::Error::last_os_error()
-                    ));
+                    return Status::err(format!("dup: {}", std::io::Error::last_os_error()));
                 }
                 unsafe { libc::close(*fd as i32) };
                 let result = self.run_expr(inner);
@@ -915,9 +945,7 @@ impl Shell {
         let saved = unsafe { libc::dup(0) };
         if saved == -1 {
             unsafe { libc::close(fds[0]) };
-            return Status::err(format!(
-                "dup: {}", std::io::Error::last_os_error()
-            ));
+            return Status::err(format!("dup: {}", std::io::Error::last_os_error()));
         }
         unsafe { libc::dup2(fds[0], 0) };
         unsafe { libc::close(fds[0]) };
@@ -1219,7 +1247,7 @@ impl Shell {
                     }
                 }
             }
-            Binding::Fn { name, body } => {
+            Binding::Fn { name, body, .. } => {
                 self.env.define_fn(name.clone(), body.clone());
                 // Register discipline if it's a x.get or x.set function
                 if let Some(dot_pos) = name.rfind('.') {
@@ -1649,11 +1677,7 @@ fn free_vars_command(cmd: &Command, vars: &mut HashSet<String>) {
                 }
             }
         }
-        Command::For {
-            var: _,
-            list,
-            body,
-        } => {
+        Command::For { var: _, list, body } => {
             free_vars_value(list, vars);
             for c in body {
                 free_vars_command(c, vars);
@@ -1767,16 +1791,21 @@ fn free_vars_value(val: &Value, vars: &mut HashSet<String>) {
                 free_vars_command(c, vars);
             }
         }
+        Value::Try(cmds) => {
+            for c in cmds {
+                free_vars_command(c, vars);
+            }
+        }
         Value::Tagged(_, payload) => free_vars_value(payload, vars),
     }
 }
 
 fn free_vars_word(word: &Word, vars: &mut HashSet<String>) {
     match word {
-        Word::Var(name)
-        | Word::Count(name)
-        | Word::Stringify(name)
-        | Word::BraceVar(name) => {
+        Word::Var(name) | Word::Count(name) | Word::Stringify(name) | Word::BraceVar(name) => {
+            vars.insert(name.clone());
+        }
+        Word::VarAccess(name, _) => {
             vars.insert(name.clone());
         }
         Word::Index(name, idx) => {
@@ -2012,7 +2041,7 @@ mod tests {
 
     #[test]
     fn try_abort_to_else() {
-        let s = run_status("try { false } else $e { echo $e }");
+        let s = run_status("try { false } else e { echo $e }");
         assert!(s.is_success());
     }
 
@@ -2065,11 +2094,16 @@ mod tests {
         // value is not single-command parseable without braces.
         let mut shell = Shell::new();
         run_with_shell(&mut shell, "let x = outer");
-        run_with_shell(&mut shell, "let f = \\() => { let g = \\() => echo $x; $g }");
+        run_with_shell(
+            &mut shell,
+            "let f = \\() => { let g = \\() => echo $x; $g }",
+        );
         // f captures x=outer at construction time
         if let Val::Thunk { captures, .. } = shell.env.get_value("f") {
             assert!(
-                captures.iter().any(|(n, v)| n == "x" && *v == Val::Str("outer".into())),
+                captures
+                    .iter()
+                    .any(|(n, v)| n == "x" && *v == Val::Str("outer".into())),
                 "expected x=outer in captures, got {captures:?}"
             );
         } else {
@@ -2343,10 +2377,10 @@ mod tests {
         let _ = shell.env.set_value("x", sum_val);
         // Pre-declare result so the match arm's assignment walks scope
         let _ = shell.env.set_value("result", Val::Str("none".into()));
-        // match $x { ok $v => result = $v; err $e => result = error }
+        // match $x { ok v => result = $v; err e => result = error }
         let outcome = run_with_shell(
             &mut shell,
-            "match $x { ok $v => result = $v; err $e => result = error }",
+            "match $x { ok v => result = $v; err e => result = error }",
         );
         assert!(outcome.status().is_success());
         assert_eq!(
@@ -2379,10 +2413,7 @@ mod tests {
         // exempt) then true on the RHS — overall success.
         let mut shell = Shell::new();
         let _ = shell.env.set_value("x", Val::Str("unset".into()));
-        run_with_shell(
-            &mut shell,
-            "try { false || true; x = should_run }",
-        );
+        run_with_shell(&mut shell, "try { false || true; x = should_run }");
         assert_eq!(
             shell.env.get_value("x"),
             Val::Str("should_run".into()),
@@ -2494,5 +2525,159 @@ mod tests {
         );
         // x should still be its original value
         assert_eq!(shell.env.get_value("x"), Val::Int(42));
+    }
+
+    // ── Accessor evaluation ───────────────────────────────────
+
+    #[test]
+    fn accessor_tuple_projection() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value(
+            "t",
+            Val::Tuple(vec![Val::Int(42), Val::Str("hello".into())]),
+        );
+        // $t.0 → 42, $t.1 → "hello"
+        run_with_shell(&mut shell, "x = $t.0");
+        assert_eq!(shell.env.get_value("x"), Val::Str("42".into()));
+        run_with_shell(&mut shell, "x = $t.1");
+        assert_eq!(shell.env.get_value("x"), Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn accessor_tuple_out_of_bounds() {
+        let mut shell = Shell::new();
+        let _ = shell
+            .env
+            .set_value("t", Val::Tuple(vec![Val::Int(1), Val::Int(2)]));
+        // .5 out of bounds → Unit → empty string via assignment
+        run_with_shell(&mut shell, "x = $t.5");
+        assert_eq!(shell.env.get_value("x"), Val::Str(String::new()));
+    }
+
+    #[test]
+    fn accessor_sum_ok() {
+        let mut shell = Shell::new();
+        let _ = shell
+            .env
+            .set_value("r", Val::Sum("ok".into(), Box::new(Val::Int(42))));
+        run_with_shell(&mut shell, "x = $r.ok");
+        assert_eq!(shell.env.get_value("x"), Val::Str("42".into()));
+    }
+
+    #[test]
+    fn accessor_sum_miss_is_unit() {
+        let mut shell = Shell::new();
+        let _ = shell
+            .env
+            .set_value("r", Val::Sum("ok".into(), Box::new(Val::Int(42))));
+        // .err on an ok Sum → Unit (Prism miss)
+        run_with_shell(&mut shell, "x = $r.err");
+        assert_eq!(shell.env.get_value("x"), Val::Str(String::new()));
+    }
+
+    #[test]
+    fn accessor_code_extracts_exit_code() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("e", Val::ExitCode(127));
+        run_with_shell(&mut shell, "x = $e.code");
+        assert_eq!(shell.env.get_value("x"), Val::Str("127".into()));
+    }
+
+    #[test]
+    fn accessor_code_on_non_exitcode_is_unit() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Int(42));
+        run_with_shell(&mut shell, "y = $x.code");
+        assert_eq!(shell.env.get_value("y"), Val::Str(String::new()));
+    }
+
+    #[test]
+    fn accessor_chain_prism_then_lens() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value(
+            "r",
+            Val::Sum(
+                "ok".into(),
+                Box::new(Val::Tuple(vec![Val::Int(10), Val::Int(20)])),
+            ),
+        );
+        // $r.ok.1 — Prism into ok, then tuple projection .1
+        run_with_shell(&mut shell, "x = $r.ok.1");
+        assert_eq!(shell.env.get_value("x"), Val::Str("20".into()));
+    }
+
+    #[test]
+    fn accessor_chain_miss_absorbs() {
+        let mut shell = Shell::new();
+        let _ = shell
+            .env
+            .set_value("r", Val::Sum("ok".into(), Box::new(Val::Int(42))));
+        // .err misses → Unit, then .0 on Unit → still Unit
+        run_with_shell(&mut shell, "x = $r.err.0");
+        assert_eq!(shell.env.get_value("x"), Val::Str(String::new()));
+    }
+
+    #[test]
+    fn accessor_brace_var_escape_hatch() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("stem", Val::Str("main".into()));
+        // ${stem}.c is free caret concat, not accessor
+        run_with_shell(&mut shell, "x = ${stem}.c");
+        assert_eq!(shell.env.get_value("x"), Val::Str("main.c".into()));
+    }
+
+    // ── Try in value position (Phase D2) ──────────────────────
+
+    #[test]
+    fn try_value_success() {
+        let (_, outcome) = run("let result = try { echo 42 }");
+        assert!(outcome.status().is_success());
+    }
+
+    #[test]
+    fn try_value_success_produces_ok_sum() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let mut result = try { echo 42 }");
+        let val = shell.env.get_value("result");
+        assert_eq!(val, Val::Sum("ok".into(), Box::new(Val::Str("42".into()))));
+    }
+
+    #[test]
+    fn try_value_failure_produces_err_sum() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let mut result = try { false }");
+        let val = shell.env.get_value("result");
+        // false exits 1 with no stdout
+        match val {
+            Val::Sum(tag, payload) => {
+                assert_eq!(tag, "err");
+                match *payload {
+                    Val::ExitCode(code) => assert_ne!(code, 0),
+                    other => panic!("expected ExitCode, got {other:?}"),
+                }
+            }
+            other => panic!("expected Sum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_value_ok_accessor() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let mut r = try { echo hello }");
+        // Access .ok to get the payload
+        run_with_shell(&mut shell, "x = $r.ok");
+        assert_eq!(shell.env.get_value("x"), Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn try_value_err_accessor() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let mut r = try { false }");
+        // .ok on err Sum → Unit (Prism miss)
+        run_with_shell(&mut shell, "x = $r.ok");
+        assert_eq!(shell.env.get_value("x"), Val::Str(String::new()));
+        // .err gives ExitCode, .code extracts it
+        run_with_shell(&mut shell, "y = $r.err.code");
+        assert_ne!(shell.env.get_value("y"), Val::Str(String::new()));
     }
 }

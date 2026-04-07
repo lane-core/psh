@@ -142,7 +142,25 @@ fn quoted<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> {
     })
 }
 
-/// Variable reference: $var, $#var, $"var, $var(idx), ${name}
+/// Parse a single accessor: '.' followed by digit(s) or a name.
+/// .0 → Index(0), .code → Code, .ok/.err/.anything → Tag.
+fn accessor<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Accessor> {
+    ch('.').with(choice!(
+        // Digits → tuple index (0-based)
+        many1::<String, _, _>(satisfy(|c: char| c.is_ascii_digit()))
+            .map(|s| { Accessor::Index(s.parse::<usize>().unwrap_or(0)) }),
+        // Name → code or tag
+        many1::<String, _, _>(satisfy(is_var_char)).map(|s| {
+            if s == "code" {
+                Accessor::Code
+            } else {
+                Accessor::Tag(s)
+            }
+        })
+    ))
+}
+
+/// Variable reference: $var, $#var, $"var, $var(idx), $var.acc, ${name}
 fn var_ref<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> {
     ch('$').with(choice!(
         // $#var — count
@@ -154,15 +172,45 @@ fn var_ref<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> {
             .with(many1::<String, _, _>(satisfy(|c: char| c != '}')))
             .skip(ch('}'))
             .map(Word::BraceVar),
-        // $var or $var(idx)
-        attempt(
-            varname()
-                .skip(ch('('))
-                .and(word_inner().skip(ch(')')))
-                .map(|(v, idx)| Word::Index(v, Box::new(idx)))
-        ),
-        // $var (plain)
-        varname().map(Word::Var)
+        // $var with optional accessor chain or index
+        combine::parser(move |input: &mut I| {
+            use combine::error::Commit;
+
+            let (name, _) = varname().parse_stream(input).into_result()?;
+
+            // Attempt accessor chain: .digit or .name
+            let mut accs = Vec::new();
+            loop {
+                let cp = input.checkpoint();
+                match attempt(accessor()).parse_stream(input).into_result() {
+                    Ok((acc, _)) => accs.push(acc),
+                    Err(_) => {
+                        input.reset(cp).ok();
+                        break;
+                    }
+                }
+            }
+
+            if !accs.is_empty() {
+                return Ok((Word::VarAccess(name, accs), Commit::Commit(())));
+            }
+
+            // Attempt $var(idx)
+            let cp = input.checkpoint();
+            match ch('(').parse_stream(input).into_result() {
+                Ok(_) => {
+                    let (idx, _) = word_inner()
+                        .skip(ch(')'))
+                        .parse_stream(input)
+                        .into_result()?;
+                    Ok((Word::Index(name, Box::new(idx)), Commit::Commit(())))
+                }
+                Err(_) => {
+                    input.reset(cp).ok();
+                    Ok((Word::Var(name), Commit::Commit(())))
+                }
+            }
+        })
     ))
 }
 
@@ -343,6 +391,16 @@ fn lambda<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
 }
 
 /// value = '(' word* ')' | lambda | tagged_val | word
+/// try { body } in value position — fallible capture.
+fn try_value<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
+    attempt(keyword("try").skip(trivia()).skip(ch('{')))
+        .with(full_trivia())
+        .with(program_inner())
+        .skip(full_trivia())
+        .skip(ch('}'))
+        .map(|prog| Value::Try(prog.commands))
+}
+
 fn value_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
     choice!(
         // List literal: ( word* )
@@ -353,6 +411,8 @@ fn value_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
                 .skip(ch(')'))
                 .map(Value::List)
         ),
+        // try { body } in value position
+        try_value(),
         // Lambda
         attempt(lambda()),
         // Single word
@@ -1078,78 +1138,98 @@ fn while_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Comman
     })
 }
 
-/// match_pat = NAME '$' NAME (structural) | NAME (glob)
-fn match_pat<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Pattern> {
-    combine::parser(move |input: &mut I| {
-        use combine::error::Commit;
-
-        let (pat_word, _) = wname().parse_stream(input).into_result()?;
-        let (_, _) = trivia().parse_stream(input).into_result()?;
-
-        // Check for structural pattern: tag $binding
-        let cp = input.checkpoint();
-        match input.uncons() {
-            Ok('$') => {
-                let (binding, _) = varname().parse_stream(input).into_result()?;
-                Ok((
-                    Pattern::Structural {
-                        tag: pat_word,
-                        binding,
-                    },
-                    Commit::Commit(()),
-                ))
-            }
-            _ => {
-                input.reset(cp).ok();
-                let pat = if pat_word == "*" {
-                    Pattern::Star
-                } else if pat_word.contains('*') || pat_word.contains('?') || pat_word.contains('[')
-                {
-                    Pattern::Glob(pat_word)
-                } else {
-                    Pattern::Literal(pat_word)
-                };
-                Ok((pat, Commit::Commit(())))
-            }
-        }
-    })
+/// Classify a word as a glob pattern.
+fn to_glob_pattern(word: &str) -> Pattern {
+    if word == "*" {
+        Pattern::Star
+    } else if word.contains('*') || word.contains('?') || word.contains('[') {
+        Pattern::Glob(word.to_string())
+    } else {
+        Pattern::Literal(word.to_string())
+    }
 }
 
-/// match_arm = match_pat+ '=>' body_commands
+/// match_arm = glob_arm | structural_arm
+///   glob_arm       = glob_pats '=>' lambda_body
+///   structural_arm = NAME NAME '=>' lambda_body
+///   glob_pats      = '(' NAME+ ')' | NAME
+///
+/// Disambiguation: '(' → multi-glob, two bare words → structural,
+/// one bare word → single-pattern glob.
 fn match_arm<I: Stream<Token = char>>(
 ) -> impl CombineParser<I, Output = (Vec<Pattern>, Vec<Command>)> {
     combine::parser(move |input: &mut I| {
         use combine::error::Commit;
 
-        let (first_pat, _) = match_pat().parse_stream(input).into_result()?;
-        let mut pats = vec![first_pat.clone()];
-        let is_structural = matches!(first_pat, Pattern::Structural { .. });
+        let (_, _) = trivia().parse_stream(input).into_result()?;
 
-        if !is_structural {
-            // Glob arms can have multiple patterns
-            loop {
-                let (_, _) = trivia().parse_stream(input).into_result()?;
-                let cp = input.checkpoint();
-                // Check if next is =>
-                match attempt(string("=>")).parse_stream(input).into_result() {
-                    Ok(_) => {
-                        input.reset(cp).ok();
-                        break;
-                    }
-                    Err(_) => {
-                        input.reset(cp).ok();
+        let cp_start = input.checkpoint();
+        let pats: Vec<Pattern> = match input.uncons() {
+            Ok('(') => {
+                // Multi-pattern glob: (pat1 pat2 ...)
+                let mut ps = Vec::new();
+                loop {
+                    let (_, _) = trivia().parse_stream(input).into_result()?;
+                    let cp = input.checkpoint();
+                    match input.uncons() {
+                        Ok(')') => break,
+                        _ => {
+                            input.reset(cp).ok();
+                            let (w, _) = wname().parse_stream(input).into_result()?;
+                            ps.push(to_glob_pattern(&w));
+                        }
                     }
                 }
+                ps
+            }
+            _ => {
+                // Single word — could be glob or start of structural
+                input.reset(cp_start).ok();
+                let (first, _) = wname().parse_stream(input).into_result()?;
+                let (_, _) = trivia().parse_stream(input).into_result()?;
+
+                // Peek: if next is =>, it's a single-pattern glob.
+                // If next is another NAME then =>, it's structural.
                 let cp2 = input.checkpoint();
-                match match_pat().parse_stream(input).into_result() {
-                    Ok((pat, _)) => pats.push(pat),
+                match attempt(string("=>")).parse_stream(input).into_result() {
+                    Ok(_) => {
+                        input.reset(cp2).ok();
+                        vec![to_glob_pattern(&first)]
+                    }
                     Err(_) => {
                         input.reset(cp2).ok();
-                        break;
+                        // Try structural: NAME NAME =>
+                        let cp3 = input.checkpoint();
+                        match wname().parse_stream(input).into_result() {
+                            Ok((binding, _)) => {
+                                let (_, _) = trivia().parse_stream(input).into_result()?;
+                                // Verify => follows
+                                let cp4 = input.checkpoint();
+                                match attempt(string("=>")).parse_stream(input).into_result() {
+                                    Ok(_) => {
+                                        input.reset(cp4).ok();
+                                        vec![Pattern::Structural {
+                                            tag: first,
+                                            binding,
+                                        }]
+                                    }
+                                    Err(_) => {
+                                        // Not structural — shouldn't happen in
+                                        // well-formed input, but reset
+                                        input.reset(cp3).ok();
+                                        vec![to_glob_pattern(&first)]
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                input.reset(cp3).ok();
+                                vec![to_glob_pattern(&first)]
+                            }
+                        }
                     }
                 }
             }
-        }
+        };
 
         // =>
         let (_, _) = trivia().parse_stream(input).into_result()?;
@@ -1216,16 +1296,21 @@ fn try_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command>
         let (else_var, else_body) = match keyword("else").parse_stream(input).into_result() {
             Ok(_) => {
                 let (_, _) = trivia().parse_stream(input).into_result()?;
-                // Optional $name
+                // Optional binding name (bare, no $)
                 let cp2 = input.checkpoint();
-                match input.uncons() {
-                    Ok('$') => {
-                        let (vname, _) = varname().parse_stream(input).into_result()?;
+                match attempt(varname().skip(trivia()).skip(ch('{')))
+                    .parse_stream(input)
+                    .into_result()
+                {
+                    Ok((vname, _)) => {
+                        // Put '{' back — body() expects it
+                        input.reset(cp2).ok();
+                        let (_, _) = varname().parse_stream(input).into_result()?;
                         let (_, _) = trivia().parse_stream(input).into_result()?;
                         let (eb, _) = body().parse_stream(input).into_result()?;
                         (Some(vname), Some(eb))
                     }
-                    _ => {
+                    Err(_) => {
                         input.reset(cp2).ok();
                         let (eb, _) = body().parse_stream(input).into_result()?;
                         (None, Some(eb))
@@ -1263,6 +1348,7 @@ fn fn_def<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command> 
         Ok((
             Command::Bind(Binding::Fn {
                 name: fname,
+                params: vec![],
                 body: fbody,
             }),
             Commit::Commit(()),
@@ -1709,14 +1795,34 @@ mod tests {
     }
 
     #[test]
-    fn free_caret_var_dot() {
+    fn accessor_takes_priority_over_free_caret() {
+        // $stem.c is now an accessor (Tag("c")), not a free caret.
+        // Use ${stem}.c for the old concat behavior.
         let prog = parse("echo $stem.c");
         match &prog.commands[0] {
             Command::Exec(Expr::Simple(sc)) => {
                 assert_eq!(
                     sc.args,
+                    vec![Word::VarAccess(
+                        "stem".into(),
+                        vec![Accessor::Tag("c".into())]
+                    )]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brace_var_dot_escape_hatch() {
+        // ${stem}.c is the escape hatch: BraceVar + free caret
+        let prog = parse("echo ${stem}.c");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
                     vec![Word::Concat(vec![
-                        Word::Var("stem".into()),
+                        Word::BraceVar("stem".into()),
                         Word::Literal(".c".into()),
                     ])]
                 );
@@ -1753,6 +1859,102 @@ mod tests {
                         Word::Quoted("hello".into()),
                         Word::Var("name".into()),
                     ])]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    // ── Accessor parsing ────────────────────────────────────
+
+    #[test]
+    fn accessor_tuple_index() {
+        let prog = parse("echo $x.0");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
+                    vec![Word::VarAccess("x".into(), vec![Accessor::Index(0)])]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accessor_tag_ok() {
+        let prog = parse("echo $result.ok");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
+                    vec![Word::VarAccess(
+                        "result".into(),
+                        vec![Accessor::Tag("ok".into())]
+                    )]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accessor_tag_err() {
+        let prog = parse("echo $result.err");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
+                    vec![Word::VarAccess(
+                        "result".into(),
+                        vec![Accessor::Tag("err".into())]
+                    )]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accessor_code() {
+        let prog = parse("echo $e.code");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
+                    vec![Word::VarAccess("e".into(), vec![Accessor::Code])]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accessor_chain() {
+        // $result.ok.0 — Prism then Lens
+        let prog = parse("echo $result.ok.0");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
+                    vec![Word::VarAccess(
+                        "result".into(),
+                        vec![Accessor::Tag("ok".into()), Accessor::Index(0)]
+                    )]
+                );
+            }
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accessor_multi_digit_index() {
+        let prog = parse("echo $t.12");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert_eq!(
+                    sc.args,
+                    vec![Word::VarAccess("t".into(), vec![Accessor::Index(12)])]
                 );
             }
             other => panic!("expected simple command, got {other:?}"),
@@ -2008,12 +2210,24 @@ mod tests {
 
     #[test]
     fn match_structural() {
-        let prog = parse("match $result { ok $v => echo $v; err $e => echo $e }");
+        let prog = parse("match $result { ok v => echo $v; err e => echo $e }");
         match &prog.commands[0] {
             Command::Match { arms, .. } => {
                 assert_eq!(arms.len(), 2);
-                assert!(matches!(arms[0].0[0], Pattern::Structural { .. }));
-                assert!(matches!(arms[1].0[0], Pattern::Structural { .. }));
+                match &arms[0].0[0] {
+                    Pattern::Structural { tag, binding } => {
+                        assert_eq!(tag, "ok");
+                        assert_eq!(binding, "v");
+                    }
+                    other => panic!("expected Structural, got {other:?}"),
+                }
+                match &arms[1].0[0] {
+                    Pattern::Structural { tag, binding } => {
+                        assert_eq!(tag, "err");
+                        assert_eq!(binding, "e");
+                    }
+                    other => panic!("expected Structural, got {other:?}"),
+                }
             }
             other => panic!("expected Match, got {other:?}"),
         }
@@ -2045,7 +2259,7 @@ mod tests {
 
     #[test]
     fn try_with_else() {
-        let prog = parse("try { echo hello } else $e { echo $e }");
+        let prog = parse("try { echo hello } else e { echo $e }");
         match &prog.commands[0] {
             Command::Try {
                 else_var: Some(v),
@@ -2059,10 +2273,21 @@ mod tests {
     }
 
     #[test]
+    fn try_in_value_position() {
+        let prog = parse("let r = try { echo hello }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                assert!(matches!(value, Value::Try(_)));
+            }
+            other => panic!("expected Let with Try value, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn fn_definition() {
         let prog = parse("fn greet { echo hello }");
         match &prog.commands[0] {
-            Command::Bind(Binding::Fn { name, body }) => {
+            Command::Bind(Binding::Fn { name, body, .. }) => {
                 assert_eq!(name, "greet");
                 assert_eq!(body.len(), 1);
             }
@@ -2354,7 +2579,7 @@ mod tests {
     fn fn_arrow_body() {
         let prog = parse("fn greet => echo hello");
         match &prog.commands[0] {
-            Command::Bind(Binding::Fn { name, body }) => {
+            Command::Bind(Binding::Fn { name, body, .. }) => {
                 assert_eq!(name, "greet");
                 assert_eq!(body.len(), 1);
             }

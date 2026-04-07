@@ -93,6 +93,11 @@ pub enum Value {
         params: Vec<String>,
         body: Vec<Command>,
     },
+    /// try { body } in value position — fallible capture.
+    /// Forks, captures stdout + exit status via capture_subprocess.
+    /// Returns Sum("ok", captured_val) or Sum("err", ExitCode(n)).
+    /// CBV: body evaluates immediately at binding time.
+    Try(Vec<Command>),
     /// Tagged value: tag payload — Sum construction in value position.
     Tagged(String, Box<Value>),
 }
@@ -248,9 +253,14 @@ pub enum Binding {
         export: bool,
         type_ann: Option<TypeAnnotation>,
     },
-    /// Function definition: fn name { body }
-    /// Also handles discipline functions: fn x.get { body }
-    Fn { name: String, body: Vec<Command> },
+    /// Function definition: fn name { body } or fn name(params) { body }
+    /// Without params: positional ($1, $2, $*). With params: named binding.
+    /// Also handles discipline functions: fn x.get { }, fn x.set(val) { }
+    Fn {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Command>,
+    },
     /// Nameref: ref name = target
     /// ksh93 heritage: creates an alias that resolves through the
     /// target variable on every access.

@@ -58,7 +58,8 @@ Bindings extend the context Γ with a new name. They are
     assignment  = NAME '=' value
     let_binding = 'let' let_quals NAME (':' type_ann)? '=' value
     let_quals   = 'mut'? 'export'?         -- order free, duplicates rejected
-    fn_def      = 'fn' NAME body
+    fn_def      = 'fn' NAME fn_params? body
+    fn_params   = '(' NAME* ')'
     ref_def     = 'ref' NAME '=' NAME
 
     type_ann    -- see §Type annotations for the full grammar
@@ -95,8 +96,21 @@ For capturing fallible computation results as typed values, use
 `try` in value position forks, captures stdout + exit status,
 and returns `Result[T]`. See §`try` in value position below.
 
-**fn** (`fn name { body }`) defines a function. Also handles
-discipline functions: `fn x.get { body }`, `fn x.set { body }`.
+**fn** defines a function. Three forms:
+
+    fn name { body }           # positional params: $1, $2, $*
+    fn name() { body }         # nullary: takes no arguments
+    fn name(a b c) { body }   # named params: $a, $b, $c
+
+Without parentheses, the function uses rc-style positional
+parameters (`$1`, `$2`, `$*`, `$#*`). With parentheses, the
+function declares its parameter interface — `()` means nullary,
+`(a b c)` binds arguments to named variables. Named parameters
+are bound in the function scope alongside positional `$1`, `$2`
+etc. for compatibility.
+
+Also handles discipline functions: `fn x.get { body }`,
+`fn x.set { body }`, `fn x.set(val) { body }`.
 rc heritage for plain functions; ksh93 heritage for disciplines.
 
 **Discipline functions.** `fn x.get { body }` fires as a
