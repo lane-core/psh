@@ -57,7 +57,6 @@ Bindings extend the context Γ with a new name. They are
 
     assignment  = NAME '=' value
     let_binding = 'let' let_quals NAME (':' type_ann)? '=' value
-                | 'let' NAME (':' type_ann)? '=' 'try' body
     let_quals   = 'mut'? 'export'?         -- order free, duplicates rejected
     fn_def      = 'fn' NAME body
     ref_def     = 'ref' NAME '=' NAME
@@ -75,22 +74,26 @@ Bool, `/tmp` → Path, `hello` → Str. Quoted values (`'42'`) stay
 Str. Leading-zero integers (`042`) stay Str. Optional type
 annotation validates via Prism check. psh extension.
 
-Two binding forms distinguished by `=` vs `= try`:
+`let` is always CBV. The RHS is evaluated at binding time and
+the result is stored. There is no call-by-name `let` form.
 
-- `let x = val` — binds a value. CBV: the RHS is evaluated at
-  binding time. The variable is a Lens (total get, settable if
-  `mut`). Tier 1-2 semantics.
+For live re-evaluation (tier-3, pane namespace queries), use a
+`.get` discipline on the variable:
 
-- `let x = try { body }` — binds a fallible computation.
-  Call-by-name: the body re-evaluates on every `$x` access.
-  The variable is an AffineFold (partial get, no set). `mut`
-  is disallowed. Tier 3 semantics (affine — no contraction,
-  each read is a fresh computation). The result type is
-  `Result[T]`: on success, `$x` returns `Tagged("ok", T)`
-  where T is the captured stdout. On failure, `$x` returns
-  `Tagged("err", ExitCode(n))`. The `$x.err` accessor is a
-  Prism preview into the err branch — not a separate channel.
-  See §Computed variables below.
+    let mut cursor : Int = 0
+    fn cursor.get { cursor = `{ get /pane/editor/attrs/cursor } }
+
+The `.get` fires on every `$cursor` access (notification hook),
+and the assignment inside updates the stored value. See
+§Discipline functions above.
+
+For capturing fallible computation results as typed values, use
+`try` in expression position:
+
+    let result : Result[Int] = try { get /pane/editor/attrs/cursor }
+
+`try` in value position forks, captures stdout + exit status,
+and returns `Result[T]`. See §`try` in value position below.
 
 **fn** (`fn name { body }`) defines a function. Also handles
 discipline functions: `fn x.get { body }`, `fn x.set { body }`.
@@ -123,14 +126,15 @@ block.
     if_cmd      = 'if' pipeline body ('else' (if_cmd | body))?
     for_cmd     = 'for' NAME 'in' value body
     while_cmd   = 'while' pipeline body
-    match_cmd   = 'match' value '{' case_arm* '}'       -- [planned]
+    match_cmd   = 'match' value '{' match_arm* '}'      -- [planned]
     try_cmd     = 'try' body ('else' NAME body)?        -- [planned]
 
-    case_arm    = 'case' case_pat+ body
-    case_pat    = NAME                          -- glob pattern
+    match_arm   = match_pat+ body
+    match_pat   = NAME                          -- glob pattern
                 | NAME '$' NAME                 -- structural: tag + binding [planned]
 
     body        = '{' program '}'
+                | '{' program 'return' value '}'        -- value-producing [planned]
 
 Note: `case ok { }` is a glob match on the string "ok", not
 structural decomposition. Structural cases always require a
@@ -166,7 +170,7 @@ related changes:
    then-body is complete at `}`) and resolves the dangling-else
    by making nesting explicit.
 
-4. **`match` cases are braced, no fall-through.** rc delimits
+4. **`match` arms are braced, no fall-through.** rc delimits
    case bodies implicitly — execution runs from one `case`
    keyword to the next. psh braces each case:
    `case pat { body }`. Each case is an independent branch of
@@ -180,33 +184,63 @@ These four changes form a coherent package. Removing parentheses
 forces mandatory braces, which enables structural `else`, which
 makes per-case bracing the natural completion.
 
-**`match` instead of `switch`.** rc used `switch`; psh uses
-`match`. psh's construct does two kinds of dispatch: glob
-pattern matching on string values (rc heritage) and structural
-coproduct elimination on Tagged values (psh extension). The
-keyword `match` names what the operation does — pattern matching
-and structural decomposition — rather than `switch`'s
-connotation of jumping to a label. psh's construct already
-diverges from rc's switch (braced cases, no fall-through, and
-now structural binding). `match` signals a new construct.
+**`match` instead of `switch`.** rc used `switch` as the outer
+keyword with `case` for arms inside. psh uses `match` — a new
+keyword for a new construct. rc's `case` was an arm-introducer
+(sub-keyword inside `switch`). Reusing `case` as a block-
+introducer would create a false cognate — it looks like rc
+heritage but has a different syntactic role. `match` is honest:
+it names the operation (pattern matching / coproduct elimination)
+without pretending to be rc's `case`.
+
+psh's `match` does two kinds of dispatch: glob pattern matching
+on string values (rc heritage) and structural coproduct
+elimination on Tagged values (psh extension). Arms are bare
+patterns — no sub-keyword needed because the `match` block
+provides the context.
 
     # Glob matching on strings (rc heritage)
     match $filename {
-        case *.txt { echo 'text file' }
-        case *.rs  { echo 'rust source' }
-        case *     { echo 'other' }
+        *.txt { echo 'text file' }
+        *.rs  { echo 'rust source' }
+        *     { echo 'other' }
     }
 
     # Structural matching on Tagged values (psh extension)
     match $result {
-        case ok $v   { echo 'success: '$v }
-        case err $e  { echo 'error: '$e }
+        ok $v   { echo 'success: '$v }
+        err $e  { echo 'error: '$e }
     }
 
-Structural cases have the form `case tag $binding` — a tag
-name followed by a `$`-prefixed binding variable. Glob cases
-have the form `case pattern` — a bare pattern. The parser
-distinguishes them syntactically.
+Structural arms have the form `tag $binding` — a tag name
+followed by a `$`-prefixed binding variable. Glob arms have
+the form `pattern` — a bare pattern. The parser distinguishes
+them syntactically. Note: `ok { }` (no binding) is a glob
+match on the literal string "ok", not a structural match.
+Structural matching always requires `$binding`.
+
+**Value-producing blocks.** When a body appears in value
+position (RHS of `let`, etc.), it may end with `return value`
+to produce a typed value. Commands in the body run for effects;
+`return` injects a value from the command sort into the value
+sort (CBPV's `return : A → F(A)`). Without `return`, the
+body produces `Unit`.
+
+    let icon = match $type {
+        editor   { return '📝' }
+        terminal { return '💻' }
+        *        { return '?' }
+    }
+
+    let greeting = if ~ $lang fr {
+        return 'bonjour'
+    } else {
+        return 'hello'
+    }
+
+`return` is unambiguous — the keyword marks the polarity shift.
+Bare words in a body are always commands. `return` followed by
+a word is always a value injection. No disambiguation needed.
 
 **`try` block.** Scoped error handling — the ⊕→⅋ converter.
 Inside `try`, any command with nonzero Status aborts the block
@@ -316,7 +350,7 @@ when the token immediately following a `var_ref` is `.` followed
 by a digit or `NAME`.
 
 **Tagged construction** **[planned]** is context-sensitive. In
-`let` RHS, `match` case body, and `value` position, a bare word
+`let` RHS, `match` arm body, and `value` position, a bare word
 followed by a value is Tagged construction: `ok 42` →
 `Tagged("ok", Int(42))`. In command position, it is a simple
 command: `ok 42` runs the command `ok` with argument `42`. The
@@ -479,24 +513,21 @@ with structural identity.
     `{program}        run program, capture stdout, split on
                       newlines into a list
 
-**Desugaring.** `` `{cmd} `` desugars to `try { cmd }.ok` —
-run the computation, capture both stdout and exit status as
-`Result[T]`, then project the ok branch. On failure, the
-result is `Unit` (empty). The exit status is discarded.
+**Shared capture primitive.** `` `{cmd}`` and `try { cmd }` both
+fork a child, pipe stdout, and call waitpid. They share one
+`capture_subprocess` implementation that returns `(stdout, exit_code)`.
+The two operations project different components of this product:
 
-    `{date}           ≡  try { date }.ok
-    `{false}          ≡  try { false }.ok  →  Unit (exit 1)
+- `` `{cmd}`` takes stdout only (π₁). Exit status discarded.
+  On failure, returns `Unit` (empty).
+- `try { cmd }` takes both. Returns `Tagged("ok", val)` or
+  `Tagged("err", ExitCode(n))`.
 
-This means `try` is the primitive capture mechanism. `` `{ } ``
-is sugar that unwraps the success branch and silently drops
-errors. Both share one implementation path — `try` captures
-stdout + exit status into `Result[T]`, and `` `{ } `` applies
-the `.ok` Prism to extract the success value.
+They are siblings — parallel consumers of the same primitive —
+not parent-child. Neither desugars into the other.
 
-If you need the exit status, use `try` directly:
-
-    let result = try { cmd }        # Tagged("ok", val) or Tagged("err", ExitCode(n))
-    let val = `{ cmd }              # just the val, or Unit on failure
+    let val = `{ cmd }              # stdout only, status discarded
+    let result = try { cmd }        # Result[T]: ok val | err ExitCode
 
 rc heritage. psh splits on newlines only — no `$ifs`. The
 captured output has its trailing newline stripped.
@@ -594,7 +625,7 @@ Construction: `tag payload` — a bare word (the tag) followed by
 a value (the payload). `try { body }` implicitly produces
 `ok val` or `err ExitCode(n)`.
 
-Elimination: `match` with structural case arms.
+Elimination: `match` with structural arms.
 
     match $result {
         case ok $v   { echo $v }
@@ -786,42 +817,55 @@ Widening (total, information-preserving) is allowed. Narrowing
     Int → ExitCode    require explicit construction via `try`.
 
 
-## Computed variables
+## `try` in value position
 
-`let x = try { body }` binds a fallible computation to a name.
-The body re-evaluates on every `$x` access (call-by-name
-semantics — each access is a fresh computation, no memoization).
-The result type is `Result[T]` = `T | ExitCode`. On success,
-`$x` returns `Tagged("ok", T)` where T is the captured stdout
-(type-inferred). On failure, `$x` returns `Tagged("err",
-ExitCode(n))`.
+`try { body }` in value position (RHS of `let`, argument to a
+command) forks, captures stdout + exit status, and returns
+`Result[T]` = `Tagged("ok", T) | Tagged("err", ExitCode(n))`.
+This is CBV — the body evaluates immediately at binding time.
 
-    let cursor = try { get /pane/editor/attrs/cursor }
+    let cursor : Result[Int] = try { get /pane/editor/attrs/cursor }
     let seconds : Result[Int] = try { date +%s }
 
 Semantics:
-- **Read `$cursor`:** runs the body. On success, returns
-  `Tagged("ok", captured_value)`. On failure, returns
-  `Tagged("err", ExitCode(n))`.
-- **`$cursor.ok`:** Prism preview into the ok branch. Returns
-  the captured value if the last evaluation succeeded, Unit
+- `try` forks and captures (shares `capture_subprocess` with
+  `` `{ } ``). Returns the full Result, not just stdout.
+- `$cursor.ok` — Prism preview into the ok branch. Returns
+  the captured value if the computation succeeded, Unit
   otherwise.
-- **`$cursor.err`:** Prism preview into the err branch. Returns
-  the ExitCode if the last evaluation failed, Unit otherwise.
-  The `.err` accessor is a projection into the Tagged result,
-  not a separate metadata channel.
-- **`mut` disallowed.** A computed variable is read-only — the
-  body IS the read path. There is no store to mutate.
-- **`export` disallowed.** The body is a closure over shell
-  state — it cannot survive fork/exec.
+- `$cursor.err` — Prism preview into the err branch. Returns
+  the ExitCode if the computation failed, Unit otherwise.
 
 The `try` keyword carries consistent meaning across contexts:
 - `try { } else { }` — scoped ⅋ block (abort on first error)
-- `let x = try { }` — fallible computation bound to a name
+- `try { }` in value position — captures Result[T], CBV
 
-Both mean "this is a fallible computation." The `else` clause
-provides explicit error handling; without `else` (the `let`
-form), failure produces `Tagged("err", ExitCode(n))`.
+Both mean "this is a fallible computation." The difference is
+what happens with the result: the `else` form handles it
+inline; the value form stores it for later inspection.
+
+## Live re-evaluation via `.get` disciplines
+
+For tier-3 variables that should re-query on every access
+(pane namespace, computed values), use a `.get` discipline:
+
+    let mut cursor : Int = 0
+    fn cursor.get { cursor = `{ get /pane/editor/attrs/cursor } }
+
+Every `$cursor` access fires `cursor.get` as a notification
+hook. The discipline body updates the stored value. Subsequent
+accesses see the fresh value. This is the mechanism for live
+computed variables — the variable stores the latest value, and
+the discipline refreshes it on demand.
+
+For error-tracked live variables, combine with `try`:
+
+    let mut cursor : Result[Int] = try { get /pane/editor/attrs/cursor }
+    fn cursor.get { cursor = try { get /pane/editor/attrs/cursor } }
+
+The `.get` discipline re-queries and stores a fresh `Result[T]`
+on every access. `$cursor.ok` gives the latest value.
+`$cursor.err` gives the latest error.
 
 
 ## Subshell and concurrency
@@ -998,13 +1042,14 @@ Functions, builtins, and external commands follow rc's
 
 ## Keywords
 
-    if else for in while match case fn ref let try return mut export
+    if else for in while match fn ref let try return mut export
 
 rc's keywords: `for in while if not switch fn ~ ! @`.
 
-psh drops `not` (replaced by `else`) and `switch` (replaced by
-`match`). Replaces bare `@` with `@{`. Adds `let`, `ref`,
-`else`, `case`, `match`, `try`, `return`, `mut`, `export`.
+psh drops `not` (replaced by `else`), `switch` (replaced by
+`match`), and `case` (arms in `match` are bare patterns, no
+sub-keyword needed). Replaces bare `@` with `@{`. Adds `let`,
+`ref`, `else`, `match`, `try`, `return`, `mut`, `export`.
 Treats `~` as a builtin command with parse-position dispatch,
 not as a keyword (see §Tilde expansion).
 

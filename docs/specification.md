@@ -339,21 +339,24 @@ door on ⅋.
 
 Three concrete constructs are polarity shifts:
 
-**`try { cmd }` is the primitive ↓→↑ shift**: force a computation
-into value position, preserving both stdout and exit status. The
-evaluator forks a child, pipes stdout back, runs the commands in
-the child (↓), collects the output and exit status, returns a
-`Result[T]` = `Tagged("ok", captured_val) | Tagged("err",
-ExitCode(n))` (↑). The fork boundary makes the shift total: the
-child's entire environment is discarded on exit.
+**The ↓→↑ shift** (computation → value) is mediated by a shared
+`capture_subprocess` primitive that forks a child, pipes stdout,
+runs the body, calls waitpid, and returns a `(stdout, exit_code)`
+product. Two operations project from this product — siblings, not
+parent-child:
 
-**Command substitution** `` `{ cmd } `` **desugars to**
-`try { cmd }.ok` — run the ↓→↑ shift, then project the ok
-branch via the Prism. On failure, the result is `Unit`. The
-exit status is discarded. This desugaring enforces that `try`
-and `` `{ } `` share one capture mechanism. There is no separate
-command substitution implementation — only the `try` capture
-path with an `.ok` unwrap applied.
+**`try { cmd }`** in value position projects both components and
+wraps them as `Result[T]` = `Tagged("ok", captured_val) |
+Tagged("err", ExitCode(n))`. CBV — evaluates immediately.
+
+**Command substitution** `` `{ cmd } `` projects stdout only
+(π₁ of the product). The exit status is discarded. On failure,
+returns `Unit`. CBV — evaluates immediately.
+
+Neither desugars into the other. They share the fork+capture
+mechanism but consume different projections of its output. The
+fork boundary makes both shifts total: the child's environment
+is discarded on exit.
 
 **Assignment** `x = value` is μ̃-binding. `Command::Bind(Binding::
 Assignment(...))` evaluates the right-hand side (CBV — `eval_value`
@@ -543,12 +546,16 @@ ErrorT monad transformer sits in the evaluator's control flow
 (the cut-elimination engine), not in the value sort. Val stays
 positive. The monad is at the right level.
 
-**Distinction: scoped `try` vs binding `try`.** `try { } else { }`
+**Distinction: scoped `try` vs value-position `try`.** `try { } else { }`
 is the ⊕→⅋ converter — inside the block, errors abort to the
-handler (⅋ discipline). `let x = try { }` is a thunk binding —
-the body is captured as a call-by-name computation. The result
-is a `Result[T]` value: `Tagged("ok", T)` or `Tagged("err",
-ExitCode(n))`. The binding form stays in ⊕ — the caller inspects
+handler (⅋ discipline). `try { }` in value position (RHS of
+`let`, argument to a command) is CBV — the body evaluates
+immediately via `capture_subprocess`, returning `Result[T]` =
+`Tagged("ok", T) | Tagged("err", ExitCode(n))`. All `let`
+bindings are CBV — there is no call-by-name `let` form. Live
+re-evaluation uses `.get` discipline functions, not CBN `let`.
+
+The value-position form stays in ⊕ — the caller inspects
 the Tagged result via `match $x` or the `.ok`/`.err` accessors.
 No automatic abort occurs. The `try` keyword marks "fallible
 computation" in both cases; the syntactic context determines
