@@ -482,7 +482,7 @@ Val's type constructors map directly to the optic hierarchy:
 | Thunk (U(C)) | Leaf (Getter only) | Profunctor (dimap) |
 
 Products give users Lenses: `$pos.0` projects the first element
-of a tuple. Coproducts give users Prisms: `match $result { case ok $v { } }` decomposes a tagged value. Composing both gives
+of a tuple. Coproducts give users Prisms: `match $result { ok v => ... }` decomposes a Sum value. Composing both gives
 AffineTraversals: `$result.ok.name` is Prism then Lens.
 
 Sum values are the user's coproduct constructor — the open

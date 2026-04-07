@@ -64,13 +64,13 @@ decomposition.
 
 ### Return type: three-tag Sum
 
-    menu returns: selected $v | cancelled () | err $e
+    menu returns: selected v | cancelled () | err e
 
-- `selected $v` — the user chose item `v`. Type of `v`
+- `selected v` — the user chose item `v`. Type of `v`
   inherits the input list's element type.
 - `cancelled ()` — the user dismissed the menu (Escape,
   click-away, timeout). Not a failure — a deliberate absence.
-- `err $e` — the host is unavailable or the request is
+- `err e` — the host is unavailable or the request is
   malformed. An actual error.
 
 The three-tag model lets plugins distinguish "user said no"
@@ -78,9 +78,9 @@ from "host unavailable":
 
     let choice = menu -popup (a b c)
     match $choice {
-        selected $v => handle $v;
-        cancelled   => ();          # user changed their mind
-        err $e      => echo 'host error: '$e
+        selected v => handle $v;
+        cancelled  => ();           # user changed their mind
+        err e      => echo 'host error: '$e
     }
 
 ### Menu styles (hints, not commands)
@@ -120,13 +120,13 @@ All examples use the full syntax.md grammar.
     fn keymap.leader {
         let choice = menu -popup -timeout 2 ('g : git' 'f : files' 'p : pane')
         match $choice {
-            selected $k => match $k {
+            selected k => match $k {
                 g* => git_menu;
                 f* => file_menu;
                 p* => pane_menu
             };
             cancelled => ();
-            err $e    => ()
+            err e     => ()
         }
     }
 
@@ -141,13 +141,13 @@ All examples use the full syntax.md grammar.
     fn git_menu {
         let choice = menu -transient ('s : stage' 'c : commit' 'p : push')
         match $choice {
-            selected $action => match $action {
+            selected action => match $action {
                 s* => git add -p;
                 c* => git commit;
                 p* => git push
             };
             cancelled => ();
-            err $e    => ()
+            err e     => ()
         }
     }
 
@@ -156,8 +156,8 @@ All examples use the full syntax.md grammar.
     fn status.git {
         let branch = try { `{ git branch --show-current } }
         match $branch {
-            ok $b  => return $b;
-            err $e => return ''
+            ok b  => return $b;
+            err e => return ''
         }
     }
     fn status.path { return `{ basename `{ pwd } } }
@@ -427,13 +427,13 @@ syntax.md grammar:
                 let results = `{ curl -s `{get pkg.registry}^/search?q=$2 }
                 let choice = menu -vertical -fuzzy $results
                 match $choice {
-                    selected $name => {
+                    selected name => {
                         curl -s `{get pkg.registry}^/$name/latest > ~/.psh/lib/$name^.psh
                         . ~/.psh/lib/$name^.psh
                         echo 'pkg: installed '$name
                     };
                     cancelled => echo cancelled;
-                    err $e    => echo 'pkg: '$e
+                    err e     => echo 'pkg: '$e
                 }
             };
             search => {

@@ -18,6 +18,22 @@
 
 use std::fmt;
 
+/// Accessor — projects into structured values.
+///
+/// Accessors chain left-to-right after a variable reference:
+/// `$x.0` (tuple projection), `$x.ok` (Prism preview into Sum),
+/// `$x.code` (ExitCode extraction). Prism miss → Unit (absorbing
+/// element). See syntax.md §Accessors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Accessor {
+    /// Tuple projection: .0, .1, ... (0-based)
+    Index(usize),
+    /// Sum tag decomposition (Prism preview): .ok, .err, .name
+    Tag(String),
+    /// ExitCode extraction: .code → Int
+    Code,
+}
+
 /// A word in the shell — the smallest unit of value.
 ///
 /// Words are positive (CBV): fully evaluated before the command
@@ -32,6 +48,10 @@ pub enum Word {
     Quoted(String),
     /// Variable reference: $x
     Var(String),
+    /// Variable with accessor chain: $x.0, $x.ok, $x.code, $x.ok.name
+    /// Produced when the parser finds `.` immediately after a varname.
+    /// Accessor takes priority over free carets.
+    VarAccess(String, Vec<Accessor>),
     /// Indexed variable: $x(n)
     Index(String, Box<Word>),
     /// Count: $#x
@@ -170,9 +190,10 @@ pub enum Pattern {
     Glob(String),
     /// Match any
     Star,
-    /// Structural pattern: tag $binding — coproduct elimination.
+    /// Structural pattern: tag name — coproduct elimination.
     /// The tag is matched against Sum's tag; the binding receives
-    /// the payload. Distinguishing feature: `$` after the tag name.
+    /// the payload. Distinguished by word count: two bare words
+    /// before => is structural, one word or parenthesized list is glob.
     Structural { tag: String, binding: String },
 }
 
@@ -300,6 +321,17 @@ impl fmt::Display for Word {
             Word::Literal(s) => write!(f, "{s}"),
             Word::Quoted(s) => write!(f, "'{s}'"),
             Word::Var(name) => write!(f, "${name}"),
+            Word::VarAccess(name, accessors) => {
+                write!(f, "${name}")?;
+                for acc in accessors {
+                    match acc {
+                        Accessor::Index(i) => write!(f, ".{i}")?,
+                        Accessor::Tag(t) => write!(f, ".{t}")?,
+                        Accessor::Code => write!(f, ".code")?,
+                    }
+                }
+                Ok(())
+            }
             Word::Index(name, idx) => write!(f, "${name}({idx})"),
             Word::Count(name) => write!(f, "$#{name}"),
             Word::Stringify(name) => write!(f, "$\"{name}"),

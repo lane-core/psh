@@ -129,9 +129,10 @@ block.
     match_cmd   = 'match' value '{' match_arm (';' match_arm)* ';'? '}'  -- [planned]
     try_cmd     = 'try' body ('else' NAME body)?        -- [planned]
 
-    match_arm   = match_pat+ '=>' command+              -- [planned]
-    match_pat   = NAME                          -- glob pattern
-                | NAME '$' NAME                 -- structural: tag + binding [planned]
+    match_arm   = glob_arm | structural_arm
+    glob_arm    = glob_pats '=>' lambda_body
+    structural_arm = NAME NAME '=>' lambda_body
+    glob_pats   = '(' NAME+ ')' | NAME
 
     body        = '{' program '}'
                 | '=>' command                          -- single-line [planned]
@@ -158,10 +159,11 @@ match blocks use the same grammar:
     # Single-line (same grammar, just horizontal)
     match $type { editor => return '📝'; terminal => return '💻'; * => return '?' }
 
-Note: `ok => { }` (no `$binding`) is a glob match on the
-literal string "ok", not structural decomposition. Structural
-arms always require `$binding`: `ok $v => { }`. The `$` after
-the tag name distinguishes structural from glob arms.
+Note: `ok => { }` (single word before `=>`) is a glob match on
+the literal string "ok", not structural decomposition. Structural
+arms have two bare words: `ok v => { }` (tag + binding). The
+word count distinguishes structural from glob arms. Multi-pattern
+glob arms use list syntax: `(*.txt *.md) => { }`.
 
 **Divergence from rc:** rc wraps conditions in parentheses:
 `if(list) command`, `for(name in list) command`,
@@ -228,14 +230,16 @@ needed.
 
     # Structural matching on Sum values (psh extension)
     match $result {
-        ok $v  => echo 'success: '$v;
-        err $e => echo 'error: '$e
+        ok v  => echo 'success: '$v;
+        err e => echo 'error: '$e
     }
 
-Structural arms have the form `tag $binding =>` — a tag name
-followed by a `$`-prefixed binding variable, then `=>`. Glob
-arms have the form `pattern =>`. The `$` after the tag name
-distinguishes structural from glob arms.
+Structural arms have the form `tag name =>` — two bare words
+(tag + binding), then `=>`. Glob arms use a single pattern
+(`pattern =>`) or a parenthesized list (`(pat ...) =>`). The
+word count before `=>` distinguishes: two bare words = structural,
+one word or parenthesized list = glob. No `$` in binding position
+— `$` means reference, always.
 
 **Value-producing blocks.** When a body appears in value
 position (RHS of `let`, etc.), it ends with `return value`
@@ -660,8 +664,8 @@ a value (the payload). `try { body }` implicitly produces
 Elimination: `match` with structural arms.
 
     match $result {
-        ok $v  => echo $v;
-        err $e => echo 'error: '$e
+        ok v  => echo $v;
+        err e => echo 'error: '$e
     }
 
 The tag is an open string namespace. Any script can define new
