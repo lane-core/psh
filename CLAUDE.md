@@ -21,16 +21,19 @@ cargo run                          # interactive REPL (basic)
 
 ## Key design decisions
 
-- **Val is a 6-variant enum** (Unit, Bool, Int, Str, Path, List<Val>).
-  Type inference runs in `let` context only. Bare `x = val` produces
-  Str (rc heritage). See value.rs.
-- **let is the typed μ̃-binder.** Qualifiers: mut, export, : Type.
-  Local scope by default. Bare `x = val` walks scope chain (rc heritage).
-- **Profunctor AST.** Redirections wrap expressions. Left-to-right
-  evaluation order is structural, not conventional.
-- **⊕ error convention only.** Every function returns Status. No longjmp.
-- **par is NOT a direct dependency.** Enters through pane-session only
-  (feature-gated).
+- **Val is a 10-variant enum** (Unit, Bool, Int, Str, Path, ExitCode,
+  List, Tuple, Sum, Thunk). Inference runs in `let` context only.
+  Bare `x = val` produces Str (rc heritage).
+- **`fn` for command-level bindings, `\` for value-level lambdas.**
+  `fn name { body }` (positional params) or `fn name(a b) { body }`
+  (named params). `\x => body` produces Val::Thunk with capture-by-value.
+- **`=~` for pattern matching.** Infix: `$x =~ *.txt`. Primitive, not
+  sugar for match. `~` is purely tilde expansion.
+- **RunOutcome { Status, Value }** replaces Status as return type.
+  CBPV's F(A) — `return` produces Value, commands produce Status.
+- **Profunctor AST.** Redirections wrap expressions. Structural.
+- **⊕ error convention.** `try` is scoped ⅋.
+- **par is NOT a direct dependency.** Enters through pane-session only.
 - **Tests need `--test-threads=1`.** Fork-based tests interfere in parallel.
 
 ## Committing

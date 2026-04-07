@@ -12,23 +12,28 @@ requirement. Adoption comes from the shell being good — clean
 syntax, typed values, discipline functions, principled design —
 not from being tied to a specific system.
 
-## Current state (2026-04-06)
+## Current state (2026-04-07)
 
-A functional prototype (5940 lines, 157 tests) and a complete
-target language specification (1103 + 801 lines). The spec
-supersedes the prototype's grammar — this is a restart-worthy
-respecification. The prototype validated feasibility; the spec
-is the real design.
+Rebuilt from spec. ~5700 lines, 249 tests, combine 4 parser.
+The shell runs as `psh -c 'cmd'`, `psh file.psh`, or
+interactive. Live at github.com/lane-core/psh.
 
-### What exists (prototype)
+### What exists
 
 | Feature | Status |
 |---------|--------|
-| Typed Val (Unit, Bool, Int, Str, Path, List\<Val\>) | Complete (6 variants) |
-| let bindings (mut, export, : Type, List[T]) | Complete |
+| 10-variant Val (Unit, Bool, Int, Str, Path, ExitCode, List, Tuple, Sum, Thunk) | Complete |
+| let bindings (mut, export, : Type) | Complete |
 | Type inference (let-only: 42→Int, /tmp→Path) | Complete |
 | Prism validation on typed assignments | Complete |
-| rc grammar (if/else/for/while/switch/fn) | Complete |
+| rc grammar (if/else/for/while/fn) with `=>` single-line bodies | Complete |
+| `match` with `=>` arms, `;` separators, glob + structural arms | Complete |
+| `try` block (scoped ⅋) with else handler | Complete |
+| `return` for value-producing blocks (CBPV return : A → F(A)) | Complete |
+| RunOutcome { Status, Value } evaluator | Complete |
+| First-class lambdas (`\x => body`) with capture-by-value | Complete |
+| `fn name { }` / `fn name(params) { }` (positional + named) | Complete |
+| `=~` infix pattern matching (replaces ~ builtin) | Complete |
 | First-class lists, pairwise/broadcast concat | Complete |
 | Pipelines with process groups (setpgid) | Complete |
 | Profunctor redirections (left-to-right, wrapped) | Complete |
@@ -36,66 +41,52 @@ is the real design.
 | Process substitution (`<{cmd}`) | Complete |
 | Here-documents (`<<EOF`) and here-strings (`<<<word`) | Complete |
 | Globbing (fnmatch-regex, recursive) | Complete |
-| Tilde expansion (~ and ~/path) | Complete |
+| Tilde expansion (~ always $home, ~/path) | Complete |
 | Discipline functions (.get notification, .set reentrancy) | Complete |
 | Signal handlers as functions (fn sigint/sigexit) | Complete |
 | Job control (fg/bg/jobs/wait, terminal control) | Complete |
 | Coprocesses (socketpair, read -p, print -p) | Complete |
-| ~ match operator | Complete |
-| $" stringify | Complete |
+| `$"` stringify | Complete |
 | Namerefs (ref x = target) | Complete |
+| `${name}` brace-delimited variables | Complete |
+| Free carets (implicit `^` on adjacency) | Complete |
+| Two-alphabet split (var\_char / word\_char) | Complete |
+| `capture_subprocess` shared primitive | Complete |
 | whatis builtin | Complete |
-| Builtins: cd echo exit get set builtin . wait jobs fg bg read print ~ true false whatis | Complete |
+| Builtins: cd echo exit get set builtin . wait jobs fg bg read print true false whatis | Complete |
 | rc-style $home/$path/$user | Complete |
 | CLI (-c, file, interactive REPL stub) | Complete |
 
-### What the spec adds (not yet implemented)
+### Not yet implemented
 
 | Feature | Spec location |
 |---------|---------------|
-| `match` keyword (replaces `switch`) with `=>` arm syntax | §Control flow |
-| `try` block (scoped ⅋, lexically-scoped `set -e`) | §Control flow |
-| `try` in value position (returns `Result[T]`) | §`try` in value position |
-| `=>` single-line body introducer (all control flow) | §Control flow |
-| `;` arm separators in `match` blocks | §Control flow |
-| `return` for value-producing blocks | §Control flow |
-| Val::ExitCode(i32) — distinct from Int | §Type system |
-| Val::Tuple(Vec\<Val\>) — products, comma-separated | §Type system |
-| Val::Sum(String, Box\<Val\>) — coproducts | §Type system |
-| Two-alphabet split (var\_char / word\_char) | §Two character sets |
-| Free carets (implicit `^` at var/word boundary) | §Free carets |
-| Accessor syntax ($x.0, $x.ok, $x.err, $x.code) | §Words |
-| ${name} brace-delimited variable names | §Brace-delimited variable names |
-| Shared `capture_subprocess` primitive | §Command substitution |
-| Union type annotations (A \| B) | §Type annotations |
-| Result[T] / Maybe[T] sugar | §Sugar |
+| Accessor syntax ($x.0, $x.ok, $x.code) | §Words |
+| `try` in value position (returns Result[T]) | §`try` in value position |
+| Type annotation parsing (Tuple, Union, Fn, Result, Maybe, (T)) | §Type annotations |
 | Heredoc variable expansion (unquoted delimiters) | §Redirections |
 | `<>` read-write redirect | §Redirections |
 | `>{cmd}` output process substitution | §Missing rc I/O features |
 | `whatis` with type information | §`whatis` output format |
-| Live re-evaluation via `.get` disciplines | §Live re-evaluation |
+| `shift` builtin, `$0`, list slicing | §Missing rc features |
 
 ### Architecture
 
 ```
 src/
-  ast.rs       277 lines  four-sort AST (Word/Expr/Binding/Command)
-  parse.rs    1622 lines  recursive descent — TO BE REPLACED with combine
-  exec.rs     2470 lines  evaluator: rustix + libc, typed Val, disciplines
-  env.rs       581 lines  scoped vars, type validation, readonly, namerefs
-  value.rs     453 lines  Val enum (6 variants) — TO BE REWRITTEN (9 variants)
-  job.rs       287 lines  JobTable, JobStatus, process group tracking
-  signal.rs    129 lines  signals_receipts handlers, rc-style fn sig*
-  main.rs      121 lines  bpaf CLI (-c, file, interactive)
+  ast.rs        ~350 lines  four-sort AST (Word/Expr/Binding/Command)
+  parse.rs     ~2365 lines  combine 4 parser (6-layer architecture)
+  exec.rs      ~1906 lines  evaluator: RunOutcome, try, thunks, disciplines
+  env.rs        ~580 lines  scoped vars, type validation, readonly, namerefs
+  value.rs      ~500 lines  Val enum (10 variants)
+  job.rs        ~290 lines  JobTable, JobStatus, process group tracking
+  signal.rs     ~130 lines  signals_receipts handlers, rc-style fn sig*
+  main.rs       ~120 lines  bpaf CLI (-c, file, interactive)
 
 docs/
-  syntax.md   1103 lines  normative grammar (the target language spec)
-  specification.md  801 lines  theoretical foundation (duploid, optics, CBPV)
-
-tests/
-  harness.rs         integration test harness (run psh as subprocess)
-  integration.rs     test entry point
-  *.rs               16 test modules (need rewrite against new spec)
+  syntax.md              normative grammar
+  specification.md       theoretical foundation (duploid, optics, CBPV)
+  api.md                 plugin and host API
 ```
 
 ### Dependencies
@@ -126,25 +117,30 @@ feature-gated (pane):
 
 ### Key design decisions
 
-- **Val is a 9-variant enum** (Unit, Bool, Int, Str, Path, ExitCode,
-  List, Tuple, Sum). ExitCode enters only through `try`.
-  Tuple is product (Lens). Sum is coproduct (Prism).
-- **let is always CBV.** Immutable by default, local by default.
-  No call-by-name `let`. Live re-evaluation uses `.get` disciplines.
-- **`match` with `=>` and `;`.** Arms use `=>` to introduce bodies,
-  `;` to separate. Newlines inside `match { }` are trivia.
+- **Val is a 10-variant enum** (Unit, Bool, Int, Str, Path, ExitCode,
+  List, Tuple, Sum, Thunk). ExitCode enters only through `try`.
+  Tuple is product (Lens). Sum is coproduct (Prism). Thunk is
+  first-class function (CBPV's U(C), optic leaf).
+- **`fn` for command bindings, `\` for value lambdas.** Sort
+  boundary visible in syntax. `fn name { }` or `fn name(a b) { }`.
+  `\x => body` produces Val::Thunk with capture-by-value.
+- **`=~` for pattern matching.** Infix: `$x =~ *.txt`. Primitive
+  (not sugar for match), shares `glob_match()` with match glob arms.
+  `~` is purely tilde expansion.
+- **RunOutcome { Status, Value }.** Replaces Status as return type.
+  `return` produces Value (CBPV's `return : A → F(A)`).
+- **`match` with `=>` and `;`.** Structural arms: `tag name =>`.
+  Glob arms: `pattern =>` or `(pat ...) =>`. Unmatched → Unit +
+  nonzero Status.
 - **`try` is the ⊕→⅋ converter.** Scoped error handling (block form)
   and fallible capture (value-position form) sharing one
   `capture_subprocess` primitive with `` `{cmd}`` — siblings, not
   desugaring.
-- **`return` for value-producing blocks.** CBPV's `return : A → F(A)`.
-  Unambiguous polarity shift from command to value sort.
-- **`=>` is a single-line body introducer.** Uniform across all
-  control flow: match arms, if/else, for, while, try.
+- **All binders are bare names.** `for x`, `let x`, `fn name`,
+  `else e`, `\x`, `ok v`. `$` means reference, always.
 - **Two character predicates.** `var_char` for `$`-refs, `word_char`
-  for bare words. Enables free carets and accessor syntax.
+  for bare words. `\` + newline = continuation, `\` + name = lambda.
 - **Profunctor AST.** Redirections wrap expressions. Structural.
-- **⊕ error convention.** Status returns. `try` is scoped ⅋.
 - **Tests require `--test-threads=1`** (fork interference).
 
 ---
