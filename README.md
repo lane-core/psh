@@ -77,6 +77,19 @@ Heritage
 rc (Duff 1990), ksh93 (discipline functions, coprocesses,
 namerefs).
 
+References
+----------
+
+- Tom Duff. "Rc — The Plan 9 Shell." 1990.
+- Mangel, Melliès, Munch-Maccagnoni. "Classical notions of
+  computation and the Hasegawa-Thielecke theorem." POPL, 2026.
+- Munch-Maccagnoni. "Models of a Non-Associative Composition."
+  FoSSaCS, 2014.
+- Levy. *Call-by-Push-Value.* Springer, 2004.
+- Curien, Herbelin. "The duality of computation." ICFP, 2000.
+- Clarke et al. "Profunctor Optics, a Categorical Update."
+  Compositionality, 2024.
+
 License
 -------
 
