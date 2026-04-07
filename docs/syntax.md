@@ -268,7 +268,7 @@ body produces `Unit`.
         * => return '?'
     }
 
-    let greeting = if ~ $lang fr => return 'bonjour'; else => return 'hello'
+    let greeting = if $lang =~ fr => return 'bonjour'; else => return 'hello'
 
     # Multi-line with effects before return
     let result = match $code {
@@ -291,7 +291,7 @@ collects values via `take` (Raku's gather/take heritage). Each
 inside a `for` body exits the enclosing function, not the loop.
 
     let txts = for f in $files {
-        if ~ $f *.txt => take $f
+        if $f =~ *.txt => take $f
     }
     # txts = (readme.txt notes.txt)
 

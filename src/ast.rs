@@ -193,6 +193,11 @@ pub enum Expr {
     /// Bidirectional cut — the shell holds both read and write
     /// endpoints to the child process.
     Coprocess(Box<Expr>),
+    /// Pattern match: expr =~ value
+    /// Infix glob match — returns success if the expr's string
+    /// representation matches any pattern in the value. Shares
+    /// glob_match() with match arm evaluation.
+    PatternMatch { expr: Box<Expr>, patterns: Value },
 }
 
 /// Pattern for match arms and ~ matching.

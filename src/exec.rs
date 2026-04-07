@@ -573,23 +573,33 @@ impl Shell {
             }
             Expr::Redirect(inner, op) => self.run_redirect(inner, op),
             Expr::Coprocess(inner) => self.run_coprocess(inner),
+            Expr::PatternMatch { expr, patterns } => {
+                // LHS: for a bare word/variable (simple command, no args),
+                // evaluate as a value. For pipelines or compound commands,
+                // capture stdout.
+                let val_str = match expr.as_ref() {
+                    Expr::Simple(sc) if sc.args.is_empty() && sc.assignments.is_empty() => {
+                        self.eval_word(&sc.name).to_string()
+                    }
+                    _ => {
+                        let cmds = vec![Command::Exec(expr.as_ref().clone())];
+                        let result = self.capture_subprocess(&cmds);
+                        result.stdout.trim_end_matches('\n').to_string()
+                    }
+                };
+                let pats = self.eval_value(patterns);
+                for pat in pats.to_args() {
+                    if fnmatch_match(&pat, &val_str) {
+                        return Status::ok();
+                    }
+                }
+                Status::from_code(1)
+            }
         }
     }
 
     /// Run a simple command: builtin or external.
     fn run_simple(&mut self, sc: &SimpleCommand) -> Status {
-        // Special case: ~ in command position is the match operator (rc heritage).
-        // The parser produces Word::Tilde for bare ~. In command-name position,
-        // this is the match builtin, not tilde expansion.
-        if matches!(sc.name, Word::Tilde) {
-            let argv: Vec<String> = sc
-                .args
-                .iter()
-                .map(|a| self.eval_word(a).to_string())
-                .collect();
-            return self.builtin_tilde(&argv);
-        }
-
         let cmd_val = self.eval_word(&sc.name);
         let cmd_name = cmd_val.to_string();
 
@@ -1383,7 +1393,6 @@ impl Shell {
             "whatis" => Some(self.builtin_whatis(args)),
             "." => Some(self.builtin_dot(args)),
             "builtin" => Some(self.builtin_builtin(args)),
-            "~" => Some(self.builtin_tilde(args)),
             "shift" => Some(self.builtin_shift(args)),
             _ => None,
         }
@@ -1643,20 +1652,6 @@ impl Shell {
             .unwrap_or_else(|| Status::err(format!("{}: not a builtin", args[0])))
     }
 
-    /// ~ match_operator value patterns...
-    fn builtin_tilde(&self, args: &[String]) -> Status {
-        if args.len() < 2 {
-            return Status::err("~: usage: ~ value pattern...");
-        }
-        let value = &args[0];
-        for pattern in &args[1..] {
-            if fnmatch_match(pattern, value) {
-                return Status::ok();
-            }
-        }
-        Status::err("no match")
-    }
-
     fn builtin_shift(&mut self, args: &[String]) -> Status {
         let n: usize = if args.is_empty() {
             1
@@ -1878,6 +1873,10 @@ fn free_vars_expr(expr: &Expr, vars: &mut HashSet<String>) {
             for c in cmds {
                 free_vars_command(c, vars);
             }
+        }
+        Expr::PatternMatch { expr, patterns } => {
+            free_vars_expr(expr, vars);
+            free_vars_value(patterns, vars);
         }
     }
 }
@@ -2334,18 +2333,49 @@ mod tests {
         );
     }
 
-    // ── Tilde match operator ───────────────────────────────
+    // ── =~ pattern match operator ────────────────────────────
 
     #[test]
-    fn tilde_match_success() {
-        let s = run_status("~ hello he*");
-        assert!(s.is_success());
+    fn pattern_match_success() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Str("hello".into()));
+        let outcome = run_with_shell(&mut shell, "$x =~ he*");
+        assert!(outcome.status().is_success());
     }
 
     #[test]
-    fn tilde_match_failure() {
-        let s = run_status("~ hello wo*");
-        assert!(!s.is_success());
+    fn pattern_match_failure() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Str("hello".into()));
+        let outcome = run_with_shell(&mut shell, "$x =~ wo*");
+        assert!(!outcome.status().is_success());
+    }
+
+    #[test]
+    fn pattern_match_list() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Str("bar".into()));
+        let outcome = run_with_shell(&mut shell, "$x =~ (foo bar baz)");
+        assert!(outcome.status().is_success());
+    }
+
+    #[test]
+    fn pattern_match_in_if() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("f", Val::Str("readme.txt".into()));
+        run_with_shell(&mut shell, "result = no");
+        run_with_shell(&mut shell, "if $f =~ *.txt { result = yes }");
+        assert_eq!(shell.env.get_value("result"), Val::Str("yes".into()));
+    }
+
+    #[test]
+    fn pattern_match_in_and_chain() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Str("hello".into()));
+        run_with_shell(&mut shell, "result = no");
+        // =~ in an if condition (full expression grammar)
+        run_with_shell(&mut shell, "if $x =~ he* { result = yes }");
+        assert_eq!(shell.env.get_value("result"), Val::Str("yes".into()));
     }
 
     // ── Discipline functions ───────────────────────────────
@@ -2983,7 +3013,7 @@ mod tests {
         let mut shell = Shell::new();
         run_with_shell(
             &mut shell,
-            "let result = for x in (aa ab ba bb) { if ~ $x a* { take $x } }",
+            "let result = for x in (aa ab ba bb) { if $x =~ a* { take $x } }",
         );
         assert_eq!(
             shell.env.get_value("result"),

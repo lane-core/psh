@@ -885,12 +885,41 @@ fn pipeline<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Expr> {
     })
 }
 
-/// and_expr = pipeline ('&&' pipeline)*
+/// match_expr = pipeline ('=~' value)?
+fn match_expr<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Expr> {
+    combine::parser(move |input: &mut I| {
+        use combine::error::Commit;
+
+        let (left, _) = pipeline().parse_stream(input).into_result()?;
+        let (_, _) = trivia().parse_stream(input).into_result()?;
+
+        let cp = input.checkpoint();
+        match attempt(string("=~")).parse_stream(input).into_result() {
+            Ok(_) => {
+                let (_, _) = trivia().parse_stream(input).into_result()?;
+                let (patterns, _) = value_().parse_stream(input).into_result()?;
+                Ok((
+                    Expr::PatternMatch {
+                        expr: Box::new(left),
+                        patterns,
+                    },
+                    Commit::Commit(()),
+                ))
+            }
+            Err(_) => {
+                input.reset(cp).ok();
+                Ok((left, Commit::Commit(())))
+            }
+        }
+    })
+}
+
+/// and_expr = match_expr ('&&' match_expr)*
 fn and_expr<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Expr> {
     combine::parser(move |input: &mut I| {
         use combine::error::Commit;
 
-        let (first, _) = pipeline().parse_stream(input).into_result()?;
+        let (first, _) = match_expr().parse_stream(input).into_result()?;
         let mut result = first;
 
         loop {
@@ -899,7 +928,7 @@ fn and_expr<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Expr> {
             match attempt(string("&&")).parse_stream(input).into_result() {
                 Ok(_) => {
                     let (_, _) = trivia().parse_stream(input).into_result()?;
-                    let (right, _) = pipeline().parse_stream(input).into_result()?;
+                    let (right, _) = match_expr().parse_stream(input).into_result()?;
                     result = Expr::And(Box::new(result), Box::new(right));
                 }
                 Err(_) => {
@@ -1166,7 +1195,7 @@ fn if_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command> 
 
         let _ = keyword("if").parse_stream(input).into_result()?;
         let (_, _) = trivia().parse_stream(input).into_result()?;
-        let (condition, _) = pipeline().parse_stream(input).into_result()?;
+        let (condition, _) = or_expr().parse_stream(input).into_result()?;
         let (_, _) = trivia().parse_stream(input).into_result()?;
         let (then_body, _) = body().parse_stream(input).into_result()?;
 
@@ -1241,7 +1270,7 @@ fn while_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Comman
 
         let _ = keyword("while").parse_stream(input).into_result()?;
         let (_, _) = trivia().parse_stream(input).into_result()?;
-        let (cond, _) = pipeline().parse_stream(input).into_result()?;
+        let (cond, _) = or_expr().parse_stream(input).into_result()?;
         let (_, _) = trivia().parse_stream(input).into_result()?;
         let (body_cmds, _) = body().parse_stream(input).into_result()?;
 
