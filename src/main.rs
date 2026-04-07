@@ -34,6 +34,10 @@ fn main() {
 
     let mut shell = Shell::new();
 
+    if let Some(ref file) = opts.file {
+        shell.set_argv0(file);
+    }
+
     if let Some(cmd) = opts.command {
         // psh -c 'command'
         signal::install_handlers();

@@ -65,10 +65,14 @@ pub enum Word {
     /// Evaluated eagerly — the command runs and its stdout
     /// becomes the value.
     CommandSub(Vec<Command>),
-    /// Process substitution: <{cmd}
+    /// Input process substitution: <{cmd}
     /// Evaluates to /dev/fd/N, where N is the read end of a
     /// pipe connected to the command's stdout.
     ProcessSub(Vec<Command>),
+    /// Output process substitution: >{cmd}
+    /// Evaluates to /dev/fd/N, where N is the write end of a
+    /// pipe connected to the command's stdin.
+    OutputProcessSub(Vec<Command>),
     /// Concatenation: a^b — juxtaposition of words
     Concat(Vec<Word>),
     /// Tilde: ~ expands to $home
@@ -229,6 +233,10 @@ pub enum TypeAnnotation {
     /// Sugar for `T | Unit` with implied tags ok/none.
     /// Maybe[T] matches Sum("ok", T) or Sum("none", Unit).
     Maybe(Box<TypeAnnotation>),
+    /// Function type — A -> B. Param is the input type (or Tuple
+    /// for multi-param), ret is the output type. Right-associative:
+    /// A -> B -> C = A -> (B -> C).
+    Fn(Box<TypeAnnotation>, Box<TypeAnnotation>),
 }
 
 /// A binding — extends the context Γ with a new name.
@@ -348,6 +356,7 @@ impl fmt::Display for Word {
             Word::BraceVar(name) => write!(f, "${{{name}}}"),
             Word::CommandSub(_) => write!(f, "`{{...}}"),
             Word::ProcessSub(_) => write!(f, "<{{...}}"),
+            Word::OutputProcessSub(_) => write!(f, ">{{...}}"),
             Word::Concat(parts) => {
                 for part in parts {
                     write!(f, "{part}")?;

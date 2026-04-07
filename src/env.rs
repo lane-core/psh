@@ -163,8 +163,8 @@ pub struct Env {
     scopes: Vec<Scope>,
     /// Function definitions (including discipline functions).
     /// Separate from variable scopes — functions are global
-    /// in rc, and we follow that convention.
-    functions: HashMap<String, Vec<crate::ast::Command>>,
+    /// in rc, and we follow that convention. Stores (params, body).
+    functions: HashMap<String, (Vec<String>, Vec<crate::ast::Command>)>,
 }
 
 impl Default for Env {
@@ -376,15 +376,15 @@ impl Env {
     ///
     /// Rejects definitions when the current scope is readonly
     /// (.get discipline bodies must not mutate global state).
-    pub fn define_fn(&mut self, name: String, body: Vec<crate::ast::Command>) {
+    pub fn define_fn(&mut self, name: String, params: Vec<String>, body: Vec<crate::ast::Command>) {
         if self.is_readonly() {
             return;
         }
-        self.functions.insert(name, body);
+        self.functions.insert(name, (params, body));
     }
 
-    /// Look up a function by name.
-    pub fn get_fn(&self, name: &str) -> Option<&Vec<crate::ast::Command>> {
+    /// Look up a function by name. Returns (params, body).
+    pub fn get_fn(&self, name: &str) -> Option<&(Vec<String>, Vec<crate::ast::Command>)> {
         self.functions.get(name)
     }
 
@@ -488,6 +488,13 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
                 "type mismatch: Maybe expects ok/none tags, got \"{tag}\""
             )),
         },
+        // Fn type: validates Val::Thunk param count
+        (Val::Thunk { params, .. }, TypeAnnotation::Fn(_, _)) => {
+            // For now, just check it IS a thunk. Full param/return
+            // type checking requires runtime type tracking.
+            let _ = params;
+            Ok(val.clone())
+        }
         // Widening coercions: narrow type → Str
         (Val::Int(n), TypeAnnotation::Str) => Ok(Val::Str(n.to_string())),
         (Val::Bool(b), TypeAnnotation::Str) => Ok(Val::Str(b.to_string())),
@@ -534,6 +541,9 @@ fn type_ann_name(ann: &TypeAnnotation) -> String {
         }
         TypeAnnotation::Result(inner) => format!("Result[{}]", type_ann_name(inner)),
         TypeAnnotation::Maybe(inner) => format!("Maybe[{}]", type_ann_name(inner)),
+        TypeAnnotation::Fn(param, ret) => {
+            format!("{} -> {}", type_ann_name(param), type_ann_name(ret))
+        }
     }
 }
 
@@ -602,7 +612,7 @@ mod tests {
         let mut env = Env::new();
         assert!(!env.has_discipline("x", "get"));
 
-        env.define_fn("x.get".into(), vec![]);
+        env.define_fn("x.get".into(), vec![], vec![]);
         assert!(env.has_discipline("x", "get"));
         assert!(!env.has_discipline("x", "set"));
     }

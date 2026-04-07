@@ -234,6 +234,16 @@ fn proc_sub<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> {
         .map(|prog| Word::ProcessSub(prog.commands))
 }
 
+/// Output process substitution: >{ program }
+fn out_proc_sub<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> {
+    attempt(ch('>').skip(ch('{')))
+        .with(full_trivia())
+        .with(program_inner())
+        .skip(full_trivia())
+        .skip(ch('}'))
+        .map(|prog| Word::OutputProcessSub(prog.commands))
+}
+
 /// Tilde: ~/path or bare ~
 fn tilde<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> {
     ch('~').with(choice!(
@@ -258,6 +268,7 @@ fn word_atom<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word> 
         var_ref(),
         cmd_sub(),
         proc_sub(),
+        out_proc_sub(),
         tilde(),
         literal()
     )
@@ -289,7 +300,7 @@ fn word_inner<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word>
                     parts.push(atom);
                 }
                 Ok('<') => {
-                    // Might be <{ for process substitution
+                    // Might be <{ for input process substitution
                     match input.uncons() {
                         Ok('{') => {
                             input.reset(cp).ok();
@@ -297,7 +308,20 @@ fn word_inner<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Word>
                             parts.push(atom);
                         }
                         _ => {
-                            // Not a proc sub — stop
+                            input.reset(cp).ok();
+                            break;
+                        }
+                    }
+                }
+                Ok('>') => {
+                    // Might be >{ for output process substitution
+                    match input.uncons() {
+                        Ok('{') => {
+                            input.reset(cp).ok();
+                            let (atom, _) = out_proc_sub().parse_stream(input).into_result()?;
+                            parts.push(atom);
+                        }
+                        _ => {
                             input.reset(cp).ok();
                             break;
                         }
@@ -903,14 +927,46 @@ fn expr_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Expr> {
 // ── Layer 5: Commands ──────────────────────────────────────────
 
 /// Type annotation — atomic types, lists, tuples, unions.
+/// Top-level type annotation: union (`->` union)?
+/// `->` is right-associative, lowest precedence.
+/// A -> B -> C = A -> (B -> C)
+/// A | B -> C = (A | B) -> C
 fn type_ann<I: Stream<Token = char>>() -> impl CombineParser<I, Output = TypeAnnotation> {
+    combine::parser(move |input: &mut I| {
+        use combine::error::Commit;
+
+        let (left, _) = type_union().parse_stream(input).into_result()?;
+        let (_, _) = trivia().parse_stream(input).into_result()?;
+
+        // Check for ->
+        let cp = input.checkpoint();
+        match attempt(string("->")).parse_stream(input).into_result() {
+            Ok(_) => {
+                let (_, _) = trivia().parse_stream(input).into_result()?;
+                // Right-associative: recurse into type_ann
+                let (right, _) = type_ann().parse_stream(input).into_result()?;
+                Ok((
+                    TypeAnnotation::Fn(Box::new(left), Box::new(right)),
+                    Commit::Commit(()),
+                ))
+            }
+            Err(_) => {
+                input.reset(cp).ok();
+                Ok((left, Commit::Commit(())))
+            }
+        }
+    })
+}
+
+/// Union level: atom (| atom)*
+fn type_union<I: Stream<Token = char>>() -> impl CombineParser<I, Output = TypeAnnotation> {
     combine::parser(move |input: &mut I| {
         use combine::error::Commit;
 
         let (base, _) = type_ann_atom().parse_stream(input).into_result()?;
         let mut result = base;
 
-        // Check for union: type | type (not ||)
+        // Check for union: type | type (not || and not |})
         loop {
             let (_, _) = trivia().parse_stream(input).into_result()?;
             let cp = input.checkpoint();
@@ -918,8 +974,8 @@ fn type_ann<I: Stream<Token = char>>() -> impl CombineParser<I, Output = TypeAnn
                 Ok('|') => {
                     let cp2 = input.checkpoint();
                     match input.uncons() {
-                        Ok('|') => {
-                            // || — not a union, put back
+                        Ok('|') | Ok('}') => {
+                            // || or |} — not a union, put back
                             input.reset(cp).ok();
                             break;
                         }
@@ -987,6 +1043,21 @@ fn type_ann_atom<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Ty
                 .map(|t| TypeAnnotation::List(Some(Box::new(t))))
         ),
         attempt(keyword("List").map(|_| TypeAnnotation::List(None))),
+        // Fn[A, B] — canonical function type
+        attempt(
+            keyword("Fn")
+                .skip(trivia())
+                .skip(ch('['))
+                .skip(trivia())
+                .with(type_ann())
+                .skip(trivia())
+                .skip(ch(','))
+                .skip(trivia())
+                .and(type_ann())
+                .skip(trivia())
+                .skip(ch(']'))
+                .map(|(param, ret)| TypeAnnotation::Fn(Box::new(param), Box::new(ret)))
+        ),
         // (T) = List[T] sugar or (T, T) = Tuple
         attempt(type_ann_paren())
     )
@@ -1334,7 +1405,7 @@ fn try_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command>
     })
 }
 
-/// fn_def = 'fn' NAME body
+/// fn_def = 'fn' NAME fn_params? body
 fn fn_def<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command> {
     combine::parser(move |input: &mut I| {
         use combine::error::Commit;
@@ -1342,13 +1413,39 @@ fn fn_def<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command> 
         let _ = keyword("fn").parse_stream(input).into_result()?;
         let (_, _) = trivia().parse_stream(input).into_result()?;
         let (fname, _) = wname().parse_stream(input).into_result()?;
+
+        // Optional fn_params = '(' NAME* ')'
+        let cp = input.checkpoint();
+        let fn_params = match input.uncons() {
+            Ok('(') => {
+                let mut params = Vec::new();
+                loop {
+                    let (_, _) = trivia().parse_stream(input).into_result()?;
+                    let cp2 = input.checkpoint();
+                    match input.uncons() {
+                        Ok(')') => break,
+                        _ => {
+                            input.reset(cp2).ok();
+                            let (pname, _) = varname().parse_stream(input).into_result()?;
+                            params.push(pname);
+                        }
+                    }
+                }
+                params
+            }
+            _ => {
+                input.reset(cp).ok();
+                vec![]
+            }
+        };
+
         let (_, _) = trivia().parse_stream(input).into_result()?;
         let (fbody, _) = body().parse_stream(input).into_result()?;
 
         Ok((
             Command::Bind(Binding::Fn {
                 name: fname,
-                params: vec![],
+                params: fn_params,
                 body: fbody,
             }),
             Commit::Commit(()),
@@ -2287,11 +2384,50 @@ mod tests {
     fn fn_definition() {
         let prog = parse("fn greet { echo hello }");
         match &prog.commands[0] {
-            Command::Bind(Binding::Fn { name, body, .. }) => {
+            Command::Bind(Binding::Fn {
+                name, params, body, ..
+            }) => {
                 assert_eq!(name, "greet");
+                assert!(params.is_empty());
                 assert_eq!(body.len(), 1);
             }
             other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fn_named_params() {
+        let prog = parse("fn add(a b) { echo $a $b }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Fn { name, params, .. }) => {
+                assert_eq!(name, "add");
+                assert_eq!(params, &["a", "b"]);
+            }
+            other => panic!("expected Fn with params, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fn_nullary() {
+        let prog = parse("fn noop() { true }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Fn { name, params, .. }) => {
+                assert_eq!(name, "noop");
+                assert!(params.is_empty());
+            }
+            other => panic!("expected Fn nullary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fn_discipline_with_param() {
+        let prog = parse("fn x.set(val) { echo $val }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Fn { name, params, .. }) => {
+                assert_eq!(name, "x.set");
+                assert_eq!(params, &["val"]);
+            }
+            other => panic!("expected Fn discipline with param, got {other:?}"),
         }
     }
 
@@ -2357,6 +2493,68 @@ mod tests {
                 ..
             }) => {}
             other => panic!("expected Let with Result type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_ann_arrow() {
+        let prog = parse("let f : Int -> Str = 0");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                type_ann: Some(TypeAnnotation::Fn(param, ret)),
+                ..
+            }) => {
+                assert_eq!(**param, TypeAnnotation::Int);
+                assert_eq!(**ret, TypeAnnotation::Str);
+            }
+            other => panic!("expected Let with Fn type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_ann_fn_bracket() {
+        // Fn[Int, Str] — canonical form
+        let prog = parse("let f : Fn[Int, Str] = 0");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                type_ann: Some(TypeAnnotation::Fn(param, ret)),
+                ..
+            }) => {
+                assert_eq!(**param, TypeAnnotation::Int);
+                assert_eq!(**ret, TypeAnnotation::Str);
+            }
+            other => panic!("expected Let with Fn[Int, Str], got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_ann_arrow_right_assoc() {
+        // Int -> Int -> Int = Int -> (Int -> Int)
+        let prog = parse("let f : Int -> Int -> Int = 0");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                type_ann: Some(TypeAnnotation::Fn(param, ret)),
+                ..
+            }) => {
+                assert_eq!(**param, TypeAnnotation::Int);
+                assert!(matches!(**ret, TypeAnnotation::Fn(_, _)));
+            }
+            other => panic!("expected Let with curried Fn type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_ann_arrow_with_tuple_param() {
+        let prog = parse("let f : (Int, Str) -> Bool = 0");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let {
+                type_ann: Some(TypeAnnotation::Fn(param, ret)),
+                ..
+            }) => {
+                assert!(matches!(**param, TypeAnnotation::Tuple(_)));
+                assert_eq!(**ret, TypeAnnotation::Bool);
+            }
+            other => panic!("expected Let with tuple->Bool Fn type, got {other:?}"),
         }
     }
 
@@ -2584,6 +2782,17 @@ mod tests {
                 assert_eq!(body.len(), 1);
             }
             other => panic!("expected Fn with arrow body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn output_process_sub() {
+        let prog = parse("tee >{cat}");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(sc)) => {
+                assert!(matches!(sc.args[0], Word::OutputProcessSub(_)));
+            }
+            other => panic!("expected simple command with output proc sub, got {other:?}"),
         }
     }
 

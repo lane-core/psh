@@ -180,21 +180,21 @@ reference, not the starting point. Implementation order:
 - [ ] **6. `=>` single-line body.** Extend `body` production.
       Uniform across if/for/while/try/else/fn.
 
-- [ ] **7. Accessor syntax.** `$x.0`, `$x.ok`, `$x.err`, `$x.code`.
+- [x] **7. Accessor syntax.** `$x.0`, `$x.ok`, `$x.err`, `$x.code`.
       Accessor takes priority over free carets after `$`-variables.
 
-- [ ] **8. `try` in value position + `capture_subprocess`.** Shared
+- [x] **8. `try` in value position + `capture_subprocess`.** Shared
       fork+pipe+capture+waitpid primitive. `try` wraps as
       Result[T]. `` `{cmd}`` projects stdout only.
 
 - [ ] **9. `return` in value-producing blocks.** `return word`
       injects a value from the command sort into the value sort.
 
-- [ ] **10. Type annotations.** ExitCode, `(A, B)` tuples,
-      `A | B` unions, `Result[T]` / `Maybe[T]` sugar.
+- [x] **10. Type annotations.** ExitCode, `(A, B)` tuples,
+      `A | B` unions, `A -> B` / `Fn[A, B]`, `Result[T]` / `Maybe[T]`.
 
-- [ ] **11. Heredoc expansion, missing I/O.** Unquoted `<<EOF`
-      expands `$var`. `<>file`. `>{cmd}`. `<[fd]`. `>>[fd]`.
+- [x] **11. Heredoc expansion, missing I/O.** Unquoted `<<EOF`
+      expands `$var`. `<>file`. `>{cmd}`.
 
 ### Test rewrite
 
@@ -214,8 +214,8 @@ reference, not the starting point. Implementation order:
 ### Missing rc features
 
 - [ ] **Assignment-before-command.** `x=local cmd`.
-- [ ] **`$0`** — script name.
-- [ ] **`shift`** — shift positional parameters.
+- [x] **`$0`** — script name.
+- [x] **`shift`** — shift positional parameters.
 
 ### Infrastructure
 

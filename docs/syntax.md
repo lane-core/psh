@@ -831,15 +831,23 @@ coproduct with these specific tags. `Maybe[T]` uses `ok` and
 
 ### Type annotations
 
-    type_ann    = 'Unit' | 'Bool' | 'Int' | 'Str' | 'Path'
+    type_ann    = type_union ('->' type_ann)?         -- right-associative
+    type_union  = type_atom ('|' type_atom)*
+    type_atom   = 'Unit' | 'Bool' | 'Int' | 'Str' | 'Path'
                 | 'ExitCode'
                 | 'List' '[' type_ann ']'
                 | '(' type_ann ')'                     -- sugar for List[T]
                 | '(' type_ann (',' type_ann)+ ')'     -- Tuple
-                | type_ann '|' type_ann
-                | 'Fn' '(' type_ann* ')'               -- Thunk (arity check)
+                | 'Fn' '[' type_ann ',' type_ann ']'   -- canonical Fn type
                 | 'Result' '[' type_ann ']'
                 | 'Maybe' '[' type_ann ']'
+
+Precedence: `->` is lowest (right-associative), `|` is mid,
+atoms are highest. `A | B -> C` = `(A | B) -> C`.
+`Int -> Int -> Int` = `Int -> (Int -> Int)`.
+
+`Fn[A, B]` is the canonical form; `A -> B` is sugar for the
+same thing. Like `List[T]` / `(T)`.
 
 Type annotations validate via Prism check at the binding site.
 Union annotations (`A | B`) constrain which Sum variants are
@@ -1203,10 +1211,11 @@ wrapping model handles this compositionally:
 pipes are a shorthand that rc needed because it lacked the
 wrapping model.
 
-**`>{cmd}` (output process substitution):** Planned. The
+**`>{cmd}` (output process substitution):** Implemented. The
 dual of `<{cmd}`. `<{cmd}` gives a fd to read from;
-`>{cmd}` gives a fd to write to. Without it, patterns like
-`tee >(grep err > errors.log)` require named pipes.
+`>{cmd}` gives a fd to write to. Example:
+`tee >{grep err > errors.log}` sends stdout to both the
+terminal and the grep pipeline.
 
 
 ## `whatis` output format

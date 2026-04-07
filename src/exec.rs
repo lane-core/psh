@@ -146,6 +146,7 @@ impl Shell {
     pub fn new() -> Self {
         let mut env = Env::new();
         env.import_process_env();
+        let _ = env.set_value("0", Val::Str("psh".into()));
         Shell {
             env,
             jobs: JobTable::new(),
@@ -156,6 +157,11 @@ impl Shell {
             try_depth: 0,
             in_boolean_context: false,
         }
+    }
+
+    /// Set $0 (script name / shell name).
+    pub fn set_argv0(&mut self, name: &str) {
+        let _ = self.env.set_value("0", Val::Str(name.into()));
     }
 
     /// Set up the shell for interactive use.
@@ -244,6 +250,37 @@ impl Shell {
                     }
                 }
             }
+            Word::OutputProcessSub(cmds) => {
+                // Fork, create pipe, run cmds with stdin connected.
+                // Return /dev/fd/N where N is the write end.
+                let mut fds = [0i32; 2];
+                if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                    return Val::Str("/dev/null".to_string());
+                }
+                let read_fd = fds[0];
+                let write_fd = fds[1];
+
+                let pid = unsafe { libc::fork() };
+                match pid {
+                    -1 => Val::Str("/dev/null".to_string()),
+                    0 => {
+                        // Child: redirect stdin from read end
+                        unsafe {
+                            libc::close(write_fd);
+                            libc::dup2(read_fd, 0);
+                            libc::close(read_fd);
+                        }
+                        let outcome = self.run_cmds(cmds);
+                        let code = outcome.status().code();
+                        unsafe { libc::_exit(code) }
+                    }
+                    _ => {
+                        // Parent: close read end, return write fd path
+                        unsafe { libc::close(read_fd) };
+                        Val::Str(format!("/dev/fd/{write_fd}"))
+                    }
+                }
+            }
             Word::Concat(parts) => {
                 let mut result = self.eval_word(&parts[0]);
                 for part in &parts[1..] {
@@ -269,7 +306,7 @@ impl Shell {
         let disc_name = format!("{name}.get");
         if self.env.has_discipline(name, "get") && !self.active_disciplines.contains(&disc_name) {
             self.active_disciplines.insert(disc_name.clone());
-            if let Some(body) = self.env.get_fn(&disc_name).cloned() {
+            if let Some((_, body)) = self.env.get_fn(&disc_name).cloned() {
                 // .get runs in a readonly scope — mutations rejected
                 self.env.push_readonly_scope();
                 self.run_cmds(&body);
@@ -556,10 +593,15 @@ impl Shell {
         }
 
         // Try function table (fn definitions)
-        if let Some(body) = self.env.get_fn(&cmd_name).cloned() {
+        if let Some((fn_params, body)) = self.env.get_fn(&cmd_name).cloned() {
             self.env.push_scope();
-            // Bind positional parameters ($1, $2, ..., $*)
             let arg_vals: Vec<Val> = sc.args.iter().map(|a| self.eval_word(a)).collect();
+            // Bind named parameters if declared
+            for (i, pname) in fn_params.iter().enumerate() {
+                let val = arg_vals.get(i).cloned().unwrap_or(Val::Unit);
+                let _ = self.env.set_value(pname, val);
+            }
+            // Always bind positional parameters ($1, $2, ..., $*)
             for (i, val) in arg_vals.iter().enumerate() {
                 let _ = self.env.set_value(&(i + 1).to_string(), val.clone());
             }
@@ -1247,8 +1289,9 @@ impl Shell {
                     }
                 }
             }
-            Binding::Fn { name, body, .. } => {
-                self.env.define_fn(name.clone(), body.clone());
+            Binding::Fn { name, params, body } => {
+                self.env
+                    .define_fn(name.clone(), params.clone(), body.clone());
                 // Register discipline if it's a x.get or x.set function
                 if let Some(dot_pos) = name.rfind('.') {
                     let var_name = &name[..dot_pos];
@@ -1271,9 +1314,13 @@ impl Shell {
         let disc_name = format!("{name}.set");
         if self.env.has_discipline(name, "set") && !self.active_disciplines.contains(&disc_name) {
             self.active_disciplines.insert(disc_name.clone());
-            if let Some(body) = self.env.get_fn(&disc_name).cloned() {
+            if let Some((fn_params, body)) = self.env.get_fn(&disc_name).cloned() {
                 self.env.push_scope();
-                // $1 = the new value being assigned
+                // Bind named params (e.g., fn x.set(val) { })
+                if let Some(pname) = fn_params.first() {
+                    let _ = self.env.set_value(pname, value.clone());
+                }
+                // $1 = the new value being assigned (positional compat)
                 let _ = self.env.set_value("1", value.clone());
                 self.run_cmds(&body);
                 self.env.pop_scope();
@@ -1304,6 +1351,7 @@ impl Shell {
             "." => Some(self.builtin_dot(args)),
             "builtin" => Some(self.builtin_builtin(args)),
             "~" => Some(self.builtin_tilde(args)),
+            "shift" => Some(self.builtin_shift(args)),
             _ => None,
         }
     }
@@ -1576,6 +1624,46 @@ impl Shell {
         Status::err("no match")
     }
 
+    fn builtin_shift(&mut self, args: &[String]) -> Status {
+        let n: usize = if args.is_empty() {
+            1
+        } else {
+            match args[0].parse() {
+                Ok(v) => v,
+                Err(_) => return Status::err("shift: numeric argument required"),
+            }
+        };
+        // Read current positional params from $*
+        let star = self.env.get_value("*");
+        let mut positionals: Vec<Val> = match star {
+            Val::List(v) => v,
+            Val::Unit => vec![],
+            other => vec![other],
+        };
+        // Drop first n
+        if n > positionals.len() {
+            return Status::err("shift: count exceeds positional parameters");
+        }
+        positionals.drain(..n);
+        // Rebind $1, $2, ... and $*
+        // First clear old positionals by setting them to Unit
+        for i in 1..=(positionals.len() + n) {
+            let _ = self.env.set_value(&i.to_string(), Val::Unit);
+        }
+        for (i, val) in positionals.iter().enumerate() {
+            let _ = self.env.set_value(&(i + 1).to_string(), val.clone());
+        }
+        let _ = self.env.set_value(
+            "*",
+            if positionals.is_empty() {
+                Val::Unit
+            } else {
+                Val::List(positionals)
+            },
+        );
+        Status::ok()
+    }
+
     // ── Signal handling ─────────────────────────────────────
 
     /// Check for pending signals and dispatch to handler functions.
@@ -1588,7 +1676,7 @@ impl Shell {
                 continue;
             }
             // Dispatch to rc-style signal handler function
-            if let Some(body) = self.env.get_fn(sig_name).cloned() {
+            if let Some((_, body)) = self.env.get_fn(sig_name).cloned() {
                 for _ in 0..count {
                     self.run_cmds(&body);
                 }
@@ -1610,7 +1698,7 @@ impl Shell {
 
     /// Fire the sigexit artificial signal.
     pub fn fire_sigexit(&mut self) {
-        if let Some(body) = self.env.get_fn("sigexit").cloned() {
+        if let Some((_, body)) = self.env.get_fn("sigexit").cloned() {
             self.run_cmds(&body);
         }
     }
@@ -1817,7 +1905,7 @@ fn free_vars_word(word: &Word, vars: &mut HashSet<String>) {
                 free_vars_word(p, vars);
             }
         }
-        Word::CommandSub(cmds) | Word::ProcessSub(cmds) => {
+        Word::CommandSub(cmds) | Word::ProcessSub(cmds) | Word::OutputProcessSub(cmds) => {
             for c in cmds {
                 free_vars_command(c, vars);
             }
@@ -2679,5 +2767,105 @@ mod tests {
         // .err gives ExitCode, .code extracts it
         run_with_shell(&mut shell, "y = $r.err.code");
         assert_ne!(shell.env.get_value("y"), Val::Str(String::new()));
+    }
+
+    // ── Named function parameters ─────────────────────────────
+
+    #[test]
+    fn fn_named_params_bind() {
+        let mut shell = Shell::new();
+        // Pre-declare x so assignment inside fn walks scope chain
+        run_with_shell(&mut shell, "x = unset");
+        run_with_shell(&mut shell, "fn greet(name) { x = $name }");
+        run_with_shell(&mut shell, "greet world");
+        assert_eq!(shell.env.get_value("x"), Val::Str("world".into()));
+    }
+
+    #[test]
+    fn fn_named_params_and_positional() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = unset\ny = unset");
+        run_with_shell(&mut shell, "fn f(a b) { x = $a; y = $1 }");
+        run_with_shell(&mut shell, "f hello world");
+        // Named param
+        assert_eq!(shell.env.get_value("x"), Val::Str("hello".into()));
+        // Positional $1 also works
+        assert_eq!(shell.env.get_value("y"), Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn fn_named_params_missing_arg_is_unit() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = unset");
+        run_with_shell(&mut shell, "fn f(a b) { x = $b }");
+        run_with_shell(&mut shell, "f only_one");
+        // $b was not provided → Unit → empty string
+        assert_eq!(shell.env.get_value("x"), Val::Str(String::new()));
+    }
+
+    #[test]
+    fn fn_discipline_set_named_param() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = unset");
+        run_with_shell(&mut shell, "let mut v = 0");
+        run_with_shell(&mut shell, "fn v.set(val) { x = $val }");
+        run_with_shell(&mut shell, "v = 42");
+        assert_eq!(shell.env.get_value("x"), Val::Str("42".into()));
+    }
+
+    // ── $0 and shift ──────────────────────────────────────────
+
+    #[test]
+    fn dollar_zero_default() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = $0");
+        assert_eq!(shell.env.get_value("x"), Val::Str("psh".into()));
+    }
+
+    #[test]
+    fn dollar_zero_set_argv0() {
+        let mut shell = Shell::new();
+        shell.set_argv0("myscript.psh");
+        run_with_shell(&mut shell, "x = $0");
+        assert_eq!(shell.env.get_value("x"), Val::Str("myscript.psh".into()));
+    }
+
+    #[test]
+    fn shift_positional_params() {
+        let mut shell = Shell::new();
+        // Simulate a function call that sets positional params
+        let _ = shell.env.set_value("1", Val::Str("a".into()));
+        let _ = shell.env.set_value("2", Val::Str("b".into()));
+        let _ = shell.env.set_value("3", Val::Str("c".into()));
+        let _ = shell.env.set_value(
+            "*",
+            Val::List(vec![
+                Val::Str("a".into()),
+                Val::Str("b".into()),
+                Val::Str("c".into()),
+            ]),
+        );
+        run_with_shell(&mut shell, "shift");
+        // $1 is now "b", $2 is "c"
+        assert_eq!(shell.env.get_value("1"), Val::Str("b".into()));
+        assert_eq!(shell.env.get_value("2"), Val::Str("c".into()));
+    }
+
+    #[test]
+    fn shift_by_n() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("1", Val::Str("a".into()));
+        let _ = shell.env.set_value("2", Val::Str("b".into()));
+        let _ = shell.env.set_value("3", Val::Str("c".into()));
+        let _ = shell.env.set_value(
+            "*",
+            Val::List(vec![
+                Val::Str("a".into()),
+                Val::Str("b".into()),
+                Val::Str("c".into()),
+            ]),
+        );
+        run_with_shell(&mut shell, "shift 2");
+        assert_eq!(shell.env.get_value("1"), Val::Str("c".into()));
     }
 }
