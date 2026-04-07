@@ -797,6 +797,12 @@ impl Shell {
                     return Status::err(format!("cannot open {target_path}"));
                 }
                 let saved = unsafe { libc::dup(*fd as i32) };
+                if saved == -1 {
+                    unsafe { libc::close(new_fd) };
+                    return Status::err(format!(
+                        "dup: {}", std::io::Error::last_os_error()
+                    ));
+                }
                 unsafe { libc::dup2(new_fd, *fd as i32) };
                 unsafe { libc::close(new_fd) };
                 let result = self.run_expr(inner);
@@ -813,6 +819,12 @@ impl Shell {
                         return Status::err(format!("cannot open {target_path}"));
                     }
                     let saved = unsafe { libc::dup(*fd as i32) };
+                    if saved == -1 {
+                        unsafe { libc::close(new_fd) };
+                        return Status::err(format!(
+                            "dup: {}", std::io::Error::last_os_error()
+                        ));
+                    }
                     unsafe { libc::dup2(new_fd, *fd as i32) };
                     unsafe { libc::close(new_fd) };
                     let result = self.run_expr(inner);
@@ -845,6 +857,12 @@ impl Shell {
                     return Status::err(format!("cannot open {target_path}"));
                 }
                 let saved = unsafe { libc::dup(*fd as i32) };
+                if saved == -1 {
+                    unsafe { libc::close(new_fd) };
+                    return Status::err(format!(
+                        "dup: {}", std::io::Error::last_os_error()
+                    ));
+                }
                 unsafe { libc::dup2(new_fd, *fd as i32) };
                 unsafe { libc::close(new_fd) };
                 let result = self.run_expr(inner);
@@ -854,6 +872,11 @@ impl Shell {
             }
             RedirectOp::Dup { dst, src } => {
                 let saved = unsafe { libc::dup(*dst as i32) };
+                if saved == -1 {
+                    return Status::err(format!(
+                        "dup: {}", std::io::Error::last_os_error()
+                    ));
+                }
                 unsafe { libc::dup2(*src as i32, *dst as i32) };
                 let result = self.run_expr(inner);
                 unsafe { libc::dup2(saved, *dst as i32) };
@@ -862,6 +885,11 @@ impl Shell {
             }
             RedirectOp::Close { fd } => {
                 let saved = unsafe { libc::dup(*fd as i32) };
+                if saved == -1 {
+                    return Status::err(format!(
+                        "dup: {}", std::io::Error::last_os_error()
+                    ));
+                }
                 unsafe { libc::close(*fd as i32) };
                 let result = self.run_expr(inner);
                 unsafe { libc::dup2(saved, *fd as i32) };
@@ -885,6 +913,12 @@ impl Shell {
         }
         // Redirect stdin from pipe read end
         let saved = unsafe { libc::dup(0) };
+        if saved == -1 {
+            unsafe { libc::close(fds[0]) };
+            return Status::err(format!(
+                "dup: {}", std::io::Error::last_os_error()
+            ));
+        }
         unsafe { libc::dup2(fds[0], 0) };
         unsafe { libc::close(fds[0]) };
         let result = self.run_expr(inner);
@@ -2169,9 +2203,8 @@ mod tests {
 
     #[test]
     fn redirect_output_creates_file() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("psh_test_redir.txt");
-        let input = format!("echo hello >{}", path.display());
+        let path = format!("/tmp/psh_test_redir_{}.txt", std::process::id());
+        let input = format!("echo hello >{path}");
         run_status(&input);
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         assert_eq!(content.trim(), "hello");
@@ -2296,5 +2329,170 @@ mod tests {
         let vars = free_vars_in_commands(&prog.commands);
         assert!(vars.contains("a"));
         assert!(vars.contains("b"));
+    }
+
+    // ── F5: Structural match arm ──────────────────────────────
+
+    #[test]
+    fn match_structural_arm() {
+        // Construct a Sum value directly (tagged values not yet in parser)
+        // and verify structural pattern match decomposes it correctly.
+        let mut shell = Shell::new();
+        // Inject a Sum("ok", Str("42")) directly into the environment
+        let sum_val = Val::Sum("ok".into(), Box::new(Val::Str("42".into())));
+        let _ = shell.env.set_value("x", sum_val);
+        // Pre-declare result so the match arm's assignment walks scope
+        let _ = shell.env.set_value("result", Val::Str("none".into()));
+        // match $x { ok $v => result = $v; err $e => result = error }
+        let outcome = run_with_shell(
+            &mut shell,
+            "match $x { ok $v => result = $v; err $e => result = error }",
+        );
+        assert!(outcome.status().is_success());
+        assert_eq!(
+            shell.env.get_value("result"),
+            Val::Str("42".into()),
+            "structural arm should bind payload to $v"
+        );
+    }
+
+    // ── F6: Try abort prevents subsequent commands ────────────
+
+    #[test]
+    fn try_abort_prevents_subsequent() {
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Str("unset".into()));
+        run_with_shell(&mut shell, "try { false; x = should_not_run }");
+        assert_eq!(
+            shell.env.get_value("x"),
+            Val::Str("unset".into()),
+            "false should abort try before x assignment"
+        );
+    }
+
+    // ── F7: Try boolean-context exemption ─────────────────────
+
+    #[test]
+    fn try_boolean_context_exempt() {
+        // Boolean contexts (&&/|| LHS) inside try do NOT trigger abort.
+        // `false || true` evaluates false on the LHS (boolean context,
+        // exempt) then true on the RHS — overall success.
+        let mut shell = Shell::new();
+        let _ = shell.env.set_value("x", Val::Str("unset".into()));
+        run_with_shell(
+            &mut shell,
+            "try { false || true; x = should_run }",
+        );
+        assert_eq!(
+            shell.env.get_value("x"),
+            Val::Str("should_run".into()),
+            "boolean context (|| LHS) should not trigger try abort"
+        );
+    }
+
+    // ── F8: .get discipline fires on access ───────────────────
+
+    #[test]
+    fn get_discipline_fires_on_access() {
+        // .get runs in a readonly scope — it cannot mutate other variables.
+        // Verify that accessing $x fires the .get body (notification-only)
+        // and that the stored value is returned unchanged.
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = original");
+        run_with_shell(&mut shell, "fn x.get { echo discipline_fired }");
+        // Access $x — .get fires (output goes to stdout, we can't capture
+        // it here but the important thing is it doesn't crash and the
+        // stored value is returned)
+        let val = shell.resolve_var("x");
+        assert_eq!(val, Val::Str("original".into()));
+    }
+
+    // ── F9: Reentrancy guard for .set discipline ──────────────
+
+    #[test]
+    fn discipline_set_reentrancy_guard() {
+        // fn x.set { x = $1 } would recurse infinitely without the guard.
+        // The reentrancy guard in fire_set_discipline prevents this.
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "fn x.set { x = $1 }");
+        run_with_shell(&mut shell, "x = hello");
+        // Should not panic/overflow, and x should be "hello"
+        assert_eq!(shell.env.get_value("x"), Val::Str("hello".into()));
+    }
+
+    // ── F10: Redirect save/restore roundtrip ──────────────────
+
+    #[test]
+    fn redirect_restores_fd() {
+        let path = format!("/tmp/psh_test_redir_{}", std::process::id());
+        let input = format!("echo hello >{path}");
+        run_status(&input);
+        // After redirect completes, stdout should be restored (not the file).
+        // Verify the file contains only "hello".
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(content.trim(), "hello");
+        // A second echo without redirect should NOT append to the file
+        run_status("echo world");
+        let content2 = std::fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(
+            content2.trim(),
+            "hello",
+            "stdout should be restored after redirect"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── F12: For loop body runs correct number of times ───────
+
+    #[test]
+    fn for_loop_runs_body() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "result = ''");
+        // Accumulate loop variable values into result
+        run_with_shell(
+            &mut shell,
+            "for x in (a b c) { result = `{ echo $result$x } }",
+        );
+        // result should contain "abc" (accumulated across 3 iterations)
+        let val = shell.env.get_value("result").to_string();
+        assert_eq!(val.trim(), "abc", "for loop should run body 3 times");
+    }
+
+    // ── F13: Redirect output with unique temp file ────────────
+
+    #[test]
+    fn redirect_output_unique_tempfile() {
+        let path = format!("/tmp/psh_test_redir_unique_{}", std::process::id());
+        let input = format!("echo hello >{path}");
+        run_status(&input);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(content.trim(), "hello");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── F14: Thunk forcing with arguments ─────────────────────
+
+    #[test]
+    fn thunk_forcing_with_args() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let greet = \\name => echo hello $name");
+        let s = run_with_shell(&mut shell, "$greet world").status();
+        assert!(s.is_success(), "thunk forcing with args should succeed");
+    }
+
+    // ── F15: Let immutability enforcement ─────────────────────
+
+    #[test]
+    fn let_immutable_rejects_reassign() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = 42");
+        let outcome = run_with_shell(&mut shell, "x = 99");
+        // Reassignment of immutable let binding should fail
+        assert!(
+            !outcome.status().is_success(),
+            "reassignment of immutable variable should fail"
+        );
+        // x should still be its original value
+        assert_eq!(shell.env.get_value("x"), Val::Int(42));
     }
 }

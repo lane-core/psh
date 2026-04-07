@@ -373,7 +373,13 @@ impl Env {
     }
 
     /// Define a function.
+    ///
+    /// Rejects definitions when the current scope is readonly
+    /// (.get discipline bodies must not mutate global state).
     pub fn define_fn(&mut self, name: String, body: Vec<crate::ast::Command>) {
+        if self.is_readonly() {
+            return;
+        }
         self.functions.insert(name, body);
     }
 

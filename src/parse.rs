@@ -1511,7 +1511,6 @@ mod tests {
         PshParser::parse(input).unwrap_or_else(|e| panic!("parse failed: {e}\ninput: {input}"))
     }
 
-    #[allow(dead_code)]
     fn parse_err(input: &str) {
         assert!(
             PshParser::parse(input).is_err(),
@@ -2361,5 +2360,33 @@ mod tests {
             }
             other => panic!("expected Fn with arrow body, got {other:?}"),
         }
+    }
+
+    // ── F11: Negative parse tests ─────────────────────────────
+
+    #[test]
+    fn parse_err_unterminated_quote() {
+        parse_err("'hello");
+    }
+
+    #[test]
+    fn parse_err_unterminated_cmd_sub() {
+        parse_err("`{ echo");
+    }
+
+    #[test]
+    fn parse_err_missing_close_brace() {
+        parse_err("{ echo hello");
+    }
+
+    #[test]
+    fn parse_err_empty_redirect_target() {
+        // Redirect with no file target
+        parse_err("echo hello >");
+    }
+
+    #[test]
+    fn parse_err_unterminated_match() {
+        parse_err("match foo {");
     }
 }
