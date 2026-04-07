@@ -134,6 +134,9 @@ pub struct Shell {
     /// Whether we're in a boolean context (if/while condition, &&/|| LHS).
     /// Boolean contexts are exempt from try-abort.
     in_boolean_context: bool,
+    /// Accumulator for `take` in for-in-value-position.
+    /// None when not inside a for-in-value context.
+    take_acc: Option<Vec<Val>>,
 }
 
 impl Default for Shell {
@@ -156,6 +159,7 @@ impl Shell {
             coproc: None,
             try_depth: 0,
             in_boolean_context: false,
+            take_acc: None,
         }
     }
 
@@ -388,6 +392,25 @@ impl Shell {
                     Val::Sum("ok".into(), Box::new(val))
                 } else {
                     Val::Sum("err".into(), Box::new(Val::ExitCode(result.exit_code)))
+                }
+            }
+            Value::Compute(cmds) => {
+                // Set up take accumulator for for-in-value blocks.
+                // If any `take` commands fire, they push to this vec.
+                let prev_acc = self.take_acc.take();
+                self.take_acc = Some(Vec::new());
+                let outcome = self.run_cmds(cmds);
+                let acc = self.take_acc.take().unwrap_or_default();
+                self.take_acc = prev_acc;
+                // If return was issued, that takes priority
+                if let RunOutcome::Value(val) = outcome {
+                    return val;
+                }
+                // If take accumulated values, produce a List
+                if !acc.is_empty() {
+                    Val::List(acc)
+                } else {
+                    Val::Unit
                 }
             }
             Value::Tagged(tag, payload) => {
@@ -1191,6 +1214,16 @@ impl Shell {
                 };
                 RunOutcome::Value(val)
             }
+            Command::Take(value) => {
+                let val = self.eval_value(value);
+                if let Some(ref mut acc) = self.take_acc {
+                    acc.push(val);
+                    RunOutcome::ok()
+                } else {
+                    eprintln!("take: not inside a for-in-value block");
+                    RunOutcome::Status(Status::err("take outside for-in-value"))
+                }
+            }
         }
     }
 
@@ -1813,6 +1846,7 @@ fn free_vars_command(cmd: &Command, vars: &mut HashSet<String>) {
                 free_vars_value(v, vars);
             }
         }
+        Command::Take(val) => free_vars_value(val, vars),
     }
 }
 
@@ -1880,6 +1914,11 @@ fn free_vars_value(val: &Value, vars: &mut HashSet<String>) {
             }
         }
         Value::Try(cmds) => {
+            for c in cmds {
+                free_vars_command(c, vars);
+            }
+        }
+        Value::Compute(cmds) => {
             for c in cmds {
                 free_vars_command(c, vars);
             }
@@ -2867,5 +2906,104 @@ mod tests {
         );
         run_with_shell(&mut shell, "shift 2");
         assert_eq!(shell.env.get_value("1"), Val::Str("c".into()));
+    }
+
+    // ── Value-producing blocks (Phase 9) ──────────────────────
+
+    #[test]
+    fn compute_match_return() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = hello");
+        run_with_shell(
+            &mut shell,
+            "let icon = match $x { hello => return yes; * => return no }",
+        );
+        assert_eq!(shell.env.get_value("icon"), Val::Str("yes".into()));
+    }
+
+    #[test]
+    fn compute_if_return() {
+        let mut shell = Shell::new();
+        run_with_shell(
+            &mut shell,
+            "let v = if true { return ok } else { return fail }",
+        );
+        assert_eq!(shell.env.get_value("v"), Val::Str("ok".into()));
+    }
+
+    #[test]
+    fn compute_if_else_return() {
+        let mut shell = Shell::new();
+        run_with_shell(
+            &mut shell,
+            "let v = if false { return ok } else { return fail }",
+        );
+        assert_eq!(shell.env.get_value("v"), Val::Str("fail".into()));
+    }
+
+    #[test]
+    fn compute_block_return() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let v = { return 42 }");
+        assert_eq!(shell.env.get_value("v"), Val::Int(42));
+    }
+
+    #[test]
+    fn compute_block_effects_before_return() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = before");
+        run_with_shell(&mut shell, "let v = { x = after; return done }");
+        assert_eq!(shell.env.get_value("v"), Val::Str("done".into()));
+        assert_eq!(shell.env.get_value("x"), Val::Str("after".into()));
+    }
+
+    #[test]
+    fn compute_no_return_is_unit() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let v = { true }");
+        assert_eq!(shell.env.get_value("v"), Val::Unit);
+    }
+
+    #[test]
+    fn take_for_collect() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let result = for x in (a b c) { take $x }");
+        assert_eq!(
+            shell.env.get_value("result"),
+            Val::List(vec![
+                Val::Str("a".into()),
+                Val::Str("b".into()),
+                Val::Str("c".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn take_for_filter() {
+        let mut shell = Shell::new();
+        run_with_shell(
+            &mut shell,
+            "let result = for x in (aa ab ba bb) { if ~ $x a* { take $x } }",
+        );
+        assert_eq!(
+            shell.env.get_value("result"),
+            Val::List(vec![Val::Str("aa".into()), Val::Str("ab".into())])
+        );
+    }
+
+    #[test]
+    fn take_nothing_is_unit() {
+        let mut shell = Shell::new();
+        run_with_shell(
+            &mut shell,
+            "let result = for x in (a b c) { if false { take $x } }",
+        );
+        assert_eq!(shell.env.get_value("result"), Val::Unit);
+    }
+
+    #[test]
+    fn take_outside_for_is_error() {
+        let (_, outcome) = run("take hello");
+        assert!(!outcome.status().is_success());
     }
 }

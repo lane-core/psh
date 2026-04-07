@@ -425,6 +425,50 @@ fn try_value<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value>
         .map(|prog| Value::Try(prog.commands))
 }
 
+/// Value-producing block: if/match/while/for/{ } in value position.
+/// Parses one control-flow command and wraps as Value::Compute.
+fn compute_value<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
+    combine::parser(move |input: &mut I| {
+        use combine::error::Commit;
+
+        macro_rules! try_ctrl {
+            ($parser:expr) => {{
+                let cp = input.checkpoint();
+                if let Ok((cmd, _)) = $parser.parse_stream(input).into_result() {
+                    return Ok((Value::Compute(vec![cmd]), Commit::Commit(())));
+                }
+                input.reset(cp).ok();
+            }};
+        }
+
+        try_ctrl!(if_cmd());
+        try_ctrl!(match_cmd());
+        try_ctrl!(while_cmd());
+        try_ctrl!(for_cmd());
+
+        // { block } in value position
+        let cp = input.checkpoint();
+        match ch('{').parse_stream(input).into_result() {
+            Ok(_) => {
+                let (_, _) = full_trivia().parse_stream(input).into_result()?;
+                let (prog, _) = program_inner().parse_stream(input).into_result()?;
+                let (_, _) = full_trivia().parse_stream(input).into_result()?;
+                let _ = ch('}').parse_stream(input).into_result()?;
+                Ok((Value::Compute(prog.commands), Commit::Commit(())))
+            }
+            Err(_) => {
+                input.reset(cp).ok();
+                Err(Commit::Peek(
+                    <I::Error as ParseError<I::Token, I::Range, I::Position>>::empty(
+                        input.position(),
+                    )
+                    .into(),
+                ))
+            }
+        }
+    })
+}
+
 fn value_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
     choice!(
         // List literal: ( word* )
@@ -437,6 +481,8 @@ fn value_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
         ),
         // try { body } in value position
         try_value(),
+        // Value-producing blocks: if/match/while/for/{ }
+        attempt(compute_value()),
         // Lambda
         attempt(lambda()),
         // Single word
@@ -1552,6 +1598,14 @@ fn return_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Comma
     })
 }
 
+/// take value — contribute to enclosing for-in-value accumulator
+fn take_cmd<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command> {
+    keyword("take")
+        .skip(trivia())
+        .with(value_())
+        .map(Command::Take)
+}
+
 /// assignment = NAME '=' value
 fn assignment<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command> {
     attempt(varname().skip(trivia()).skip(ch('=')).skip(trivia()))
@@ -1587,6 +1641,7 @@ fn command_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Command
         try_parser!(let_binding());
         try_parser!(ref_def());
         try_parser!(return_cmd());
+        try_parser!(take_cmd());
         try_parser!(assignment());
 
         let (expr, _) = expr_cmd().parse_stream(input).into_result()?;
@@ -2470,6 +2525,56 @@ mod tests {
             }) => {}
             other => panic!("expected Let mut export, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn compute_value_match() {
+        let prog = parse("let x = match $y { a => return 1; * => return 2 }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                assert!(matches!(value, Value::Compute(_)));
+            }
+            other => panic!("expected Let with Compute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_value_if() {
+        let prog = parse("let x = if true { return 1 }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                assert!(matches!(value, Value::Compute(_)));
+            }
+            other => panic!("expected Let with Compute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_value_block() {
+        let prog = parse("let x = { return 42 }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                assert!(matches!(value, Value::Compute(_)));
+            }
+            other => panic!("expected Let with Compute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn take_in_for() {
+        let prog = parse("let x = for i in (a b) { take $i }");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                assert!(matches!(value, Value::Compute(_)));
+            }
+            other => panic!("expected Let with Compute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn take_parsed_as_command() {
+        let prog = parse("take hello");
+        assert!(matches!(prog.commands[0], Command::Take(_)));
     }
 
     #[test]

@@ -187,8 +187,11 @@ reference, not the starting point. Implementation order:
       fork+pipe+capture+waitpid primitive. `try` wraps as
       Result[T]. `` `{cmd}`` projects stdout only.
 
-- [ ] **9. `return` in value-producing blocks.** `return word`
+- [x] **9. `return` in value-producing blocks.** `return word`
       injects a value from the command sort into the value sort.
+      `Value::Compute(Vec<Command>)` for if/match/while/for/{ }
+      in let RHS. `take` keyword for for-in-value collection
+      (Raku gather/take heritage, Traversal introduction form).
 
 - [x] **10. Type annotations.** ExitCode, `(A, B)` tuples,
       `A | B` unions, `A -> B` / `Fn[A, B]`, `Result[T]` / `Maybe[T]`.

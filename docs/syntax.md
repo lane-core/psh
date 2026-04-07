@@ -282,6 +282,35 @@ body produces `Unit`.
 `return` is unambiguous — the keyword marks the polarity shift.
 Bare words in a body are always commands. `return` followed by
 a word is always a value injection. No disambiguation needed.
+`return` always terminates the enclosing computation (η for F(A))
+— it means the same thing in every context.
+
+**`take` in value-producing `for`.** `for` in value position
+collects values via `take` (Raku's gather/take heritage). Each
+`take` contributes one element to the result List. `return`
+inside a `for` body exits the enclosing function, not the loop.
+
+    let txts = for f in $files {
+        if ~ $f *.txt => take $f
+    }
+    # txts = (readme.txt notes.txt)
+
+    # Transform: take on every iteration
+    let names = for f in $files {
+        take `{ basename $f .txt }
+    }
+
+    # Multiple takes per iteration permitted
+    let pairs = for f in $files {
+        take $f
+        take `{ wc -l <$f }
+    }
+
+`take` is the Traversal's introduction form (Wander). `return`
+is the Affine introduction form (Choice + Strong). Different
+optic constraints, different keywords. `take` is only valid
+inside a `for`-in-value-position block — error elsewhere.
+A `for` where nothing is taken produces Unit.
 
 **`try` block.** Scoped error handling — the ⊕→⅋ converter.
 Inside `try`, any command with nonzero Status aborts the block

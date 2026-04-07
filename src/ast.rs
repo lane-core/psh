@@ -102,6 +102,11 @@ pub enum Value {
     /// Returns Sum("ok", captured_val) or Sum("err", ExitCode(n)).
     /// CBV: body evaluates immediately at binding time.
     Try(Vec<Command>),
+    /// Value-producing block — U(F(A)) in CBPV. A computation that
+    /// may produce a value via `return`. Runs commands, extracts
+    /// RunOutcome::Value; defaults to Unit if no return issued.
+    /// Used for if/match/while/{ } in value position (let RHS).
+    Compute(Vec<Command>),
     /// Tagged value: tag payload — Sum construction in value position.
     Tagged(String, Box<Value>),
 }
@@ -325,6 +330,11 @@ pub enum Command {
     /// return value — injects a value from command sort into value sort.
     /// CBPV's return : A → F(A).
     Return(Option<Value>),
+    /// take value — contribute a value to the enclosing for-in-value
+    /// accumulator. Raku heritage (gather/take). Does not terminate
+    /// the computation — the loop continues. Only valid inside
+    /// for-in-value-position; error elsewhere.
+    Take(Value),
 }
 
 /// A complete psh program — a sequence of commands.
