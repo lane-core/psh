@@ -1,28 +1,25 @@
-//! Parser for psh.
+//! Parser for psh — combine 4 rewrite.
 //!
-//! Recursive descent parser operating directly on `&str` — no
-//! separate lexer or token stream. Handles rc's quoting rules
-//! (single quotes only, '' for literal quote) and the context-
-//! sensitive boundaries between words, operators, and whitespace.
+//! Six-layer combinator architecture:
+//!   1. Lexical predicates and primitives
+//!   2. Word atoms (quoted, var_ref, command_sub, etc.)
+//!   3. Words with free carets
+//!   4. Expression precedence tower
+//!   5. Commands (keyword-initiated + simple/assign)
+//!   6. Program (top-level sequencing)
 //!
-//! Grammar (informal):
+//! Grammar: docs/syntax.md (normative). This parser implements all
+//! unmarked productions. [planned] productions get stub parsers
+//! that return clear errors.
 //!
-//!   program     = command*
-//!   command     = assignment | if | for | while | match | fn | ref | expr_cmd
-//!   expr_cmd    = or_expr (& | ; | \n)?
-//!   or_expr     = and_expr (|| and_expr)*
-//!   and_expr    = pipeline (&& pipeline)*
-//!   pipeline    = cmd_expr (| cmd_expr)*  (plus |& for coprocess)
-//!   cmd_expr    = ! cmd_expr | { body } | @{ body } | simple_command redirection*
-//!   simple_cmd  = word+
-//!   word        = word_atom (^ word_atom)*
-//!   word_atom   = literal | $var | $#var | $var(idx) | `{ program } | quoted
-//!   value       = word | (word*)
-//!   redirect    = > target | >> target | < target | >[fd] target | >[fd=fd] | >[fd=]
+//! Heritage: rc (Duff 1990) grammar with psh extensions (match
+//! with =>, two-alphabet split, free carets, brace-delimited vars).
 
 use anyhow::{bail, Result};
 
 use crate::ast::*;
+
+// ── Layer 1: Lexical predicates ───────────────────────────────
 
 /// Variable-name alphabet — used after `$`, `$#`, `$"`.
 /// rc's variable-name set: alphanumerics, `_`, and `*`.
@@ -47,8 +44,7 @@ fn is_word_char(c: char) -> bool {
 fn is_keyword(s: &str) -> bool {
     matches!(
         s,
-        "if" | "else" | "for" | "in" | "match" | "fn" | "while" | "ref" | "let" | "try"
-            | "return"
+        "if" | "else" | "for" | "in" | "match" | "fn" | "while" | "ref" | "let" | "try" | "return"
     )
 }
 
@@ -58,8 +54,8 @@ pub struct PshParser;
 impl PshParser {
     pub fn parse(input: &str) -> Result<Program> {
         let mut p = RecParser::new(input);
-        let cmds = p.command_list()?;
-        p.skip_ws();
+        let cmds = p.program()?;
+        p.skip_terminators();
         if !p.at_end() {
             bail!(
                 "{}:{}: unexpected character '{}'",
@@ -74,7 +70,17 @@ impl PshParser {
 
 pub use PshParser as Parser;
 
-/// Recursive descent parser state.
+// ── Recursive descent on &str with position tracking ──────────
+//
+// combine 4's parser combinator model provides the architectural
+// thinking (layers, attempt, choice) but psh's grammar has enough
+// context-sensitivity (heredocs, free carets, keyword detection)
+// that a direct recursive descent on &str is cleaner than fighting
+// combine's type system. The layered structure follows combine's
+// six-layer pattern; the implementation uses direct &str indexing
+// for the context-sensitive bits.
+
+/// Internal parser state — recursive descent over &str.
 struct RecParser<'a> {
     input: &'a str,
     pos: usize,
@@ -106,6 +112,11 @@ impl<'a> RecParser<'a> {
         chars.next()
     }
 
+    /// Look ahead at the remaining input from the current position.
+    fn rest(&self) -> &'a str {
+        &self.input[self.pos..]
+    }
+
     fn advance(&mut self) -> Option<char> {
         let c = self.peek()?;
         self.pos += c.len_utf8();
@@ -132,12 +143,20 @@ impl<'a> RecParser<'a> {
         self.col = saved.2;
     }
 
-    /// Skip horizontal whitespace and comments (NOT newlines).
+    // ── Layer 1: Whitespace and terminators ───────────────────
+
+    /// Skip horizontal whitespace, comments, and line continuations.
+    /// Does NOT consume newlines (those are terminators).
     fn skip_ws(&mut self) {
         loop {
             match self.peek() {
                 Some(' ' | '\t' | '\r') => {
                     self.advance();
+                }
+                // Line continuation: backslash immediately before newline
+                Some('\\') if self.peek2() == Some('\n') => {
+                    self.advance(); // consume backslash
+                    self.advance(); // consume newline
                 }
                 Some('#') => {
                     while let Some(c) = self.peek() {
@@ -152,11 +171,16 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    /// Skip terminators: newlines, semicolons, whitespace, comments.
+    /// Skip terminators: newlines, semicolons, whitespace, comments,
+    /// and line continuations.
     fn skip_terminators(&mut self) {
         loop {
             match self.peek() {
                 Some(' ' | '\t' | '\r' | '\n' | ';') => {
+                    self.advance();
+                }
+                Some('\\') if self.peek2() == Some('\n') => {
+                    self.advance();
                     self.advance();
                 }
                 Some('#') => {
@@ -176,13 +200,11 @@ impl<'a> RecParser<'a> {
         matches!(self.peek(), None | Some('\n' | ';' | '}' | ')'))
     }
 
-    /// Is the current position at something that can start a word?
+    /// Can the current position start a word atom?
     fn at_word_start(&self) -> bool {
         match self.peek() {
             Some(c) if is_word_char(c) || c == '$' || c == '`' || c == '\'' => true,
-            // ~ starts tilde expansion (not in word_char — special handling)
             Some('~') => true,
-            // <{ starts a process substitution word
             Some('<') if self.peek2() == Some('{') => true,
             _ => false,
         }
@@ -191,7 +213,6 @@ impl<'a> RecParser<'a> {
     /// Is the current position at an operator that ends argument collection?
     fn at_operator(&self) -> bool {
         match self.peek() {
-            // <{ is process substitution (a word), not a redirect operator
             Some('<') => self.peek2() != Some('{'),
             Some('|' | '>' | ';' | '\n' | '}' | ')') => true,
             Some('&') => true,
@@ -200,7 +221,7 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    // ── Leaf parsers ───────────────────────────────────────
+    // ── Layer 1: Primitive readers ────────────────────────────
 
     /// Read a bare word (sequence of word_char characters).
     fn read_bare_word(&mut self) -> Option<String> {
@@ -220,13 +241,27 @@ impl<'a> RecParser<'a> {
     }
 
     /// Read a variable name (sequence of var_char characters).
-    /// Used after `$`, `$#`, and `$"` — the narrow alphabet that
-    /// terminates at `.`, `/`, `@` etc. to enable free carets and
-    /// accessor syntax.
     fn read_var_name(&mut self) -> Option<String> {
         let start = self.pos;
         while let Some(c) = self.peek() {
             if is_var_char(c) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.pos > start {
+            Some(self.input[start..self.pos].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Read digits (for fd numbers in redirections).
+    fn read_digits(&mut self) -> Option<String> {
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if c.is_ascii_digit() {
                 self.advance();
             } else {
                 break;
@@ -258,27 +293,9 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    /// Read a sequence of digits (for fd numbers in redirections).
-    fn read_digits(&mut self) -> Option<String> {
-        let start = self.pos;
-        while let Some(c) = self.peek() {
-            if c.is_ascii_digit() {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        if self.pos > start {
-            Some(self.input[start..self.pos].to_string())
-        } else {
-            None
-        }
-    }
-
-    /// Read here-document content: consume all text until a line
-    /// matching the delimiter appears alone on a line.
+    /// Read here-document content until a line matching the delimiter.
     fn read_heredoc(&mut self, delim: &str) -> Result<String> {
-        // Skip the rest of the current line (after the delimiter word)
+        // Skip the rest of the current line
         while let Some(c) = self.peek() {
             if c == '\n' {
                 self.advance();
@@ -289,7 +306,6 @@ impl<'a> RecParser<'a> {
 
         let mut content = String::new();
         loop {
-            // Read one line
             let mut line = String::new();
             loop {
                 match self.peek() {
@@ -308,7 +324,6 @@ impl<'a> RecParser<'a> {
                                 self.pos_str()
                             );
                         }
-                        // EOF before delimiter — check if last line is delimiter
                         if line == delim {
                             return Ok(content);
                         }
@@ -328,7 +343,24 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    /// Expect a bare-or-quoted word string (used for names in keyword positions).
+    /// Read a type name — alphabetic characters only.
+    fn read_type_name(&mut self) -> Option<String> {
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if c.is_ascii_alphabetic() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.pos > start {
+            Some(self.input[start..self.pos].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Expect a bare-or-quoted word string.
     fn expect_word_string(&mut self, what: &str) -> Result<String> {
         self.skip_ws();
         if self.peek() == Some('\'') {
@@ -341,16 +373,30 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    // ── Word parsing ───────────────────────────────────────
-
-    /// Parse a word atom — the indivisible unit before ^concat.
-    /// Skips leading whitespace.
-    fn word_atom(&mut self) -> Result<Word> {
+    /// Check for and consume a specific keyword. Returns true if found.
+    fn check_keyword(&mut self, kw: &str) -> bool {
         self.skip_ws();
-        self.word_atom_nows()
+        let saved = self.save();
+        if let Some(w) = self.read_bare_word() {
+            if w == kw {
+                // Ensure the keyword is not a prefix of a longer word
+                if let Some(c) = self.peek() {
+                    if is_var_char(c) {
+                        self.restore(saved);
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        self.restore(saved);
+        false
     }
 
-    /// Parse a word atom without skipping leading whitespace.
+    // ── Layer 2: Word atoms ──────────────────────────────────
+
+    /// Parse a word atom — the indivisible unit before ^concat.
+    /// Does NOT skip leading whitespace.
     fn word_atom_nows(&mut self) -> Result<Word> {
         match self.peek() {
             Some('\'') => {
@@ -360,33 +406,69 @@ impl<'a> RecParser<'a> {
             }
             Some('$') => {
                 self.advance();
-                if self.peek() == Some('#') {
-                    self.advance();
-                    let name = self.read_var_name().ok_or_else(|| {
-                        anyhow::anyhow!("{}: expected variable name after $#", self.pos_str())
-                    })?;
-                    Ok(Word::Count(name))
-                } else if self.peek() == Some('"') {
-                    // rc heritage: $"x joins list elements with spaces
-                    self.advance();
-                    let name = self.read_var_name().ok_or_else(|| {
-                        anyhow::anyhow!("{}: expected variable name after $\"", self.pos_str())
-                    })?;
-                    Ok(Word::Stringify(name))
-                } else {
-                    let name = self.read_var_name().ok_or_else(|| {
-                        anyhow::anyhow!("{}: expected variable name after $", self.pos_str())
-                    })?;
-                    if self.peek() == Some('(') {
+                match self.peek() {
+                    Some('#') => {
                         self.advance();
-                        let idx = self.word()?;
-                        if self.peek() != Some(')') {
-                            bail!("{}: expected ')' after index", self.pos_str());
+                        let name = self.read_var_name().ok_or_else(|| {
+                            anyhow::anyhow!("{}: expected variable name after $#", self.pos_str())
+                        })?;
+                        Ok(Word::Count(name))
+                    }
+                    Some('"') => {
+                        // rc heritage: $"x joins list elements with spaces
+                        self.advance();
+                        let name = self.read_var_name().ok_or_else(|| {
+                            anyhow::anyhow!("{}: expected variable name after $\"", self.pos_str())
+                        })?;
+                        Ok(Word::Stringify(name))
+                    }
+                    Some('{') => {
+                        // ${name} — brace-delimited variable name
+                        self.advance();
+                        let mut name = String::new();
+                        loop {
+                            match self.peek() {
+                                Some('}') => {
+                                    self.advance();
+                                    break;
+                                }
+                                Some(c) if is_word_char(c) => {
+                                    self.advance();
+                                    name.push(c);
+                                }
+                                other => {
+                                    bail!(
+                                        "{}: expected '}}' to close ${{name}}, got {}",
+                                        self.pos_str(),
+                                        match other {
+                                            Some(c) => format!("'{c}'"),
+                                            None => "end of input".into(),
+                                        }
+                                    );
+                                }
+                            }
                         }
-                        self.advance();
-                        Ok(Word::Index(name, Box::new(idx)))
-                    } else {
+                        if name.is_empty() {
+                            bail!("{}: empty variable name in ${{}}", self.pos_str());
+                        }
                         Ok(Word::Var(name))
+                    }
+                    _ => {
+                        let name = self.read_var_name().ok_or_else(|| {
+                            anyhow::anyhow!("{}: expected variable name after $", self.pos_str())
+                        })?;
+                        // Check for indexing: $var(idx)
+                        if self.peek() == Some('(') {
+                            self.advance();
+                            let idx = self.word_inner()?;
+                            if self.peek() != Some(')') {
+                                bail!("{}: expected ')' after index", self.pos_str());
+                            }
+                            self.advance();
+                            Ok(Word::Index(name, Box::new(idx)))
+                        } else {
+                            Ok(Word::Var(name))
+                        }
                     }
                 }
             }
@@ -408,7 +490,7 @@ impl<'a> RecParser<'a> {
                 self.advance();
                 Ok(Word::CommandSub(body))
             }
-            // rc heritage: <{cmd} process substitution
+            // <{ process substitution
             Some('<') if self.peek2() == Some('{') => {
                 self.advance(); // <
                 self.advance(); // {
@@ -423,10 +505,7 @@ impl<'a> RecParser<'a> {
                 self.advance();
                 Ok(Word::ProcessSub(body))
             }
-            // ~ is not in word_char — handle tilde specially.
-            // Read `~` plus any following word_chars as a single literal
-            // so that ~/path and bare ~ both work. Tilde expansion
-            // happens at eval time, not parse time.
+            // ~ tilde expansion — not in word_char
             Some('~') => {
                 self.advance();
                 let rest = self.read_bare_word().unwrap_or_default();
@@ -447,28 +526,62 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    /// Parse a word — atoms joined by ^ (concatenation).
-    fn word(&mut self) -> Result<Word> {
-        let base = self.word_atom()?;
-        self.concat_rest(base)
-    }
+    // ── Layer 3: Words with free carets ──────────────────────
 
-    /// After parsing a word atom, check for ^concat continuation.
-    fn concat_rest(&mut self, base: Word) -> Result<Word> {
-        if self.peek() == Some('^') {
-            let mut parts = vec![base];
-            while self.peek() == Some('^') {
-                self.advance();
-                parts.push(self.word_atom_nows()?);
-            }
-            Ok(Word::Concat(parts))
-        } else {
-            Ok(base)
+    /// Can the current character start a word atom (no ws consumed)?
+    fn can_start_word_atom(&self) -> bool {
+        match self.peek() {
+            Some('$' | '\'' | '`' | '~') => true,
+            Some('<') if self.peek2() == Some('{') => true,
+            Some(c) if is_word_char(c) => true,
+            _ => false,
         }
     }
 
-    /// Parse a word in argument position — skips ws first and
-    /// stops at operators, terminators, and command-starting keywords.
+    /// Parse a word — atoms joined by explicit `^` or implicit free carets.
+    /// Skips leading whitespace before the first atom.
+    fn word(&mut self) -> Result<Word> {
+        self.skip_ws();
+        self.word_inner()
+    }
+
+    /// Parse a word without skipping leading whitespace.
+    fn word_inner(&mut self) -> Result<Word> {
+        let base = self.word_atom_nows()?;
+        self.concat_rest(base)
+    }
+
+    /// After parsing a word atom, check for explicit `^` or implicit
+    /// free caret (adjacent word atoms with no whitespace).
+    fn concat_rest(&mut self, base: Word) -> Result<Word> {
+        let mut parts = vec![base];
+        loop {
+            if self.peek() == Some('^') {
+                // Explicit caret — consume and parse next atom
+                self.advance();
+                // Allow whitespace after explicit ^
+                if self.can_start_word_atom() {
+                    parts.push(self.word_atom_nows()?);
+                } else {
+                    self.skip_ws();
+                    parts.push(self.word_atom_nows()?);
+                }
+            } else if self.can_start_word_atom() {
+                // Free caret — adjacent atom with no whitespace
+                parts.push(self.word_atom_nows()?);
+            } else {
+                break;
+            }
+        }
+        if parts.len() == 1 {
+            Ok(parts.into_iter().next().unwrap())
+        } else {
+            Ok(Word::Concat(parts))
+        }
+    }
+
+    /// Parse a word in argument position — skips ws, stops at
+    /// operators, terminators, and command-starting keywords.
     fn arg_word(&mut self) -> Result<Option<Word>> {
         self.skip_ws();
         if self.at_terminator() || self.at_operator() || !self.at_word_start() {
@@ -484,8 +597,16 @@ impl<'a> RecParser<'a> {
                         w.as_str(),
                         "if" | "for" | "while" | "match" | "fn" | "ref" | "let"
                     ) {
-                        self.restore(saved);
-                        return Ok(None);
+                        // Ensure it's actually a keyword, not a prefix
+                        // of a longer word (e.g. `iffy`)
+                        let is_keyword_boundary = match self.peek() {
+                            None => true,
+                            Some(c) => !is_var_char(c),
+                        };
+                        if is_keyword_boundary {
+                            self.restore(saved);
+                            return Ok(None);
+                        }
                     }
                     // Not a stopping keyword — it's a literal
                     let base = Word::Literal(w);
@@ -495,7 +616,7 @@ impl<'a> RecParser<'a> {
             }
         }
 
-        // Parse as a word atom (handles $, `, ')
+        // Parse as a word atom
         if self.at_word_start() {
             let atom = self.word_atom_nows()?;
             Ok(Some(self.concat_rest(atom)?))
@@ -504,6 +625,7 @@ impl<'a> RecParser<'a> {
         }
     }
 
+    /// Parse a value: `( word* )` for lists, or a single word.
     fn value(&mut self) -> Result<Value> {
         self.skip_ws();
         if self.peek() == Some('(') {
@@ -526,8 +648,119 @@ impl<'a> RecParser<'a> {
         }
     }
 
-    // ── Body and command list ──────────────────────────────
+    // ── Layer 4: Expression precedence tower ─────────────────
 
+    /// or_expr = and_expr ('||' and_expr)*
+    fn or_expr(&mut self) -> Result<Expr> {
+        let mut left = self.and_expr()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('|') && self.peek2() == Some('|') {
+                self.advance();
+                self.advance();
+                let right = self.and_expr()?;
+                left = Expr::Or(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    /// and_expr = pipeline ('&&' pipeline)*
+    fn and_expr(&mut self) -> Result<Expr> {
+        let mut left = self.pipeline()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('&') && self.peek2() == Some('&') {
+                self.advance();
+                self.advance();
+                let right = self.pipeline()?;
+                left = Expr::And(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    /// pipeline = cmd_expr ('|' cmd_expr)* | cmd_expr '|&'
+    fn pipeline(&mut self) -> Result<Expr> {
+        let first = self.cmd_expr()?;
+
+        self.skip_ws();
+        // |& coprocess — must check before |
+        if self.peek() == Some('|') && self.peek2() == Some('&') {
+            self.advance();
+            self.advance();
+            return Ok(Expr::Coprocess(Box::new(first)));
+        }
+
+        // | pipe — not || (or)
+        if self.peek() != Some('|') || self.peek2() == Some('|') {
+            return Ok(first);
+        }
+
+        let mut stages = vec![first];
+        while self.peek() == Some('|') && self.peek2() != Some('|') && self.peek2() != Some('&') {
+            self.advance();
+            stages.push(self.cmd_expr()?);
+            self.skip_ws();
+        }
+        Ok(Expr::Pipeline(stages))
+    }
+
+    /// cmd_expr = '!' cmd_expr | body | '@' body | simple_cmd redirect*
+    fn cmd_expr(&mut self) -> Result<Expr> {
+        self.skip_ws();
+
+        // ! negation
+        if self.peek() == Some('!') {
+            self.advance();
+            let cmd = self.cmd_expr()?;
+            return Ok(Expr::Not(Box::new(cmd)));
+        }
+
+        // @{ subshell
+        if self.peek() == Some('@') && self.peek2() == Some('{') {
+            self.advance();
+            self.advance();
+            let cmds = self.command_list()?;
+            self.skip_ws();
+            if self.peek() != Some('}') {
+                bail!("{}: expected '}}' to close subshell", self.pos_str());
+            }
+            self.advance();
+            let expr = Expr::Subshell(cmds);
+            return self.parse_redirections(expr);
+        }
+
+        // { block
+        if self.peek() == Some('{') {
+            let body = self.body()?;
+            let expr = Expr::Block(body);
+            return self.parse_redirections(expr);
+        }
+
+        // Simple command
+        if !self.at_word_start() {
+            bail!(
+                "{}: expected command, got {}",
+                self.pos_str(),
+                match self.peek() {
+                    Some(c) => format!("'{c}'"),
+                    None => "end of input".into(),
+                }
+            );
+        }
+
+        let cmd = self.parse_simple_command()?;
+        self.parse_redirections(Expr::Simple(cmd))
+    }
+
+    // ── Layer 5: Commands ────────────────────────────────────
+
+    /// Body: '{' program '}'
     fn body(&mut self) -> Result<Vec<Command>> {
         self.skip_ws();
         if self.peek() != Some('{') {
@@ -543,6 +776,7 @@ impl<'a> RecParser<'a> {
         Ok(cmds)
     }
 
+    /// Command list — zero or more commands separated by terminators.
     fn command_list(&mut self) -> Result<Vec<Command>> {
         let mut cmds = Vec::new();
         self.skip_terminators();
@@ -553,27 +787,34 @@ impl<'a> RecParser<'a> {
         Ok(cmds)
     }
 
-    // ── Commands ───────────────────────────────────────────
-
+    /// Top-level command dispatch.
     fn command(&mut self) -> Result<Command> {
         self.skip_ws();
         let saved = self.save();
         if let Some(c) = self.peek() {
             if is_word_char(c) {
                 if let Some(w) = self.read_bare_word() {
-                    match w.as_str() {
-                        "if" => return self.if_cmd(),
-                        "for" => return self.for_cmd(),
-                        "while" => return self.while_cmd(),
-                        "match" => return self.match_cmd(),
-                        "fn" => return self.fn_cmd(),
-                        "ref" => return self.ref_cmd(),
-                        "let" => return self.let_cmd(),
-                        _ => {
-                            self.restore(saved);
+                    // Ensure this is a standalone keyword, not a prefix
+                    let is_boundary = match self.peek() {
+                        None => true,
+                        Some(c) => !is_var_char(c),
+                    };
+                    if is_boundary {
+                        match w.as_str() {
+                            "if" => return self.if_cmd(),
+                            "for" => return self.for_cmd(),
+                            "while" => return self.while_cmd(),
+                            "match" => return self.match_cmd(),
+                            "fn" => return self.fn_cmd(),
+                            "ref" => return self.ref_cmd(),
+                            "let" => return self.let_cmd(),
+                            "try" => {
+                                bail!("{}: try blocks not yet implemented", self.pos_str());
+                            }
+                            "return" => return self.return_cmd(),
+                            _ => {}
                         }
                     }
-                } else {
                     self.restore(saved);
                 }
             }
@@ -582,7 +823,6 @@ impl<'a> RecParser<'a> {
     }
 
     fn if_cmd(&mut self) -> Result<Command> {
-        // "if" already consumed
         let condition = self.pipeline()?;
         let then_body = self.body()?;
         self.skip_ws();
@@ -621,13 +861,14 @@ impl<'a> RecParser<'a> {
         Ok(Command::While { condition, body })
     }
 
-    /// Parse `match value { case pat... { body } ... }`.
+    /// Parse `match value { arms }`.
     ///
-    /// The prototype uses `case` sub-keywords with braced bodies.
-    /// The spec mandates `pat => body; ...` — that syntax change
-    /// lands in Phase B (combine parser rewrite). This method
-    /// preserves the prototype's `case`-based parsing but emits
-    /// `Command::Match` with the `arms` field.
+    /// Supports two arm syntaxes for backwards compatibility:
+    /// - New: `pat+ => command; ...` (spec syntax)
+    /// - Old: `case pat+ { body }` (prototype syntax)
+    ///
+    /// Detection: if the first word inside the match body is `case`,
+    /// parse old-style. Otherwise parse new-style with `=>` arms.
     fn match_cmd(&mut self) -> Result<Command> {
         let val = self.value()?;
         self.skip_ws();
@@ -635,35 +876,149 @@ impl<'a> RecParser<'a> {
             bail!("{}: expected '{{' after match value", self.pos_str());
         }
         self.advance();
+
+        // Detect old vs new syntax by peeking for `case` keyword
         let mut arms = Vec::new();
         self.skip_terminators();
-        while self.check_keyword("case") {
-            let mut patterns = Vec::new();
-            loop {
-                self.skip_ws();
-                let pat = self.expect_word_string("pattern")?;
-                patterns.push(if pat == "*" {
-                    Pattern::Star
-                } else if pat.contains('*') || pat.contains('?') || pat.contains('[') {
-                    Pattern::Glob(pat)
-                } else {
-                    Pattern::Literal(pat)
-                });
-                self.skip_ws();
-                if self.peek() == Some('{') {
-                    break;
+
+        // Peek to detect which syntax
+        let saved = self.save();
+        let use_old_syntax = if let Some(w) = self.read_bare_word() {
+            let is_old = w == "case";
+            self.restore(saved);
+            is_old
+        } else {
+            self.restore(saved);
+            false
+        };
+
+        if use_old_syntax {
+            // Old prototype syntax: case pat+ { body }
+            while self.check_keyword("case") {
+                let mut patterns = Vec::new();
+                loop {
+                    self.skip_ws();
+                    let pat = self.expect_word_string("pattern")?;
+                    patterns.push(self.classify_pattern(&pat));
+                    self.skip_ws();
+                    if self.peek() == Some('{') {
+                        break;
+                    }
                 }
+                let body = self.body()?;
+                arms.push((patterns, body));
+                self.skip_terminators();
             }
-            let body = self.body()?;
-            arms.push((patterns, body));
-            self.skip_terminators();
+        } else {
+            // New spec syntax: pat => body; ...
+            // Newlines are trivia inside match { }
+            while self.peek() != Some('}') && !self.at_end() {
+                let (patterns, body) = self.match_arm()?;
+                arms.push((patterns, body));
+
+                // Skip ; separator and trivia (newlines are trivia in match)
+                self.skip_match_trivia();
+            }
         }
+
         self.skip_ws();
         if self.peek() != Some('}') {
             bail!("{}: expected '}}' to close match", self.pos_str());
         }
         self.advance();
         Ok(Command::Match { value: val, arms })
+    }
+
+    /// Skip whitespace, newlines, and semicolons inside match blocks
+    /// (newlines are trivia in match).
+    fn skip_match_trivia(&mut self) {
+        loop {
+            match self.peek() {
+                Some(' ' | '\t' | '\r' | '\n' | ';') => {
+                    self.advance();
+                }
+                Some('#') => {
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// Parse a single match arm: patterns => body
+    ///
+    /// Structural arm: `tag $binding => body`
+    /// Glob arm: `pattern+ => body`
+    fn match_arm(&mut self) -> Result<(Vec<Pattern>, Vec<Command>)> {
+        self.skip_match_trivia();
+        let mut patterns = Vec::new();
+
+        // Read the first pattern word
+        let first_pat = self.expect_word_string("pattern")?;
+
+        // Check if this is a structural arm: tag $binding
+        self.skip_ws();
+        if self.peek() == Some('$') {
+            // Structural arm: first_pat is the tag, next is $binding
+            self.advance(); // consume $
+            let binding = self.read_var_name().ok_or_else(|| {
+                anyhow::anyhow!("{}: expected binding name after $", self.pos_str())
+            })?;
+            patterns.push(Pattern::Structural {
+                tag: first_pat,
+                binding,
+            });
+        } else {
+            // Glob arm — collect patterns until =>
+            patterns.push(self.classify_pattern(&first_pat));
+            loop {
+                self.skip_ws();
+                if self.rest().starts_with("=>") {
+                    break;
+                }
+                if self.at_end() || self.peek() == Some('}') {
+                    bail!("{}: expected '=>' in match arm", self.pos_str());
+                }
+                let pat = self.expect_word_string("pattern")?;
+                patterns.push(self.classify_pattern(&pat));
+            }
+        }
+
+        // Consume =>
+        self.skip_ws();
+        if !self.rest().starts_with("=>") {
+            bail!("{}: expected '=>' in match arm", self.pos_str());
+        }
+        self.advance(); // =
+        self.advance(); // >
+        self.skip_ws();
+
+        // Parse the arm body: either { program } or a single command
+        let body = if self.peek() == Some('{') {
+            self.body()?
+        } else {
+            // Single command — terminated by ; or newline or }
+            let cmd = self.command()?;
+            vec![cmd]
+        };
+
+        Ok((patterns, body))
+    }
+
+    /// Classify a pattern string into the Pattern enum.
+    fn classify_pattern(&self, pat: &str) -> Pattern {
+        if pat == "*" {
+            Pattern::Star
+        } else if pat.contains('*') || pat.contains('?') || pat.contains('[') {
+            Pattern::Glob(pat.to_string())
+        } else {
+            Pattern::Literal(pat.to_string())
+        }
     }
 
     fn fn_cmd(&mut self) -> Result<Command> {
@@ -683,15 +1038,12 @@ impl<'a> RecParser<'a> {
         Ok(Command::Bind(Binding::Ref { name, target }))
     }
 
-    /// Parse `let [mut] [export] name [: Type] = value`
     fn let_cmd(&mut self) -> Result<Command> {
-        // "let" already consumed
         self.skip_ws();
-
         let mut mutable = false;
         let mut export = false;
 
-        // Check for `mut` and `export` modifiers (in any order)
+        // Check for `mut` and `export` modifiers (order-free)
         loop {
             let saved = self.save();
             if let Some(w) = self.read_bare_word() {
@@ -707,7 +1059,6 @@ impl<'a> RecParser<'a> {
                         continue;
                     }
                     _ => {
-                        // Not a modifier — this must be the name
                         self.restore(saved);
                         break;
                     }
@@ -721,7 +1072,7 @@ impl<'a> RecParser<'a> {
         let name = self.expect_word_string("variable name")?;
         self.skip_ws();
 
-        // Optional type annotation: `: Type` or `: [Type]`
+        // Optional type annotation: `: Type`
         let type_ann = if self.peek() == Some(':') {
             self.advance();
             self.skip_ws();
@@ -752,25 +1103,17 @@ impl<'a> RecParser<'a> {
         }))
     }
 
-    /// Read a type name — alphabetic characters only (no brackets, no digits).
-    fn read_type_name(&mut self) -> Option<String> {
-        let start = self.pos;
-        while let Some(c) = self.peek() {
-            if c.is_ascii_alphabetic() {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        if self.pos > start {
-            Some(self.input[start..self.pos].to_string())
+    fn return_cmd(&mut self) -> Result<Command> {
+        self.skip_ws();
+        if self.at_terminator() {
+            Ok(Command::Return(None))
         } else {
-            None
+            let val = self.value()?;
+            Ok(Command::Return(Some(val)))
         }
     }
 
-    /// Parse a type annotation after `:`.
-    /// Handles: Int, Str, Bool, Path, Unit, List, List[Int], [Int] (sugar for List[Int])
+    /// Parse type annotation after `:`.
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation> {
         // [Type] sugar for List[Type]
         if self.peek() == Some('[') {
@@ -795,8 +1138,8 @@ impl<'a> RecParser<'a> {
             "Int" => Ok(TypeAnnotation::Int),
             "Str" => Ok(TypeAnnotation::Str),
             "Path" => Ok(TypeAnnotation::Path),
+            "ExitCode" => Ok(TypeAnnotation::ExitCode),
             "List" => {
-                // Check for [ElementType]
                 if self.peek() == Some('[') {
                     self.advance();
                     self.skip_ws();
@@ -811,23 +1154,45 @@ impl<'a> RecParser<'a> {
                     Ok(TypeAnnotation::List(None))
                 }
             }
+            "Result" => {
+                if self.peek() != Some('[') {
+                    bail!("{}: expected '[' after Result", self.pos_str());
+                }
+                self.advance();
+                self.skip_ws();
+                let inner = self.parse_type_annotation()?;
+                self.skip_ws();
+                if self.peek() != Some(']') {
+                    bail!(
+                        "{}: expected ']' after Result type parameter",
+                        self.pos_str()
+                    );
+                }
+                self.advance();
+                Ok(TypeAnnotation::Result(Box::new(inner)))
+            }
+            "Maybe" => {
+                if self.peek() != Some('[') {
+                    bail!("{}: expected '[' after Maybe", self.pos_str());
+                }
+                self.advance();
+                self.skip_ws();
+                let inner = self.parse_type_annotation()?;
+                self.skip_ws();
+                if self.peek() != Some(']') {
+                    bail!(
+                        "{}: expected ']' after Maybe type parameter",
+                        self.pos_str()
+                    );
+                }
+                self.advance();
+                Ok(TypeAnnotation::Maybe(Box::new(inner)))
+            }
             other => bail!("{}: unknown type '{other}'", self.pos_str()),
         }
     }
 
-    /// Check for and consume a specific keyword.
-    fn check_keyword(&mut self, kw: &str) -> bool {
-        self.skip_ws();
-        let saved = self.save();
-        if let Some(w) = self.read_bare_word() {
-            if w == kw {
-                return true;
-            }
-        }
-        self.restore(saved);
-        false
-    }
-
+    /// Assignment or simple command.
     fn simple_or_assign(&mut self) -> Result<Command> {
         self.skip_ws();
 
@@ -865,112 +1230,7 @@ impl<'a> RecParser<'a> {
         Ok(Command::Exec(expr))
     }
 
-    // ── Expression precedence ──────────────────────────────
-
-    fn or_expr(&mut self) -> Result<Expr> {
-        let mut left = self.and_expr()?;
-        loop {
-            self.skip_ws();
-            if self.peek() == Some('|') && self.peek2() == Some('|') {
-                self.advance();
-                self.advance();
-                let right = self.and_expr()?;
-                left = Expr::Or(Box::new(left), Box::new(right));
-            } else {
-                break;
-            }
-        }
-        Ok(left)
-    }
-
-    fn and_expr(&mut self) -> Result<Expr> {
-        let mut left = self.pipeline()?;
-        loop {
-            self.skip_ws();
-            if self.peek() == Some('&') && self.peek2() == Some('&') {
-                self.advance();
-                self.advance();
-                let right = self.pipeline()?;
-                left = Expr::And(Box::new(left), Box::new(right));
-            } else {
-                break;
-            }
-        }
-        Ok(left)
-    }
-
-    fn pipeline(&mut self) -> Result<Expr> {
-        let first = self.cmd_expr()?;
-
-        self.skip_ws();
-        // Check for |& (coprocess)
-        if self.peek() == Some('|') && self.peek2() == Some('&') {
-            self.advance();
-            self.advance();
-            return Ok(Expr::Coprocess(Box::new(first)));
-        }
-
-        // Check for | (pipe) — not || (or)
-        if self.peek() != Some('|') || self.peek2() == Some('|') {
-            return Ok(first);
-        }
-
-        let mut stages = vec![first];
-        while self.peek() == Some('|') && self.peek2() != Some('|') && self.peek2() != Some('&') {
-            self.advance(); // consume |
-            stages.push(self.cmd_expr()?);
-            self.skip_ws();
-        }
-        Ok(Expr::Pipeline(stages))
-    }
-
-    fn cmd_expr(&mut self) -> Result<Expr> {
-        self.skip_ws();
-
-        // Negation
-        if self.peek() == Some('!') {
-            self.advance();
-            let cmd = self.cmd_expr()?;
-            return Ok(Expr::Not(Box::new(cmd)));
-        }
-
-        // Subshell: @{
-        if self.peek() == Some('@') && self.peek2() == Some('{') {
-            self.advance(); // @
-            self.advance(); // {
-            let cmds = self.command_list()?;
-            self.skip_ws();
-            if self.peek() != Some('}') {
-                bail!("{}: expected '}}' to close subshell", self.pos_str());
-            }
-            self.advance();
-            let expr = Expr::Subshell(cmds);
-            return self.parse_redirections(expr);
-        }
-
-        // Block: { ... }
-        if self.peek() == Some('{') {
-            let body = self.body()?;
-            let expr = Expr::Block(body);
-            return self.parse_redirections(expr);
-        }
-
-        // Simple command
-        if !self.at_word_start() {
-            bail!(
-                "{}: expected command, got {}",
-                self.pos_str(),
-                match self.peek() {
-                    Some(c) => format!("'{c}'"),
-                    None => "end of input".into(),
-                }
-            );
-        }
-
-        let cmd = self.parse_simple_command()?;
-        self.parse_redirections(Expr::Simple(cmd))
-    }
-
+    /// Parse a simple command: name + args.
     fn parse_simple_command(&mut self) -> Result<SimpleCommand> {
         let name = self.word()?;
         let mut args = Vec::new();
@@ -983,6 +1243,8 @@ impl<'a> RecParser<'a> {
             assignments: vec![],
         })
     }
+
+    // ── Redirections ─────────────────────────────────────────
 
     /// Parse zero or more redirections, wrapping the expression.
     fn parse_redirections(&mut self, expr: Expr) -> Result<Expr> {
@@ -1011,9 +1273,20 @@ impl<'a> RecParser<'a> {
                         } else {
                             // << here-document
                             self.skip_ws();
-                            let delim = self.read_bare_word().ok_or_else(|| {
-                                anyhow::anyhow!("{}: expected delimiter after <<", self.pos_str())
-                            })?;
+                            // Check for quoted delimiter: <<'EOF'
+                            let (delim, _quoted) = if self.peek() == Some('\'') {
+                                self.advance();
+                                let d = self.read_quoted_string()?;
+                                (d, true)
+                            } else {
+                                let d = self.read_bare_word().ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "{}: expected delimiter after <<",
+                                        self.pos_str()
+                                    )
+                                })?;
+                                (d, false)
+                            };
                             let content = self.read_heredoc(&delim)?;
                             ops.push(RedirectOp::Input {
                                 fd: 0,
@@ -1021,9 +1294,7 @@ impl<'a> RecParser<'a> {
                             });
                         }
                     } else if self.peek() == Some('{') {
-                        // <{ process substitution — not a redirect, put back
-                        // and let the caller handle it. This shouldn't happen
-                        // here because <{ is parsed as a word, not a redirect.
+                        // <{ process substitution — not a redirect
                         bail!("{}: unexpected '<{{' in redirect position", self.pos_str());
                     } else {
                         self.skip_ws();
@@ -1037,7 +1308,7 @@ impl<'a> RecParser<'a> {
                 _ => break,
             }
         }
-        // Wrap in reverse for left-to-right evaluation
+        // Wrap in reverse for left-to-right evaluation order
         let mut result = expr;
         for op in ops.into_iter().rev() {
             result = Expr::Redirect(Box::new(result), op);
@@ -1047,7 +1318,7 @@ impl<'a> RecParser<'a> {
 
     /// Parse what follows '>' — handles >>, >[fd], >[fd=fd], >[fd=], >target.
     fn parse_output_redirect(&mut self) -> Result<RedirectOp> {
-        // >> (append)
+        // >> append
         if self.peek() == Some('>') {
             self.advance();
             self.skip_ws();
@@ -1059,7 +1330,7 @@ impl<'a> RecParser<'a> {
             });
         }
 
-        // >[fd...] — fd redirections use []
+        // >[fd...] — fd redirections
         if self.peek() == Some('[') {
             self.advance();
             let fd_str = self
@@ -1071,7 +1342,7 @@ impl<'a> RecParser<'a> {
 
             if self.peek() == Some('=') {
                 self.advance();
-                // >[fd=] (close) or >[fd=src]
+                // >[fd=] (close) or >[fd=src] (dup)
                 if self.peek() == Some(']') {
                     self.advance();
                     return Ok(RedirectOp::Close { fd });
@@ -1102,7 +1373,7 @@ impl<'a> RecParser<'a> {
             });
         }
 
-        // > target (simple, fd defaults to 1)
+        // > target (fd defaults to 1)
         self.skip_ws();
         let target = self.word()?;
         Ok(RedirectOp::Output {
@@ -1111,15 +1382,77 @@ impl<'a> RecParser<'a> {
             append: false,
         })
     }
+
+    // ── Layer 6: Program ─────────────────────────────────────
+
+    /// program = terminator* (command terminator+)* command?
+    fn program(&mut self) -> Result<Vec<Command>> {
+        self.command_list()
+    }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(input: &str) -> Program {
-        Parser::parse(input).expect("parse failed")
+        PshParser::parse(input).expect("parse failed")
     }
+
+    fn parse_err(input: &str) -> String {
+        PshParser::parse(input).unwrap_err().to_string()
+    }
+
+    // ── Layer 1: lexical predicates ──────────────────────────
+
+    #[test]
+    fn var_char_alpha_digit_underscore_star() {
+        assert!(is_var_char('a'));
+        assert!(is_var_char('Z'));
+        assert!(is_var_char('0'));
+        assert!(is_var_char('_'));
+        assert!(is_var_char('*'));
+        assert!(!is_var_char('.'));
+        assert!(!is_var_char('/'));
+        assert!(!is_var_char('@'));
+        assert!(!is_var_char('~'));
+    }
+
+    #[test]
+    fn word_char_includes_dot_slash_at() {
+        assert!(is_word_char('.'));
+        assert!(is_word_char('/'));
+        assert!(is_word_char('@'));
+        assert!(is_word_char('-'));
+        assert!(is_word_char(':'));
+        assert!(is_word_char('+'));
+        assert!(is_word_char(','));
+        assert!(is_word_char('%'));
+        assert!(is_word_char('?'));
+        assert!(is_word_char('['));
+        assert!(is_word_char(']'));
+        assert!(!is_word_char('~'));
+        assert!(!is_word_char('$'));
+        assert!(!is_word_char('\''));
+        assert!(!is_word_char('|'));
+    }
+
+    #[test]
+    fn keyword_detection() {
+        assert!(is_keyword("if"));
+        assert!(is_keyword("for"));
+        assert!(is_keyword("match"));
+        assert!(is_keyword("try"));
+        assert!(is_keyword("return"));
+        assert!(!is_keyword("echo"));
+        assert!(!is_keyword("case"));
+    }
+
+    // ── Layer 2: word atoms ──────────────────────────────────
 
     #[test]
     fn simple_command() {
@@ -1133,6 +1466,308 @@ mod tests {
             other => panic!("expected simple command, got {other:?}"),
         }
     }
+
+    #[test]
+    fn quoted_string() {
+        let prog = parse("echo 'hello world'");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Quoted("hello world".into()));
+            }
+            other => panic!("expected quoted arg, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quoted_with_escape() {
+        let prog = parse("echo 'it''s'");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Quoted("it's".into()));
+            }
+            other => panic!("expected quoted with escape, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn variable_expansion() {
+        let prog = parse("echo $x");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Var("x".into()));
+            }
+            other => panic!("expected command with var, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn variable_index() {
+        let prog = parse("echo $x(2)");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert!(matches!(&cmd.args[0], Word::Index(name, _) if name == "x"));
+            }
+            other => panic!("expected indexed var, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn variable_count() {
+        let prog = parse("echo $#x");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Count("x".into()));
+            }
+            other => panic!("expected count, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stringify_parse() {
+        let prog = parse("echo $\"x");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Stringify("x".into()));
+            }
+            other => panic!("expected stringify word, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brace_variable() {
+        let prog = parse("echo ${x.get}");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Var("x.get".into()));
+            }
+            other => panic!("expected brace var, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn command_substitution() {
+        let prog = parse("echo `{ date }");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert!(matches!(&cmd.args[0], Word::CommandSub(_)));
+            }
+            other => panic!("expected command sub, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn process_sub_parse() {
+        let prog = parse("cat <{echo hello}");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.name, Word::Literal("cat".into()));
+                assert_eq!(cmd.args.len(), 1);
+                assert!(matches!(&cmd.args[0], Word::ProcessSub(_)));
+            }
+            other => panic!("expected simple command with process sub, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tilde_bare() {
+        let prog = parse("echo ~");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Literal("~".into()));
+            }
+            other => panic!("expected tilde literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tilde_with_path() {
+        let prog = parse("echo ~/bin");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.args[0], Word::Literal("~/bin".into()));
+            }
+            other => panic!("expected tilde path, got {other:?}"),
+        }
+    }
+
+    // ── Layer 3: words with free carets ──────────────────────
+
+    #[test]
+    fn explicit_caret() {
+        let prog = parse("echo foo^bar");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert!(matches!(&cmd.args[0], Word::Concat(_)));
+            }
+            other => panic!("expected concat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn free_caret_var_then_literal() {
+        // $home/bin → $home ^ /bin (free caret at var_char boundary)
+        let prog = parse("echo $home/bin");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => match &cmd.args[0] {
+                Word::Concat(parts) => {
+                    assert_eq!(parts.len(), 2);
+                    assert_eq!(parts[0], Word::Var("home".into()));
+                    assert_eq!(parts[1], Word::Literal("/bin".into()));
+                }
+                other => panic!("expected concat, got {other:?}"),
+            },
+            other => panic!("expected simple cmd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn free_caret_var_dot_ext() {
+        // $file.c → $file ^ .c
+        let prog = parse("echo $file.c");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => match &cmd.args[0] {
+                Word::Concat(parts) => {
+                    assert_eq!(parts.len(), 2);
+                    assert_eq!(parts[0], Word::Var("file".into()));
+                    assert_eq!(parts[1], Word::Literal(".c".into()));
+                }
+                other => panic!("expected concat, got {other:?}"),
+            },
+            other => panic!("expected simple cmd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn free_caret_quoted_then_var() {
+        // 'hello'$name → 'hello' ^ $name
+        let prog = parse("echo 'hello'$name");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => match &cmd.args[0] {
+                Word::Concat(parts) => {
+                    assert_eq!(parts.len(), 2);
+                    assert_eq!(parts[0], Word::Quoted("hello".into()));
+                    assert_eq!(parts[1], Word::Var("name".into()));
+                }
+                other => panic!("expected concat, got {other:?}"),
+            },
+            other => panic!("expected simple cmd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn free_caret_user_at_host() {
+        // $user@$host → $user ^ @ ^ $host
+        let prog = parse("echo $user@$host");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => match &cmd.args[0] {
+                Word::Concat(parts) => {
+                    assert_eq!(parts.len(), 3);
+                    assert_eq!(parts[0], Word::Var("user".into()));
+                    assert_eq!(parts[1], Word::Literal("@".into()));
+                    assert_eq!(parts[2], Word::Var("host".into()));
+                }
+                other => panic!("expected concat, got {other:?}"),
+            },
+            other => panic!("expected simple cmd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_value() {
+        let prog = parse("x = (a b c)");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Assignment(_, Value::List(items))) => {
+                assert_eq!(items.len(), 3);
+            }
+            other => panic!("expected list assignment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_list() {
+        let prog = parse("x = ()");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Assignment(_, Value::List(items))) => {
+                assert_eq!(items.len(), 0);
+            }
+            other => panic!("expected empty list, got {other:?}"),
+        }
+    }
+
+    // ── Layer 4: expression precedence ───────────────────────
+
+    #[test]
+    fn pipeline() {
+        let prog = parse("ls | grep foo | sort");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Pipeline(stages)) => {
+                assert_eq!(stages.len(), 3);
+            }
+            other => panic!("expected pipeline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn and_or() {
+        let prog = parse("test -f foo && echo yes || echo no");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Or(_, _)) => {}
+            other => panic!("expected or, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn negation() {
+        let prog = parse("! test -f foo");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Not(_)) => {}
+            other => panic!("expected not, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn background() {
+        let prog = parse("sleep 10 &");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Background(inner)) => {
+                assert!(matches!(inner.as_ref(), Expr::Simple(_)));
+            }
+            other => panic!("expected background, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coprocess() {
+        let prog = parse("cmd |&");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Coprocess(_)) => {}
+            other => panic!("expected coprocess, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn block() {
+        let prog = parse("{ echo a; echo b }");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Block(cmds)) => {
+                assert_eq!(cmds.len(), 2);
+            }
+            other => panic!("expected block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subshell() {
+        let prog = parse("@{ echo isolated }");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Subshell(cmds)) => {
+                assert_eq!(cmds.len(), 1);
+            }
+            other => panic!("expected subshell, got {other:?}"),
+        }
+    }
+
+    // ── Layer 5: commands ────────────────────────────────────
 
     #[test]
     fn assignment() {
@@ -1159,46 +1794,6 @@ mod tests {
     }
 
     #[test]
-    fn pipeline() {
-        let prog = parse("ls | grep foo | sort");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Pipeline(stages)) => {
-                assert_eq!(stages.len(), 3);
-            }
-            other => panic!("expected pipeline, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn redirect_output() {
-        let prog = parse("echo hello > file");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(
-                inner,
-                RedirectOp::Output {
-                    fd: 1,
-                    append: false,
-                    ..
-                },
-            )) => {
-                assert!(matches!(inner.as_ref(), Expr::Simple(_)));
-            }
-            other => panic!("expected redirect, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn background() {
-        let prog = parse("sleep 10 &");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Background(inner)) => {
-                assert!(matches!(inner.as_ref(), Expr::Simple(_)));
-            }
-            other => panic!("expected background, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn if_else() {
         let prog = parse("if test -f foo { echo yes } else { echo no }");
         match &prog.commands[0] {
@@ -1212,6 +1807,21 @@ mod tests {
                 assert_eq!(else_body.len(), 1);
             }
             other => panic!("expected if/else, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn if_else_if() {
+        let prog = parse("if cond1 { A } else if cond2 { B } else { C }");
+        match &prog.commands[0] {
+            Command::If {
+                else_body: Some(else_cmds),
+                ..
+            } => {
+                assert_eq!(else_cmds.len(), 1);
+                assert!(matches!(&else_cmds[0], Command::If { .. }));
+            }
+            other => panic!("expected if/else if, got {other:?}"),
         }
     }
 
@@ -1265,251 +1875,6 @@ mod tests {
     }
 
     #[test]
-    fn variable_expansion() {
-        let prog = parse("echo $x");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert_eq!(cmd.args[0], Word::Var("x".into()));
-            }
-            other => panic!("expected command with var, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn variable_index() {
-        let prog = parse("echo $x(2)");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert!(matches!(&cmd.args[0], Word::Index(name, _) if name == "x"));
-            }
-            other => panic!("expected indexed var, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn variable_count() {
-        let prog = parse("echo $#x");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert_eq!(cmd.args[0], Word::Count("x".into()));
-            }
-            other => panic!("expected count, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn command_substitution() {
-        let prog = parse("echo `{ date }");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert!(matches!(&cmd.args[0], Word::CommandSub(_)));
-            }
-            other => panic!("expected command sub, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn concatenation() {
-        let prog = parse("echo foo^bar");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert!(matches!(&cmd.args[0], Word::Concat(_)));
-            }
-            other => panic!("expected concat, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn coprocess() {
-        let prog = parse("cmd |&");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Coprocess(_)) => {}
-            other => panic!("expected coprocess, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn and_or() {
-        let prog = parse("test -f foo && echo yes || echo no");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Or(_, _)) => {}
-            other => panic!("expected or, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn block() {
-        let prog = parse("{ echo a; echo b }");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Block(cmds)) => {
-                assert_eq!(cmds.len(), 2);
-            }
-            other => panic!("expected block, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn subshell() {
-        let prog = parse("@{ echo isolated }");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Subshell(cmds)) => {
-                assert_eq!(cmds.len(), 1);
-            }
-            other => panic!("expected subshell, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn multiple_commands() {
-        let prog = parse("echo a; echo b\necho c");
-        assert_eq!(prog.commands.len(), 3);
-    }
-
-    #[test]
-    fn nested_redirect_left_to_right() {
-        let prog = parse("cmd > out >> log");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(
-                inner,
-                RedirectOp::Output {
-                    fd: 1,
-                    append: false,
-                    ..
-                },
-            )) => {
-                assert!(matches!(
-                    inner.as_ref(),
-                    Expr::Redirect(
-                        _,
-                        RedirectOp::Output {
-                            fd: 1,
-                            append: true,
-                            ..
-                        }
-                    )
-                ));
-            }
-            other => panic!("expected nested redirects (left-to-right), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn empty_program() {
-        let prog = parse("");
-        assert_eq!(prog.commands.len(), 0);
-    }
-
-    #[test]
-    fn comments_only() {
-        let prog = parse("# just a comment\n# another one\n");
-        assert_eq!(prog.commands.len(), 0);
-    }
-
-    #[test]
-    fn match_cmd() {
-        let prog = parse("match $x { case foo { echo foo } case * { echo other } }");
-        match &prog.commands[0] {
-            Command::Match { value: _, arms } => {
-                assert_eq!(arms.len(), 2);
-                assert!(matches!(&arms[1].0[0], Pattern::Star));
-            }
-            other => panic!("expected match, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn fd_redirect_bracket() {
-        let prog = parse("cmd >[2=1]");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(_, RedirectOp::Dup { dst: 2, src: 1 })) => {}
-            other => panic!("expected dup redirect, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn fd_close_bracket() {
-        let prog = parse("cmd >[2=]");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(_, RedirectOp::Close { fd: 2 })) => {}
-            other => panic!("expected close redirect, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn fd_output_bracket() {
-        let prog = parse("cmd >[2] file");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(
-                _,
-                RedirectOp::Output {
-                    fd: 2,
-                    append: false,
-                    ..
-                },
-            )) => {}
-            other => panic!("expected fd output redirect, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn heredoc_parse() {
-        let prog = parse("cat <<EOF\nhello\nworld\nEOF\n");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(
-                _,
-                RedirectOp::Input {
-                    fd: 0,
-                    target: RedirectTarget::HereDoc(content),
-                },
-            )) => {
-                assert_eq!(content, "hello\nworld\n");
-            }
-            other => panic!("expected heredoc redirect, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn herestring_parse() {
-        let prog = parse("cat <<<hello");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Redirect(
-                _,
-                RedirectOp::Input {
-                    fd: 0,
-                    target: RedirectTarget::HereString(Word::Literal(s)),
-                },
-            )) => {
-                assert_eq!(s, "hello");
-            }
-            other => panic!("expected herestring redirect, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn process_sub_parse() {
-        let prog = parse("cat <{echo hello}");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert_eq!(cmd.name, Word::Literal("cat".into()));
-                assert_eq!(cmd.args.len(), 1);
-                assert!(matches!(&cmd.args[0], Word::ProcessSub(_)));
-            }
-            other => panic!("expected simple command with process sub, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn stringify_parse() {
-        let prog = parse("echo $\"x");
-        match &prog.commands[0] {
-            Command::Exec(Expr::Simple(cmd)) => {
-                assert_eq!(cmd.args[0], Word::Stringify("x".into()));
-            }
-            other => panic!("expected stringify word, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn ref_parse() {
         let prog = parse("ref y = x");
         match &prog.commands[0] {
@@ -1533,7 +1898,7 @@ mod tests {
         }
     }
 
-    // ── Let binding parse tests ────────────────────────────────
+    // ── Let bindings ─────────────────────────────────────────
 
     #[test]
     fn let_basic() {
@@ -1661,13 +2026,429 @@ mod tests {
 
     #[test]
     fn quoted_stays_quoted() {
-        // Quoted strings in non-let context too
         let prog = parse("echo '42'");
         match &prog.commands[0] {
             Command::Exec(Expr::Simple(cmd)) => {
                 assert_eq!(cmd.args[0], Word::Quoted("42".into()));
             }
             other => panic!("expected quoted arg, got {other:?}"),
+        }
+    }
+
+    // ── Match command ────────────────────────────────────────
+
+    #[test]
+    fn match_cmd() {
+        // Old prototype syntax (case keyword + braced bodies)
+        let prog = parse("match $x { case foo { echo foo } case * { echo other } }");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 2);
+                assert!(matches!(&arms[1].0[0], Pattern::Star));
+            }
+            other => panic!("expected match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_new_syntax_glob() {
+        let prog = parse("match $x { foo => echo foo; * => echo other }");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 2);
+                assert_eq!(arms[0].0[0], Pattern::Literal("foo".into()));
+                assert!(matches!(&arms[1].0[0], Pattern::Star));
+            }
+            other => panic!("expected match with new syntax, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_new_syntax_structural() {
+        let prog = parse("match $result { ok $v => echo $v; err $e => echo $e }");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 2);
+                assert!(matches!(&arms[0].0[0], Pattern::Structural { tag, binding }
+                    if tag == "ok" && binding == "v"));
+                assert!(matches!(&arms[1].0[0], Pattern::Structural { tag, binding }
+                    if tag == "err" && binding == "e"));
+            }
+            other => panic!("expected structural match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_multi_pattern_glob() {
+        let prog = parse("match $f { *.txt *.md => echo text; * => echo other }");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms[0].0.len(), 2);
+                assert_eq!(arms[0].0[0], Pattern::Glob("*.txt".into()));
+                assert_eq!(arms[0].0[1], Pattern::Glob("*.md".into()));
+            }
+            other => panic!("expected multi-pattern match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_with_braced_bodies() {
+        let prog = parse("match $x {\n  foo => { echo foo };\n  * => { echo other }\n}");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 2);
+            }
+            other => panic!("expected match with braced bodies, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_trailing_semicolon() {
+        let prog = parse("match $x { foo => echo foo; }");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 1);
+            }
+            other => panic!("expected match with trailing semicolon, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn match_newlines_trivia() {
+        let prog = parse("match $x {\n  foo => echo foo\n  bar => echo bar\n}");
+        match &prog.commands[0] {
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 2);
+            }
+            other => panic!("expected match with newline trivia, got {other:?}"),
+        }
+    }
+
+    // ── Return ───────────────────────────────────────────────
+
+    #[test]
+    fn return_with_value() {
+        let prog = parse("return hello");
+        match &prog.commands[0] {
+            Command::Return(Some(Value::Word(Word::Literal(s)))) => {
+                assert_eq!(s, "hello");
+            }
+            other => panic!("expected return with value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn return_without_value() {
+        let prog = parse("return");
+        match &prog.commands[0] {
+            Command::Return(None) => {}
+            other => panic!("expected return without value, got {other:?}"),
+        }
+    }
+
+    // ── Planned stubs ────────────────────────────────────────
+
+    #[test]
+    fn try_not_yet_implemented() {
+        let err = parse_err("try { echo hello }");
+        assert!(err.contains("try blocks not yet implemented"));
+    }
+
+    // ── Redirections ─────────────────────────────────────────
+
+    #[test]
+    fn redirect_output() {
+        let prog = parse("echo hello > file");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                inner,
+                RedirectOp::Output {
+                    fd: 1,
+                    append: false,
+                    ..
+                },
+            )) => {
+                assert!(matches!(inner.as_ref(), Expr::Simple(_)));
+            }
+            other => panic!("expected redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redirect_append() {
+        let prog = parse("echo hello >> file");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Output {
+                    fd: 1,
+                    append: true,
+                    ..
+                },
+            )) => {}
+            other => panic!("expected append redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redirect_input() {
+        let prog = parse("cmd < file");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Input {
+                    fd: 0,
+                    target: RedirectTarget::File(_),
+                },
+            )) => {}
+            other => panic!("expected input redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fd_redirect_bracket() {
+        let prog = parse("cmd >[2=1]");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(_, RedirectOp::Dup { dst: 2, src: 1 })) => {}
+            other => panic!("expected dup redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fd_close_bracket() {
+        let prog = parse("cmd >[2=]");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(_, RedirectOp::Close { fd: 2 })) => {}
+            other => panic!("expected close redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fd_output_bracket() {
+        let prog = parse("cmd >[2] file");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Output {
+                    fd: 2,
+                    append: false,
+                    ..
+                },
+            )) => {}
+            other => panic!("expected fd output redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_redirect_left_to_right() {
+        let prog = parse("cmd > out >> log");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                inner,
+                RedirectOp::Output {
+                    fd: 1,
+                    append: false,
+                    ..
+                },
+            )) => {
+                assert!(matches!(
+                    inner.as_ref(),
+                    Expr::Redirect(
+                        _,
+                        RedirectOp::Output {
+                            fd: 1,
+                            append: true,
+                            ..
+                        }
+                    )
+                ));
+            }
+            other => panic!("expected nested redirects (left-to-right), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn heredoc_parse() {
+        let prog = parse("cat <<EOF\nhello\nworld\nEOF\n");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Input {
+                    fd: 0,
+                    target: RedirectTarget::HereDoc(content),
+                },
+            )) => {
+                assert_eq!(content, "hello\nworld\n");
+            }
+            other => panic!("expected heredoc redirect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn heredoc_quoted_delimiter() {
+        let prog = parse("cat <<'EOF'\nhello $x\nEOF\n");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Input {
+                    fd: 0,
+                    target: RedirectTarget::HereDoc(content),
+                },
+            )) => {
+                assert_eq!(content, "hello $x\n");
+            }
+            other => panic!("expected heredoc with quoted delimiter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn herestring_parse() {
+        let prog = parse("cat <<<hello");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Redirect(
+                _,
+                RedirectOp::Input {
+                    fd: 0,
+                    target: RedirectTarget::HereString(Word::Literal(s)),
+                },
+            )) => {
+                assert_eq!(s, "hello");
+            }
+            other => panic!("expected herestring redirect, got {other:?}"),
+        }
+    }
+
+    // ── Layer 6: program structure ───────────────────────────
+
+    #[test]
+    fn multiple_commands() {
+        let prog = parse("echo a; echo b\necho c");
+        assert_eq!(prog.commands.len(), 3);
+    }
+
+    #[test]
+    fn empty_program() {
+        let prog = parse("");
+        assert_eq!(prog.commands.len(), 0);
+    }
+
+    #[test]
+    fn comments_only() {
+        let prog = parse("# just a comment\n# another one\n");
+        assert_eq!(prog.commands.len(), 0);
+    }
+
+    #[test]
+    fn line_continuation() {
+        let prog = parse("echo \\\nhello");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.name, Word::Literal("echo".into()));
+                assert_eq!(cmd.args[0], Word::Literal("hello".into()));
+            }
+            other => panic!("expected simple cmd with line continuation, got {other:?}"),
+        }
+    }
+
+    // ── Type annotations ─────────────────────────────────────
+
+    #[test]
+    fn type_ann_exit_code() {
+        let prog = parse("let x : ExitCode = 0");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { type_ann, .. }) => {
+                assert_eq!(type_ann, &Some(TypeAnnotation::ExitCode));
+            }
+            other => panic!("expected ExitCode type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_ann_result() {
+        let prog = parse("let x : Result[Int] = 42");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { type_ann, .. }) => {
+                assert_eq!(
+                    type_ann,
+                    &Some(TypeAnnotation::Result(Box::new(TypeAnnotation::Int)))
+                );
+            }
+            other => panic!("expected Result[Int] type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_ann_maybe() {
+        let prog = parse("let x : Maybe[Str] = hello");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { type_ann, .. }) => {
+                assert_eq!(
+                    type_ann,
+                    &Some(TypeAnnotation::Maybe(Box::new(TypeAnnotation::Str)))
+                );
+            }
+            other => panic!("expected Maybe[Str] type, got {other:?}"),
+        }
+    }
+
+    // ── Edge cases ───────────────────────────────────────────
+
+    #[test]
+    fn keyword_prefix_not_keyword() {
+        // "iffy" should parse as a command, not "if" + "fy"
+        let prog = parse("iffy");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.name, Word::Literal("iffy".into()));
+            }
+            other => panic!("expected simple command 'iffy', got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keyword_prefix_for_like() {
+        // "fortune" should parse as a command, not "for" + error
+        let prog = parse("fortune");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.name, Word::Literal("fortune".into()));
+            }
+            other => panic!("expected simple command 'fortune', got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn concatenation() {
+        let prog = parse("echo foo^bar");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert!(matches!(&cmd.args[0], Word::Concat(_)));
+            }
+            other => panic!("expected concat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_assignment() {
+        let prog = parse("x =");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Assignment(_, Value::List(items))) => {
+                assert!(items.is_empty());
+            }
+            other => panic!("expected empty assignment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_comment() {
+        let prog = parse("echo hello # this is a comment");
+        match &prog.commands[0] {
+            Command::Exec(Expr::Simple(cmd)) => {
+                assert_eq!(cmd.name, Word::Literal("echo".into()));
+                assert_eq!(cmd.args.len(), 1);
+                assert_eq!(cmd.args[0], Word::Literal("hello".into()));
+            }
+            other => panic!("expected simple command, got {other:?}"),
         }
     }
 }
