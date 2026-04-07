@@ -126,20 +126,42 @@ block.
     if_cmd      = 'if' pipeline body ('else' (if_cmd | body))?
     for_cmd     = 'for' NAME 'in' value body
     while_cmd   = 'while' pipeline body
-    match_cmd   = 'match' value '{' match_arm* '}'      -- [planned]
+    match_cmd   = 'match' value '{' match_arm (';' match_arm)* ';'? '}'  -- [planned]
     try_cmd     = 'try' body ('else' NAME body)?        -- [planned]
 
-    match_arm   = match_pat+ body
+    match_arm   = match_pat+ '=>' command+              -- [planned]
     match_pat   = NAME                          -- glob pattern
                 | NAME '$' NAME                 -- structural: tag + binding [planned]
 
     body        = '{' program '}'
-                | '{' program 'return' value '}'        -- value-producing [planned]
+                | '=>' command                          -- single-line [planned]
 
-Note: `case ok { }` is a glob match on the string "ok", not
-structural decomposition. Structural cases always require a
-`$binding`: `case ok $v { }`. The presence of `$` after the
-tag name is what distinguishes structural from glob cases.
+`=>` is a dependent keyword — a single-line body introducer.
+It can appear after any keyword-initiated clause: `if`, `for`,
+`while`, `try`, `else`, `fn`, or a `match` pattern. After `=>`,
+the parser reads a single command (terminated by `;`, newline,
+or `}`). `{` opens a multi-line body as before. Both forms are
+interchangeable wherever `body` appears in the grammar.
+
+Inside `match { }`, arms are separated by `;` with an optional
+trailing `;` before `}`. Newlines between arms are trivia —
+the parser ignores them. This means multi-line and single-line
+match blocks use the same grammar:
+
+    # Multi-line
+    match $type {
+        editor   => return '📝';
+        terminal => return '💻';
+        * => return '?'
+    }
+
+    # Single-line (same grammar, just horizontal)
+    match $type { editor => return '📝'; terminal => return '💻'; * => return '?' }
+
+Note: `ok => { }` (no `$binding`) is a glob match on the
+literal string "ok", not structural decomposition. Structural
+arms always require `$binding`: `ok $v => { }`. The `$` after
+the tag name distinguishes structural from glob arms.
 
 **Divergence from rc:** rc wraps conditions in parentheses:
 `if(list) command`, `for(name in list) command`,
@@ -161,28 +183,26 @@ related changes:
    `Command::If` — a proper coproduct elimination. No state
    dependency, no dangling-else ambiguity.
 
-3. **Bodies are always braced.** rc allows a single command as
-   body: `if(cond) cmd`. psh requires `if cond { cmd }`. This is
-   forced: without parentheses to delimit the condition, the `{`
-   is the only unambiguous terminator. It also regularizes the
-   grammar — every body is `'{' program '}'`, one production for
-   all contexts. This enables `else` (the parser knows the
-   then-body is complete at `}`) and resolves the dangling-else
-   by making nesting explicit.
+3. **Bodies use `{` or `=>`.** rc allows a single command as
+   body: `if(cond) cmd`. psh uses two body forms: `{ program }`
+   for multi-line bodies and `=> command` for single-line bodies.
+   Without parentheses to delimit the condition, the body needs
+   an unambiguous introducer — `{` or `=>` serves that role.
+   This enables `else` (the parser knows the then-body is
+   complete at `}` or `;`) and resolves the dangling-else by
+   making structure explicit.
 
-4. **`match` arms are braced, no fall-through.** rc delimits
+4. **`match` arms use `=>`, separated by `;`.** rc delimits
    case bodies implicitly — execution runs from one `case`
-   keyword to the next. psh braces each case:
-   `case pat { body }`. Each case is an independent branch of
-   the multi-way elimination. Multiple patterns per case are
-   supported: `case a b { body }` matches either `a` or `b`.
-   Fall-through is not needed and not available — it violates
-   branch isolation (a resource introduced in one case's scope
-   would leak to the next).
+   keyword to the next. psh uses `=>` to introduce each arm's
+   body and `;` to separate arms. Each arm is an independent
+   branch. Multiple patterns per arm are supported:
+   `a b => body` matches either `a` or `b`. Fall-through is not
+   available — `;` terminates each arm.
 
 These four changes form a coherent package. Removing parentheses
-forces mandatory braces, which enables structural `else`, which
-makes per-case bracing the natural completion.
+requires explicit body introducers (`{` or `=>`), which enables
+structural `else`, which makes `=>` + `;` the natural arm syntax.
 
 **`match` instead of `switch`.** rc used `switch` as the outer
 keyword with `case` for arms inside. psh uses `match` — a new
@@ -195,29 +215,27 @@ without pretending to be rc's `case`.
 
 psh's `match` does two kinds of dispatch: glob pattern matching
 on string values (rc heritage) and structural coproduct
-elimination on Tagged values (psh extension). Arms are bare
-patterns — no sub-keyword needed because the `match` block
-provides the context.
+elimination on Tagged values (psh extension). Arms use `=>`
+to introduce the body and `;` to separate. No sub-keyword
+needed.
 
     # Glob matching on strings (rc heritage)
     match $filename {
-        *.txt { echo 'text file' }
-        *.rs  { echo 'rust source' }
-        *     { echo 'other' }
+        *.txt => echo 'text file';
+        *.rs  => echo 'rust source';
+        * => echo 'other'
     }
 
     # Structural matching on Tagged values (psh extension)
     match $result {
-        ok $v   { echo 'success: '$v }
-        err $e  { echo 'error: '$e }
+        ok $v  => echo 'success: '$v;
+        err $e => echo 'error: '$e
     }
 
-Structural arms have the form `tag $binding` — a tag name
-followed by a `$`-prefixed binding variable. Glob arms have
-the form `pattern` — a bare pattern. The parser distinguishes
-them syntactically. Note: `ok { }` (no binding) is a glob
-match on the literal string "ok", not a structural match.
-Structural matching always requires `$binding`.
+Structural arms have the form `tag $binding =>` — a tag name
+followed by a `$`-prefixed binding variable, then `=>`. Glob
+arms have the form `pattern =>`. The `$` after the tag name
+distinguishes structural from glob arms.
 
 **Value-producing blocks.** When a body appears in value
 position (RHS of `let`, etc.), it may end with `return value`
@@ -227,15 +245,20 @@ sort (CBPV's `return : A → F(A)`). Without `return`, the
 body produces `Unit`.
 
     let icon = match $type {
-        editor   { return '📝' }
-        terminal { return '💻' }
-        *        { return '?' }
+        editor   => return '📝';
+        terminal => return '💻';
+        * => return '?'
     }
 
-    let greeting = if ~ $lang fr {
-        return 'bonjour'
-    } else {
-        return 'hello'
+    let greeting = if ~ $lang fr => return 'bonjour'; else => return 'hello'
+
+    # Multi-line with effects before return
+    let result = match $code {
+        200 => {
+            log 'success'
+            return ok $body
+        };
+        * => return err 'unexpected'
     }
 
 `return` is unambiguous — the keyword marks the polarity shift.
@@ -628,8 +651,8 @@ a value (the payload). `try { body }` implicitly produces
 Elimination: `match` with structural arms.
 
     match $result {
-        case ok $v   { echo $v }
-        case err $e  { echo 'error: '$e }
+        ok $v  => echo $v;
+        err $e => echo 'error: '$e
     }
 
 The tag is an open string namespace. Any script can define new
