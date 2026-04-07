@@ -268,7 +268,7 @@ node types reflecting the sequent calculus:
 
 | psh sort | λμμ̃ analog | Evaluation | Examples |
 |---|---|---|---|
-| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | `Literal`, `Var`, `CommandSub`, `Concat`, `Tuple`, `Tagged` |
+| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | `Literal`, `Var`, `CommandSub`, `Concat`, `Tuple`, `Sum` |
 | `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | `Pipeline`, `Redirect`, `Background` |
 | `Binding` | μ̃-binder (let) | Extends context Γ | `Assignment`, `Fn`, `Let`, `LetTry`, `Ref` |
 | `Command` | Cut / control | Connects producers to consumers, or branches | `Exec`, `If`, `For`, `Match`, `Try` |
@@ -346,8 +346,8 @@ product. Two operations project from this product — siblings, not
 parent-child:
 
 **`try { cmd }`** in value position projects both components and
-wraps them as `Result[T]` = `Tagged("ok", captured_val) |
-Tagged("err", ExitCode(n))`. CBV — evaluates immediately.
+wraps them as `Result[T]` = `Sum("ok", captured_val) |
+Sum("err", ExitCode(n))`. CBV — evaluates immediately.
 
 **Command substitution** `` `{ cmd } `` projects stdout only
 (π₁ of the product). The exit status is discarded. On failure,
@@ -477,18 +477,18 @@ Val's type constructors map directly to the optic hierarchy:
 | Type constructor | Optic | Constraint |
 |---|---|---|
 | Tuple (product, ×) | Lens | Cartesian |
-| Tagged (coproduct, +) | Prism | Cocartesian |
-| Tuple × Tagged | AffineTraversal | Cartesian + Cocartesian |
+| Sum (coproduct, +) | Prism | Cocartesian |
+| Tuple × Sum | AffineTraversal | Cartesian + Cocartesian |
 | List (sequence) | Traversal | Monoidal |
 
 Products give users Lenses: `$pos.0` projects the first element
 of a tuple. Coproducts give users Prisms: `match $result { case ok $v { } }` decomposes a tagged value. Composing both gives
 AffineTraversals: `$result.ok.name` is Prism then Lens.
 
-Tagged values are the user's coproduct constructor — the open
+Sum values are the user's coproduct constructor — the open
 counterpart to Val's fixed enum. Val's Rust enum is a closed
-coproduct (the implementation's sum type). Tagged is an open
-coproduct (the user's sum type). Without Tagged, the Cocartesian
+coproduct (the implementation's sum type). Sum is an open
+coproduct (the user's sum type). Without Sum, the Cocartesian
 half of the optic hierarchy would be theoretically present but
 operationally unreachable for user-defined domains. Every script
 needing domain-specific alternatives would encode them as lists
@@ -497,24 +497,24 @@ exists to prevent.
 
 ExitCode is a reified computation outcome. It enters the value
 world through `try` (the ↑ shift). `try { body }` runs the body
-and produces either `ok(captured_value)` (Tagged "ok") or
-`err(ExitCode(n))` (Tagged "err"). The type is `Result[T] =
+and produces either `ok(captured_value)` (Sum "ok") or
+`err(ExitCode(n))` (Sum "err"). The type is `Result[T] =
 T | ExitCode`. The coproduct structure is explicit in the type
-annotation and in the runtime Tagged value.
+annotation and in the runtime Sum value.
 
 ### Error metadata on variables
 
 For stored variables (tiers 1-2), the value is always clean data.
 For computed variables (`let x = try { }`), the value IS the
-Tagged result — `Tagged("ok", T)` on success, `Tagged("err",
+Sum result — `Sum("ok", T)` on success, `Sum("err",
 ExitCode(n))` on failure. The `$x.err` accessor is a Prism
-preview into the err branch of that Tagged result. The `$x.ok`
+preview into the err branch of that Sum result. The `$x.ok`
 accessor previews the ok branch.
 
 Each Var also carries `error: Option<String>` — the human-readable
 error message from stderr of the last failed evaluation. This is
 diagnostic metadata (following Plan 9's errstr model), not the
-primary error signal. The ExitCode in the Tagged result is the
+primary error signal. The ExitCode in the Sum result is the
 structural error value; the error string is for user display.
 
 Val stays inert — pure positive data, Clone, no embedded error
@@ -522,7 +522,7 @@ signals. Adding Err as a Val variant was rejected because it
 breaks Val's inertness — an Err in value position is a
 computation-mode signal (negative) embedded in a value-mode type
 (positive), the same polarity confusion the specification
-identifies in BMessage. The Tagged result preserves the
+identifies in BMessage. The Sum result preserves the
 separation: error is a coproduct branch (positive data with a
 tag), not a mode violation.
 
@@ -551,12 +551,12 @@ is the ⊕→⅋ converter — inside the block, errors abort to the
 handler (⅋ discipline). `try { }` in value position (RHS of
 `let`, argument to a command) is CBV — the body evaluates
 immediately via `capture_subprocess`, returning `Result[T]` =
-`Tagged("ok", T) | Tagged("err", ExitCode(n))`. All `let`
+`Sum("ok", T) | Sum("err", ExitCode(n))`. All `let`
 bindings are CBV — there is no call-by-name `let` form. Live
 re-evaluation uses `.get` discipline functions, not CBN `let`.
 
 The value-position form stays in ⊕ — the caller inspects
-the Tagged result via `match $x` or the `.ok`/`.err` accessors.
+the Sum result via `match $x` or the `.ok`/`.err` accessors.
 No automatic abort occurs. The `try` keyword marks "fallible
 computation" in both cases; the syntactic context determines
 whether the error discipline is ⅋ (scoped handler) or ⊕ (caller

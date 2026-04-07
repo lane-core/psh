@@ -4,7 +4,7 @@ Formal grammar for psh. Starts from rc (Duff 1990) and names
 each extension. This grammar is the target language specification.
 Productions marked **[planned]** are not yet implemented — the
 current parser implements a subset (6 Val variants, `switch` not
-`match`, no `try`, no Tagged, no Tuple, no ExitCode, no free
+`match`, no `try`, no Sum, no Tuple, no ExitCode, no free
 carets, no two-alphabet split). Unmarked productions are
 implemented and tested.
 
@@ -215,7 +215,7 @@ without pretending to be rc's `case`.
 
 psh's `match` does two kinds of dispatch: glob pattern matching
 on string values (rc heritage) and structural coproduct
-elimination on Tagged values (psh extension). Arms use `=>`
+elimination on Sum values (psh extension). Arms use `=>`
 to introduce the body and `;` to separate. No sub-keyword
 needed.
 
@@ -226,7 +226,7 @@ needed.
         * => echo 'other'
     }
 
-    # Structural matching on Tagged values (psh extension)
+    # Structural matching on Sum values (psh extension)
     match $result {
         ok $v  => echo 'success: '$v;
         err $e => echo 'error: '$e
@@ -372,10 +372,10 @@ structural access. The accessor takes priority over free carets
 when the token immediately following a `var_ref` is `.` followed
 by a digit or `NAME`.
 
-**Tagged construction** **[planned]** is context-sensitive. In
+**Sum construction** **[planned]** is context-sensitive. In
 `let` RHS, `match` arm body, and `value` position, a bare word
-followed by a value is Tagged construction: `ok 42` →
-`Tagged("ok", Int(42))`. In command position, it is a simple
+followed by a value is Sum construction: `ok 42` →
+`Sum("ok", Int(42))`. In command position, it is a simple
 command: `ok 42` runs the command `ok` with argument `42`. The
 parser context determines interpretation — `value` attempts the
 `tagged_val` production before falling through to `word`.
@@ -543,8 +543,8 @@ The two operations project different components of this product:
 
 - `` `{cmd}`` takes stdout only (π₁). Exit status discarded.
   On failure, returns `Unit` (empty).
-- `try { cmd }` takes both. Returns `Tagged("ok", val)` or
-  `Tagged("err", ExitCode(n))`.
+- `try { cmd }` takes both. Returns `Sum("ok", val)` or
+  `Sum("err", ExitCode(n))`.
 
 They are siblings — parallel consumers of the same primitive —
 not parent-child. Neither desugars into the other.
@@ -637,12 +637,12 @@ Destructuring in `let` bindings: `let (x, y) = expr`.
 
     A | B       coproduct (union). Prism decomposes.
 
-Tagged values carry a string tag and a payload. The tag is the
+Sum values carry a string tag and a payload. The tag is the
 coproduct injection label. The payload is any Val.
 
-    let x = ok 42                    # Tagged("ok", Int(42))
-    let y = err 1                    # Tagged("err", ExitCode(1))
-    let e = KeyEvent (97, 0)         # Tagged("KeyEvent", Tuple(..))
+    let x = ok 42                    # Sum("ok", Int(42))
+    let y = err 1                    # Sum("err", ExitCode(1))
+    let e = KeyEvent (97, 0)         # Sum("KeyEvent", Tuple(..))
 
 Construction: `tag payload` — a bare word (the tag) followed by
 a value (the payload). `try { body }` implicitly produces
@@ -665,8 +665,8 @@ messages cross from Rust into the shell.
     Maybe[T]    = T | Unit          implied tags: ok, none
 
 `Result[T]` is the type of `try { body }` — either the
-computation succeeded (producing `Tagged("ok", T)`) or failed
-(producing `Tagged("err", ExitCode(n))`). The tag names `ok`
+computation succeeded (producing `Sum("ok", T)`) or failed
+(producing `Sum("err", ExitCode(n))`). The tag names `ok`
 and `err` are conventional — `Result[T]` is sugar for a
 coproduct with these specific tags. `Maybe[T]` uses `ok` and
 `none` analogously.
@@ -683,7 +683,7 @@ coproduct with these specific tags. `Maybe[T]` uses `ok` and
                 | 'Maybe' '[' type_ann ']'
 
 Type annotations validate via Prism check at the binding site.
-Union annotations (`A | B`) constrain which Tagged variants are
+Union annotations (`A | B`) constrain which Sum variants are
 legal. Tuple annotations validate componentwise.
 
 ### Val representation
@@ -698,12 +698,12 @@ pub enum Val {
     ExitCode(i32),
     List(Vec<Val>),
     Tuple(Vec<Val>),
-    Tagged(String, Box<Val>),
+    Sum(String, Box<Val>),
 }
 ```
 
 Nine variants. Seven atoms, one product constructor (Tuple),
-one coproduct constructor (Tagged). Products give users Lenses.
+one coproduct constructor (Sum). Products give users Lenses.
 Coproducts give users Prisms. The optic hierarchy is fully
 inhabited.
 
@@ -724,9 +724,9 @@ struct Var {
 
 For stored variables (tiers 1-2), `error` is always `None`.
 For computed variables (`let x = try { }`), the value IS the
-Tagged result — `Tagged("ok", T)` or `Tagged("err",
+Sum result — `Sum("ok", T)` or `Sum("err",
 ExitCode(n))`. The `$x.err` accessor is a Prism preview into
-the err branch of that Tagged result, not a separate metadata
+the err branch of that Sum result, not a separate metadata
 channel. The `error` field preserves the error *string* (the
 human-readable message from stderr) alongside the ExitCode for
 diagnostic use. Val stays inert — pure positive data, no
@@ -746,15 +746,15 @@ erased at this boundary — pipes carry bytes.
     ExitCode      the numeric code: 0, 1, 42
     List          space-separated elements
     Tuple         space-separated elements (same as List)
-    Tagged        payload only (tag stripped)
+    Sum        payload only (tag stripped)
 
-**Tagged display is payload-only.** `echo $result` where
-result = `Tagged("ok", Int(42))` prints `42`, not `ok 42`.
+**Sum display is payload-only.** `echo $result` where
+result = `Sum("ok", Int(42))` prints `42`, not `ok 42`.
 The tag is control-flow metadata for `match` decomposition
 (the Prism's `match` function), not data for display. Prism
 laws hold within Val (in-process); they do not extend across
 pipe boundaries. Pipes already break type preservation by
-design (`Int(42)` → `"42"` → `Str("42")`). Tagged is no
+design (`Int(42)` → `"42"` → `Str("42")`). Sum is no
 different. For inspection, `whatis` shows tag + type + payload.
 
 ### Truthiness
@@ -774,7 +774,7 @@ behavior for values used in boolean contexts.
     List([])      false
     List(_)       true
     Tuple         true  (always ≥2 elements)
-    Tagged        true  (always has content)
+    Sum        true  (always has content)
 
 **ExitCode truthiness inverts Int truthiness.** `ExitCode(0)`
 is true (success). `Int(0)` is false (zero). These are
@@ -784,7 +784,7 @@ convention: 0 = false). This inversion is why ExitCode→Int
 coercion is prohibited — it would reverse the meaning of
 `if $x`.
 
-**Tagged is always true.** A tagged value exists — it has a
+**Sum is always true.** A tagged value exists — it has a
 tag and a payload. Use `match` to dispatch on the tag, not
 `if`. This prevents conflating error handling with truthiness.
 
@@ -806,7 +806,7 @@ are inferred:
     '42'          Str (quoted — inference suppressed)
     hello         Str (default)
     (42, 7)       Tuple — inferred componentwise: (Int, Int)
-    ok 42         Tagged — tag is "ok", payload inferred: Int
+    ok 42         Sum — tag is "ok", payload inferred: Int
     (a b c)       List — elements inferred individually
 
 ExitCode is NEVER inferred from literals. It enters the
@@ -844,7 +844,7 @@ Widening (total, information-preserving) is allowed. Narrowing
 
 `try { body }` in value position (RHS of `let`, argument to a
 command) forks, captures stdout + exit status, and returns
-`Result[T]` = `Tagged("ok", T) | Tagged("err", ExitCode(n))`.
+`Result[T]` = `Sum("ok", T) | Sum("err", ExitCode(n))`.
 This is CBV — the body evaluates immediately at binding time.
 
     let cursor : Result[Int] = try { get /pane/editor/attrs/cursor }

@@ -61,7 +61,7 @@ is the real design.
 | `return` for value-producing blocks | §Control flow |
 | Val::ExitCode(i32) — distinct from Int | §Type system |
 | Val::Tuple(Vec\<Val\>) — products, comma-separated | §Type system |
-| Val::Tagged(String, Box\<Val\>) — coproducts | §Type system |
+| Val::Sum(String, Box\<Val\>) — coproducts | §Type system |
 | Two-alphabet split (var\_char / word\_char) | §Two character sets |
 | Free carets (implicit `^` at var/word boundary) | §Free carets |
 | Accessor syntax ($x.0, $x.ok, $x.err, $x.code) | §Words |
@@ -127,8 +127,8 @@ feature-gated (pane):
 ### Key design decisions
 
 - **Val is a 9-variant enum** (Unit, Bool, Int, Str, Path, ExitCode,
-  List, Tuple, Tagged). ExitCode enters only through `try`.
-  Tuple is product (Lens). Tagged is coproduct (Prism).
+  List, Tuple, Sum). ExitCode enters only through `try`.
+  Tuple is product (Lens). Sum is coproduct (Prism).
 - **let is always CBV.** Immutable by default, local by default.
   No call-by-name `let`. Live re-evaluation uses `.get` disciplines.
 - **`match` with `=>` and `;`.** Arms use `=>` to introduce bodies,
@@ -168,7 +168,7 @@ reference, not the starting point. Implementation order:
 
 - [ ] **3. Val extension.** Rewrite `value.rs` with 9 variants.
       ExitCode (inverted truthiness), Tuple (0-based projection),
-      Tagged (payload-only display, always truthy).
+      Sum (payload-only display, always truthy).
 
 - [ ] **4. `match` with `=>` and `;`.** Rename Switch → Match.
       Add structural patterns. `=>` introduces arm body. `;`
@@ -264,7 +264,7 @@ roundtable sessions, multiple refinement rounds. Produced
 `docs/syntax.md` (1103 lines) — the normative target grammar.
 
 Key decisions: `match` with `=>` and `;` (not `switch`/`case`);
-9-variant Val (ExitCode, Tuple, Tagged); two character predicates;
+9-variant Val (ExitCode, Tuple, Sum); two character predicates;
 `try` as scoped ⅋ and value-position capture; `return` for
 value-producing blocks; shared `capture_subprocess` primitive
 (siblings, not desugaring); CBV-only `let`; `.get` disciplines
