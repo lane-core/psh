@@ -12,12 +12,6 @@
 //! - **Command** (cuts and control): connect producers to consumers
 //!   (Exec), or branch/iterate over values (If, For, Match).
 //!
-//! The former `Statement` mixed bindings, cuts, and control flow in
-//! one enum. The refactored AST separates them so the sort boundaries
-//! are visible in the type system. A `Command` is the top-level
-//! sequencing unit; it may contain `Binding`s (context extension),
-//! `Expr`s (cuts), or control structures (eliminators).
-//!
 //! Redirections compose by nesting. Each RedirectOp describes one fd
 //! transformation. Linear fd tracking verifies the composition at
 //! parse time.
@@ -36,12 +30,17 @@ pub enum Word {
     /// type-inferred. Distinguishes '42' (Str) from 42 (Int in
     /// let context).
     Quoted(String),
-    /// Variable reference: $x, $x(2)
+    /// Variable reference: $x
     Var(String),
     /// Indexed variable: $x(n)
     Index(String, Box<Word>),
     /// Count: $#x
     Count(String),
+    /// Stringify: $"x — join list elements with spaces into a
+    /// single string. rc heritage (Duff 1990, §Concatenation).
+    Stringify(String),
+    /// Brace-delimited variable: ${name} — uses word_char alphabet.
+    BraceVar(String),
     /// Command substitution: `{ cmd }
     /// Evaluated eagerly — the command runs and its stdout
     /// becomes the value.
@@ -52,9 +51,10 @@ pub enum Word {
     ProcessSub(Vec<Command>),
     /// Concatenation: a^b — juxtaposition of words
     Concat(Vec<Word>),
-    /// Stringify: $"x — join list elements with spaces into a
-    /// single string. rc heritage (Duff 1990, §Concatenation).
-    Stringify(String),
+    /// Tilde: ~ expands to $home
+    Tilde,
+    /// Tilde path: ~/path expands to $home/path
+    TildePath(String),
 }
 
 /// A list value — rc's first-class lists.
@@ -66,6 +66,14 @@ pub enum Value {
     Word(Word),
     /// List literal: (a b c)
     List(Vec<Word>),
+    /// Lambda: \params => body — value-level thunk literal.
+    /// CBPV's U(A → F(B)). Named params, no closure capture.
+    Lambda {
+        params: Vec<String>,
+        body: Vec<Command>,
+    },
+    /// Tagged value: tag payload — Sum construction in value position.
+    Tagged(String, Box<Value>),
 }
 
 /// A simple command: name and arguments, all words.
@@ -84,8 +92,9 @@ pub struct SimpleCommand {
 pub enum RedirectTarget {
     /// Redirect to/from a file path.
     File(Word),
-    /// Here-document with delimiter.
-    HereDoc(String),
+    /// Here-document: body text + whether to expand $var references.
+    /// expand=true for unquoted delimiter (<<EOF), false for quoted (<<'EOF').
+    HereDoc { body: String, expand: bool },
     /// Here-string.
     HereString(Word),
 }
@@ -107,6 +116,8 @@ pub enum RedirectOp {
     },
     /// <[fd] target  or  <target (fd defaults to 0)
     Input { fd: u32, target: RedirectTarget },
+    /// <>target — read-write open on fd 0
+    ReadWrite { fd: u32, target: RedirectTarget },
     /// >[dst=src] — dup src onto dst
     Dup { dst: u32, src: u32 },
     /// >[fd=] — close fd
@@ -161,10 +172,7 @@ pub enum Pattern {
     /// Structural pattern: tag $binding — coproduct elimination.
     /// The tag is matched against Sum's tag; the binding receives
     /// the payload. Distinguishing feature: `$` after the tag name.
-    Structural {
-        tag: String,
-        binding: String,
-    },
+    Structural { tag: String, binding: String },
 }
 
 /// Type annotation for let bindings.
@@ -266,8 +274,16 @@ pub enum Command {
     /// while(expr) { body }
     /// Iterative looping — re-evaluates condition after each body.
     While { condition: Expr, body: Vec<Command> },
-    /// Return from a function (implicit via last status,
-    /// but explicit return is useful).
+    /// try { body } [else name { handler }]
+    /// Scoped ⅋ — the ⊕→⅋ converter. Inside try, nonzero Status
+    /// aborts to the else clause. Boolean contexts are exempt.
+    Try {
+        body: Vec<Command>,
+        else_var: Option<String>,
+        else_body: Option<Vec<Command>>,
+    },
+    /// return value — injects a value from command sort into value sort.
+    /// CBPV's return : A → F(A).
     Return(Option<Value>),
 }
 
@@ -285,6 +301,8 @@ impl fmt::Display for Word {
             Word::Var(name) => write!(f, "${name}"),
             Word::Index(name, idx) => write!(f, "${name}({idx})"),
             Word::Count(name) => write!(f, "$#{name}"),
+            Word::Stringify(name) => write!(f, "$\"{name}"),
+            Word::BraceVar(name) => write!(f, "${{{name}}}"),
             Word::CommandSub(_) => write!(f, "`{{...}}"),
             Word::ProcessSub(_) => write!(f, "<{{...}}"),
             Word::Concat(parts) => {
@@ -293,7 +311,8 @@ impl fmt::Display for Word {
                 }
                 Ok(())
             }
-            Word::Stringify(name) => write!(f, "$\"{name}"),
+            Word::Tilde => write!(f, "~"),
+            Word::TildePath(path) => write!(f, "~/{path}"),
         }
     }
 }

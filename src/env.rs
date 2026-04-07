@@ -432,8 +432,7 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
             let mut validated = Vec::with_capacity(items.len());
             for (i, (item, elem_ann)) in items.iter().zip(anns).enumerate() {
                 validated.push(
-                    validate_type(item, elem_ann)
-                        .map_err(|e| format!("tuple element {i}: {e}"))?,
+                    validate_type(item, elem_ann).map_err(|e| format!("tuple element {i}: {e}"))?,
                 );
             }
             Ok(Val::Tuple(validated))
@@ -454,8 +453,8 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
         // Result[T]: Sum("ok", T) or Sum("err", ExitCode)
         (Val::Sum(tag, payload), TypeAnnotation::Result(inner)) => match tag.as_str() {
             "ok" => {
-                let validated = validate_type(payload, inner)
-                    .map_err(|e| format!("Result ok branch: {e}"))?;
+                let validated =
+                    validate_type(payload, inner).map_err(|e| format!("Result ok branch: {e}"))?;
                 Ok(Val::Sum("ok".into(), Box::new(validated)))
             }
             "err" => {
@@ -470,8 +469,8 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
         // Maybe[T]: Sum("ok", T) or Sum("none", Unit)
         (Val::Sum(tag, payload), TypeAnnotation::Maybe(inner)) => match tag.as_str() {
             "ok" => {
-                let validated = validate_type(payload, inner)
-                    .map_err(|e| format!("Maybe ok branch: {e}"))?;
+                let validated =
+                    validate_type(payload, inner).map_err(|e| format!("Maybe ok branch: {e}"))?;
                 Ok(Val::Sum("ok".into(), Box::new(validated)))
             }
             "none" => {
@@ -543,6 +542,7 @@ fn val_type_name(val: &Val) -> &'static str {
         Val::List(_) => "List",
         Val::Tuple(_) => "Tuple",
         Val::Sum(_, _) => "Sum",
+        Val::Thunk { .. } => "Thunk",
     }
 }
 

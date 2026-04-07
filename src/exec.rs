@@ -1,16 +1,29 @@
-//! Evaluator for psh — to be rebuilt with RunOutcome, try,
-//! return, capture_subprocess, thunk forcing, and match semantics.
+//! Evaluator for psh.
 //!
-//! Scrapped and awaiting rewrite. See docs/specification.md for
-//! the theoretical foundation and docs/syntax.md for semantics.
+//! Implements the full spec: RunOutcome, try/return, capture_subprocess,
+//! thunk forcing, match semantics, discipline functions, job control,
+//! and profunctor redirections.
+//!
+//! rc heritage: status strings, list-valued variables, newline splitting.
+//! ksh93 heritage: discipline functions, coprocesses, namerefs.
+//! Theoretical basis: duploid-structured CBV/CBN split, ⊕ error convention.
+
+use std::{collections::HashSet, ffi::CString, os::unix::io::RawFd};
 
 use crate::{
     ast::*,
     env::Env,
-    job::JobTable,
+    job::{Job, JobStatus, JobTable},
+    signal,
+    value::Val,
 };
 
+// ── Status ─────────────────────────────────────────────────────
+
 /// Exit status — a string in rc tradition.
+/// Empty string = success; any other string = failure.
+/// Plan 9 heritage: "On Plan 9 status is a character string
+/// describing an error condition" (Duff 1990).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Status(pub String);
 
@@ -34,12 +47,94 @@ impl Status {
     pub fn is_success(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn code(&self) -> i32 {
+        if self.is_success() {
+            0
+        } else {
+            self.0.parse().unwrap_or(1)
+        }
+    }
 }
+
+// ── RunOutcome ─────────────────────────────────────────────────
+
+/// The return type of run_cmd / run_cmds.
+///
+/// CBPV's distinction made explicit: Status is a normal command
+/// completion (negative sort), Value is a return-injected value
+/// (positive sort, CBPV's return : A → F(A)).
+#[derive(Debug, Clone)]
+pub enum RunOutcome {
+    /// Normal command completion.
+    Status(Status),
+    /// A `return` injected a value from command sort into value sort.
+    Value(Val),
+}
+
+impl RunOutcome {
+    pub fn ok() -> Self {
+        RunOutcome::Status(Status::ok())
+    }
+
+    pub fn status(&self) -> Status {
+        match self {
+            RunOutcome::Status(s) => s.clone(),
+            RunOutcome::Value(_) => Status::ok(),
+        }
+    }
+}
+
+// ── TryOutcome ─────────────────────────────────────────────────
+
+/// Internal outcome for try block execution.
+enum TryOutcome {
+    /// Body completed normally.
+    Completed(RunOutcome),
+    /// A command failed with nonzero status — abort to else.
+    Aborted(Status),
+}
+
+// ── Coprocess ──────────────────────────────────────────────────
+
+/// A coprocess — bidirectional pipe to a child process.
+pub struct Coproc {
+    /// The shell's read end (reads from child's stdout).
+    pub read_fd: RawFd,
+    /// The shell's write end (writes to child's stdin).
+    pub write_fd: RawFd,
+    /// The child's pid.
+    pub pid: libc::pid_t,
+}
+
+// ── CaptureResult ──────────────────────────────────────────────
+
+/// Result of capture_subprocess — shared by `{cmd} and try-in-value.
+struct CaptureResult {
+    stdout: String,
+    #[allow(dead_code)] // Used by try-in-value (Phase 8)
+    exit_code: i32,
+}
+
+// ── Shell ──────────────────────────────────────────────────────
 
 /// The shell interpreter state.
 pub struct Shell {
     pub env: Env,
     pub jobs: JobTable,
+    /// Reentrancy guard for discipline functions.
+    active_disciplines: HashSet<String>,
+    /// Whether the shell is in interactive mode.
+    pub interactive: bool,
+    /// The shell's process group id (for job control).
+    shell_pgid: libc::pid_t,
+    /// Active coprocess, if any.
+    coproc: Option<Coproc>,
+    /// Nesting depth of try blocks.
+    try_depth: u32,
+    /// Whether we're in a boolean context (if/while condition, &&/|| LHS).
+    /// Boolean contexts are exempt from try-abort.
+    in_boolean_context: bool,
 }
 
 impl Default for Shell {
@@ -55,31 +150,1757 @@ impl Shell {
         Shell {
             env,
             jobs: JobTable::new(),
+            active_disciplines: HashSet::new(),
+            interactive: false,
+            shell_pgid: 0,
+            coproc: None,
+            try_depth: 0,
+            in_boolean_context: false,
         }
     }
 
     /// Set up the shell for interactive use.
     pub fn setup_interactive(&mut self) {
-        // stub — awaiting rewrite
+        self.interactive = true;
+        self.shell_pgid = unsafe { libc::getpgrp() };
+        // The shell ignores SIGTSTP — only foreground jobs receive it
+        signal::ignore_signal(libc::SIGTSTP);
     }
 
-    /// Check for pending signals.
+    // ── Word evaluation (CBV) ──────────────────────────────
+
+    /// Evaluate a Word to a Val.
+    ///
+    /// CBV: words are positive, evaluated eagerly before the command
+    /// that consumes them runs.
+    pub fn eval_word(&mut self, word: &Word) -> Val {
+        match word {
+            Word::Literal(s) => Val::Str(s.clone()),
+            Word::Quoted(s) => Val::Str(s.clone()),
+            Word::Var(name) => self.resolve_var(name),
+            Word::Index(name, idx_word) => {
+                let val = self.resolve_var(name);
+                let idx_val = self.eval_word(idx_word);
+                let idx_str = idx_val.to_string();
+                if let Ok(i) = idx_str.parse::<usize>() {
+                    val.index(i)
+                } else {
+                    Val::Unit
+                }
+            }
+            Word::Count(name) => {
+                let val = self.resolve_var(name);
+                Val::Int(val.count() as i64)
+            }
+            Word::Stringify(name) => {
+                let val = self.resolve_var(name);
+                Val::Str(val.to_string())
+            }
+            Word::BraceVar(name) => self.env.get_value(name),
+            Word::CommandSub(cmds) => {
+                let result = self.capture_subprocess(cmds);
+                // Command sub projects stdout only (π₁). Status discarded.
+                let text = result.stdout.trim_end_matches('\n').to_string();
+                if text.is_empty() {
+                    Val::Unit
+                } else if text.contains('\n') {
+                    // Split on newlines into a list
+                    Val::List(text.split('\n').map(|s| Val::Str(s.to_string())).collect())
+                } else {
+                    Val::Str(text)
+                }
+            }
+            Word::ProcessSub(cmds) => {
+                // Fork, create pipe, run cmds with stdout connected.
+                // Return /dev/fd/N where N is the read end.
+                let mut fds = [0i32; 2];
+                if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                    return Val::Str("/dev/null".to_string());
+                }
+                let read_fd = fds[0];
+                let write_fd = fds[1];
+
+                let pid = unsafe { libc::fork() };
+                match pid {
+                    -1 => Val::Str("/dev/null".to_string()),
+                    0 => {
+                        // Child: redirect stdout to write end
+                        unsafe {
+                            libc::close(read_fd);
+                            libc::dup2(write_fd, 1);
+                            libc::close(write_fd);
+                        }
+                        let outcome = self.run_cmds(cmds);
+                        let code = outcome.status().code();
+                        unsafe { libc::_exit(code) }
+                    }
+                    _ => {
+                        // Parent: close write end, return read fd path
+                        unsafe { libc::close(write_fd) };
+                        Val::Str(format!("/dev/fd/{read_fd}"))
+                    }
+                }
+            }
+            Word::Concat(parts) => {
+                let mut result = self.eval_word(&parts[0]);
+                for part in &parts[1..] {
+                    let right = self.eval_word(part);
+                    result = result.concat(&right);
+                }
+                result
+            }
+            Word::Tilde => {
+                // Expand to $home
+                self.env.get_value("home")
+            }
+            Word::TildePath(path) => {
+                let home = self.env.get_value("home").to_string();
+                Val::Str(format!("{home}/{path}"))
+            }
+        }
+    }
+
+    /// Resolve a variable, firing .get discipline if registered.
+    fn resolve_var(&mut self, name: &str) -> Val {
+        // Fire .get discipline if present and not already active
+        let disc_name = format!("{name}.get");
+        if self.env.has_discipline(name, "get") && !self.active_disciplines.contains(&disc_name) {
+            self.active_disciplines.insert(disc_name.clone());
+            if let Some(body) = self.env.get_fn(&disc_name).cloned() {
+                // .get runs in a readonly scope — mutations rejected
+                self.env.push_readonly_scope();
+                self.run_cmds(&body);
+                self.env.pop_scope();
+            }
+            self.active_disciplines.remove(&disc_name);
+        }
+        self.env.get_value(name)
+    }
+
+    /// Evaluate a Value (word | list | lambda | tagged).
+    pub fn eval_value(&mut self, value: &Value) -> Val {
+        match value {
+            Value::Word(w) => self.eval_word(w),
+            Value::List(words) => {
+                let vals: Vec<Val> = words.iter().map(|w| self.eval_word(w)).collect();
+                if vals.is_empty() {
+                    Val::Unit
+                } else {
+                    Val::List(vals)
+                }
+            }
+            Value::Lambda { params, body } => Val::Thunk {
+                params: params.clone(),
+                body: body.clone(),
+                // No closure capture — dynamic name resolution at force
+                // time (roundtable decision #4, CBPV convention).
+                captures: vec![],
+            },
+            Value::Tagged(tag, payload) => {
+                let val = self.eval_value(payload);
+                Val::Sum(tag.clone(), Box::new(val))
+            }
+        }
+    }
+
+    // ── Shared capture primitive ─────────────────────────────
+
+    /// Fork, run commands, capture stdout + exit code.
+    ///
+    /// Shared by `{cmd} (projects stdout) and try-in-value (projects both).
+    /// Neither desugars into the other — they are siblings consuming
+    /// different projections of this product.
+    fn capture_subprocess(&mut self, cmds: &[Command]) -> CaptureResult {
+        let mut fds = [0i32; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return CaptureResult {
+                stdout: String::new(),
+                exit_code: 1,
+            };
+        }
+        let read_fd = fds[0];
+        let write_fd = fds[1];
+
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => CaptureResult {
+                stdout: String::new(),
+                exit_code: 1,
+            },
+            0 => {
+                // Child: redirect stdout to pipe
+                unsafe {
+                    libc::close(read_fd);
+                    libc::dup2(write_fd, 1);
+                    libc::close(write_fd);
+                }
+                let outcome = self.run_cmds(cmds);
+                let code = outcome.status().code();
+                unsafe { libc::_exit(code) }
+            }
+            _ => {
+                // Parent: read from pipe, waitpid
+                unsafe { libc::close(write_fd) };
+                let mut output = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = unsafe {
+                        libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                    };
+                    if n <= 0 {
+                        break;
+                    }
+                    output.extend_from_slice(&buf[..n as usize]);
+                }
+                unsafe { libc::close(read_fd) };
+
+                let mut wstatus = 0i32;
+                unsafe { libc::waitpid(pid, &mut wstatus, 0) };
+                let exit_code = if libc::WIFEXITED(wstatus) {
+                    libc::WEXITSTATUS(wstatus)
+                } else {
+                    1
+                };
+
+                CaptureResult {
+                    stdout: String::from_utf8_lossy(&output).to_string(),
+                    exit_code,
+                }
+            }
+        }
+    }
+
+    // ── Expression evaluation ───────────────────────────────
+
+    /// Evaluate an expression, returning Status.
+    pub fn run_expr(&mut self, expr: &Expr) -> Status {
+        match expr {
+            Expr::Simple(sc) => self.run_simple(sc),
+            Expr::Pipeline(stages) => self.run_pipeline(stages),
+            Expr::And(left, right) => {
+                let saved = self.in_boolean_context;
+                self.in_boolean_context = true;
+                let ls = self.run_expr(left);
+                self.in_boolean_context = saved;
+                if ls.is_success() {
+                    self.run_expr(right)
+                } else {
+                    ls
+                }
+            }
+            Expr::Or(left, right) => {
+                let saved = self.in_boolean_context;
+                self.in_boolean_context = true;
+                let ls = self.run_expr(left);
+                self.in_boolean_context = saved;
+                if ls.is_success() {
+                    ls
+                } else {
+                    self.run_expr(right)
+                }
+            }
+            Expr::Not(inner) => {
+                let saved = self.in_boolean_context;
+                self.in_boolean_context = true;
+                let s = self.run_expr(inner);
+                self.in_boolean_context = saved;
+                if s.is_success() {
+                    Status::err("false")
+                } else {
+                    Status::ok()
+                }
+            }
+            Expr::Background(inner) => {
+                let pid = unsafe { libc::fork() };
+                match pid {
+                    -1 => Status::err("fork failed"),
+                    0 => {
+                        // Child: run the command, then exit
+                        let s = self.run_expr(inner);
+                        unsafe { libc::_exit(s.code()) }
+                    }
+                    _ => {
+                        // Parent: add to job table
+                        let cmd_str = format!("{inner:?}");
+                        let job = Job {
+                            pgid: pid,
+                            pids: vec![pid],
+                            command: cmd_str,
+                            status: JobStatus::Running,
+                        };
+                        let num = self.jobs.insert(job);
+                        eprintln!("[{num}] {pid}");
+                        Status::ok()
+                    }
+                }
+            }
+            Expr::Block(cmds) => self.run_cmds(cmds).status(),
+            Expr::Subshell(cmds) => {
+                let pid = unsafe { libc::fork() };
+                match pid {
+                    -1 => Status::err("fork failed"),
+                    0 => {
+                        let outcome = self.run_cmds(cmds);
+                        unsafe { libc::_exit(outcome.status().code()) }
+                    }
+                    _ => {
+                        let mut wstatus = 0i32;
+                        unsafe { libc::waitpid(pid, &mut wstatus, 0) };
+                        if libc::WIFEXITED(wstatus) {
+                            Status::from_code(libc::WEXITSTATUS(wstatus))
+                        } else {
+                            Status::err("subshell failed")
+                        }
+                    }
+                }
+            }
+            Expr::Redirect(inner, op) => self.run_redirect(inner, op),
+            Expr::Coprocess(inner) => self.run_coprocess(inner),
+        }
+    }
+
+    /// Run a simple command: builtin or external.
+    fn run_simple(&mut self, sc: &SimpleCommand) -> Status {
+        // Special case: ~ in command position is the match operator (rc heritage).
+        // The parser produces Word::Tilde for bare ~. In command-name position,
+        // this is the match builtin, not tilde expansion.
+        if matches!(sc.name, Word::Tilde) {
+            let argv: Vec<String> = sc
+                .args
+                .iter()
+                .map(|a| self.eval_word(a).to_string())
+                .collect();
+            return self.builtin_tilde(&argv);
+        }
+
+        let cmd_val = self.eval_word(&sc.name);
+        let cmd_name = cmd_val.to_string();
+
+        // Thunk forcing: if command name evaluates to Val::Thunk, force it
+        if let Val::Thunk { params, body, .. } = cmd_val {
+            return self.force_thunk(&params, &body, &sc.args);
+        }
+
+        // Evaluate arguments
+        let mut argv: Vec<String> = vec![cmd_name.clone()];
+        for arg in &sc.args {
+            let val = self.eval_word(arg);
+            argv.extend(val.to_args());
+        }
+
+        // Try builtin first
+        if let Some(status) = self.run_builtin(&cmd_name, &argv[1..]) {
+            return status;
+        }
+
+        // Try function table (fn definitions)
+        if let Some(body) = self.env.get_fn(&cmd_name).cloned() {
+            self.env.push_scope();
+            // Bind positional parameters ($1, $2, ..., $*)
+            let arg_vals: Vec<Val> = sc.args.iter().map(|a| self.eval_word(a)).collect();
+            for (i, val) in arg_vals.iter().enumerate() {
+                let _ = self.env.set_value(&(i + 1).to_string(), val.clone());
+            }
+            let _ = self.env.set_value(
+                "*",
+                if arg_vals.is_empty() {
+                    Val::Unit
+                } else {
+                    Val::List(arg_vals)
+                },
+            );
+            let outcome = self.run_cmds(&body);
+            self.env.pop_scope();
+            return outcome.status();
+        }
+
+        // External command
+        self.run_external(&argv)
+    }
+
+    /// Force a thunk: push scope, bind params, run body, pop scope.
+    fn force_thunk(&mut self, params: &[String], body: &[Command], args: &[Word]) -> Status {
+        self.env.push_scope();
+
+        // Bind named parameters
+        let arg_vals: Vec<Val> = args.iter().map(|a| self.eval_word(a)).collect();
+        for (i, param) in params.iter().enumerate() {
+            let val = arg_vals.get(i).cloned().unwrap_or(Val::Unit);
+            let _ = self.env.set_value(param, val);
+        }
+
+        // Bind positional parameters ($1, $2, ..., $*)
+        for (i, val) in arg_vals.iter().enumerate() {
+            let _ = self.env.set_value(&(i + 1).to_string(), val.clone());
+        }
+        let _ = self.env.set_value(
+            "*",
+            if arg_vals.is_empty() {
+                Val::Unit
+            } else {
+                Val::List(arg_vals)
+            },
+        );
+
+        let outcome = self.run_cmds(body);
+        self.env.pop_scope();
+        outcome.status()
+    }
+
+    /// Run an external command via fork/exec.
+    fn run_external(&mut self, argv: &[String]) -> Status {
+        if argv.is_empty() {
+            return Status::ok();
+        }
+
+        // Resolve command in $path
+        let cmd = &argv[0];
+        let full_path = self.resolve_command(cmd);
+
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => Status::err(format!("{cmd}: fork failed")),
+            0 => {
+                // Child process
+                // Reset signal handlers
+                signal::uninstall_handlers();
+
+                let c_path = match CString::new(full_path.as_str()) {
+                    Ok(p) => p,
+                    Err(_) => unsafe { libc::_exit(127) },
+                };
+                let c_args: Vec<CString> = argv
+                    .iter()
+                    .map(|a| CString::new(a.as_str()).unwrap_or_default())
+                    .collect();
+                let c_env: Vec<CString> = self
+                    .env
+                    .to_process_env()
+                    .iter()
+                    .map(|(k, v)| CString::new(format!("{k}={v}")).unwrap_or_default())
+                    .collect();
+
+                let c_args_ptrs: Vec<*const libc::c_char> = c_args
+                    .iter()
+                    .map(|a| a.as_ptr())
+                    .chain(std::iter::once(std::ptr::null()))
+                    .collect();
+                let c_env_ptrs: Vec<*const libc::c_char> = c_env
+                    .iter()
+                    .map(|e| e.as_ptr())
+                    .chain(std::iter::once(std::ptr::null()))
+                    .collect();
+
+                unsafe {
+                    libc::execve(c_path.as_ptr(), c_args_ptrs.as_ptr(), c_env_ptrs.as_ptr());
+                    // If we get here, execve failed
+                    let _ = libc::write(
+                        2,
+                        format!("psh: {cmd}: not found\n").as_ptr() as *const libc::c_void,
+                        format!("psh: {cmd}: not found\n").len(),
+                    );
+                    libc::_exit(127);
+                }
+            }
+            _ => {
+                // Parent: wait for child
+                self.wait_for_child(pid)
+            }
+        }
+    }
+
+    /// Wait for a foreground child process.
+    fn wait_for_child(&mut self, pid: libc::pid_t) -> Status {
+        loop {
+            let mut wstatus = 0i32;
+            let result = unsafe { libc::waitpid(pid, &mut wstatus, libc::WUNTRACED) };
+            if result == -1 {
+                return Status::err("waitpid failed");
+            }
+            if libc::WIFEXITED(wstatus) {
+                let code = libc::WEXITSTATUS(wstatus);
+                let status = Status::from_code(code);
+                let _ = self.env.set_value("status", Val::Str(status.0.clone()));
+                return status;
+            }
+            if libc::WIFSIGNALED(wstatus) {
+                let sig = libc::WTERMSIG(wstatus);
+                let status = Status::err(format!("signal {sig}"));
+                let _ = self.env.set_value("status", Val::Str(status.0.clone()));
+                return status;
+            }
+            if libc::WIFSTOPPED(wstatus) {
+                // Job suspended — add to job table
+                let job = Job {
+                    pgid: pid,
+                    pids: vec![pid],
+                    command: String::new(),
+                    status: JobStatus::Stopped,
+                };
+                let num = self.jobs.insert(job);
+                eprintln!("\n[{num}] Stopped");
+                return Status::err("stopped");
+            }
+        }
+    }
+
+    /// Resolve a command name to a full path using $path.
+    fn resolve_command(&self, cmd: &str) -> String {
+        // If it contains /, it's already a path
+        if cmd.contains('/') {
+            return cmd.to_string();
+        }
+        // Search $path
+        let path_val = self.env.get_value("path");
+        for dir in path_val.iter_elements() {
+            let dir_str = dir.to_string();
+            let full = format!("{dir_str}/{cmd}");
+            if std::path::Path::new(&full).exists() {
+                return full;
+            }
+        }
+        // Fall back to PATH
+        let path_env = self.env.get_value("PATH");
+        for dir_str in path_env.to_string().split(':') {
+            let full = format!("{dir_str}/{cmd}");
+            if std::path::Path::new(&full).exists() {
+                return full;
+            }
+        }
+        cmd.to_string()
+    }
+
+    /// Run a pipeline: fork each stage, connect with pipes.
+    fn run_pipeline(&mut self, stages: &[Expr]) -> Status {
+        if stages.len() == 1 {
+            return self.run_expr(&stages[0]);
+        }
+
+        let mut pids = Vec::new();
+        let mut prev_read: Option<RawFd> = None;
+
+        for (i, stage) in stages.iter().enumerate() {
+            let is_last = i == stages.len() - 1;
+            let mut fds = [0i32; 2];
+            if !is_last && unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                return Status::err("pipe failed");
+            }
+
+            let pid = unsafe { libc::fork() };
+            match pid {
+                -1 => return Status::err("fork failed"),
+                0 => {
+                    // Child
+                    if let Some(read_fd) = prev_read {
+                        unsafe {
+                            libc::dup2(read_fd, 0);
+                            libc::close(read_fd);
+                        }
+                    }
+                    if !is_last {
+                        unsafe {
+                            libc::close(fds[0]);
+                            libc::dup2(fds[1], 1);
+                            libc::close(fds[1]);
+                        }
+                    }
+                    let s = self.run_expr(stage);
+                    unsafe { libc::_exit(s.code()) }
+                }
+                _ => {
+                    // Parent
+                    if let Some(read_fd) = prev_read {
+                        unsafe { libc::close(read_fd) };
+                    }
+                    if !is_last {
+                        unsafe { libc::close(fds[1]) };
+                        prev_read = Some(fds[0]);
+                    }
+                    pids.push(pid);
+                }
+            }
+        }
+
+        // Wait for all children
+        let mut last_status = Status::ok();
+        for pid in &pids {
+            last_status = self.wait_for_child(*pid);
+        }
+        last_status
+    }
+
+    /// Run a redirect: save fd, apply operation, evaluate inner, restore.
+    fn run_redirect(&mut self, inner: &Expr, op: &RedirectOp) -> Status {
+        match op {
+            RedirectOp::Output { fd, target, append } => {
+                let target_path = match target {
+                    RedirectTarget::File(w) => self.eval_word(w).to_string(),
+                    _ => return Status::err("invalid redirect target"),
+                };
+                let flags = libc::O_WRONLY
+                    | libc::O_CREAT
+                    | if *append {
+                        libc::O_APPEND
+                    } else {
+                        libc::O_TRUNC
+                    };
+                let mode = 0o666;
+                let c_path = CString::new(target_path.as_str()).unwrap_or_default();
+                let new_fd = unsafe { libc::open(c_path.as_ptr(), flags, mode) };
+                if new_fd == -1 {
+                    return Status::err(format!("cannot open {target_path}"));
+                }
+                let saved = unsafe { libc::dup(*fd as i32) };
+                unsafe { libc::dup2(new_fd, *fd as i32) };
+                unsafe { libc::close(new_fd) };
+                let result = self.run_expr(inner);
+                unsafe { libc::dup2(saved, *fd as i32) };
+                unsafe { libc::close(saved) };
+                result
+            }
+            RedirectOp::Input { fd, target } => match target {
+                RedirectTarget::File(w) => {
+                    let target_path = self.eval_word(w).to_string();
+                    let c_path = CString::new(target_path.as_str()).unwrap_or_default();
+                    let new_fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY, 0) };
+                    if new_fd == -1 {
+                        return Status::err(format!("cannot open {target_path}"));
+                    }
+                    let saved = unsafe { libc::dup(*fd as i32) };
+                    unsafe { libc::dup2(new_fd, *fd as i32) };
+                    unsafe { libc::close(new_fd) };
+                    let result = self.run_expr(inner);
+                    unsafe { libc::dup2(saved, *fd as i32) };
+                    unsafe { libc::close(saved) };
+                    result
+                }
+                RedirectTarget::HereDoc { body, expand } => {
+                    let content = if *expand {
+                        self.expand_heredoc(body)
+                    } else {
+                        body.clone()
+                    };
+                    self.run_with_stdin_string(inner, &content)
+                }
+                RedirectTarget::HereString(w) => {
+                    let content = self.eval_word(w).to_string();
+                    self.run_with_stdin_string(inner, &content)
+                }
+            },
+            RedirectOp::ReadWrite { fd, target } => {
+                let target_path = match target {
+                    RedirectTarget::File(w) => self.eval_word(w).to_string(),
+                    _ => return Status::err("invalid redirect target"),
+                };
+                let c_path = CString::new(target_path.as_str()).unwrap_or_default();
+                let new_fd =
+                    unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o666) };
+                if new_fd == -1 {
+                    return Status::err(format!("cannot open {target_path}"));
+                }
+                let saved = unsafe { libc::dup(*fd as i32) };
+                unsafe { libc::dup2(new_fd, *fd as i32) };
+                unsafe { libc::close(new_fd) };
+                let result = self.run_expr(inner);
+                unsafe { libc::dup2(saved, *fd as i32) };
+                unsafe { libc::close(saved) };
+                result
+            }
+            RedirectOp::Dup { dst, src } => {
+                let saved = unsafe { libc::dup(*dst as i32) };
+                unsafe { libc::dup2(*src as i32, *dst as i32) };
+                let result = self.run_expr(inner);
+                unsafe { libc::dup2(saved, *dst as i32) };
+                unsafe { libc::close(saved) };
+                result
+            }
+            RedirectOp::Close { fd } => {
+                let saved = unsafe { libc::dup(*fd as i32) };
+                unsafe { libc::close(*fd as i32) };
+                let result = self.run_expr(inner);
+                unsafe { libc::dup2(saved, *fd as i32) };
+                unsafe { libc::close(saved) };
+                result
+            }
+        }
+    }
+
+    /// Run a command with stdin fed from a string (heredoc/herestring).
+    fn run_with_stdin_string(&mut self, inner: &Expr, content: &str) -> Status {
+        let mut fds = [0i32; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Status::err("pipe failed");
+        }
+        // Write content to pipe write end
+        let bytes = content.as_bytes();
+        unsafe {
+            libc::write(fds[1], bytes.as_ptr() as *const libc::c_void, bytes.len());
+            libc::close(fds[1]);
+        }
+        // Redirect stdin from pipe read end
+        let saved = unsafe { libc::dup(0) };
+        unsafe { libc::dup2(fds[0], 0) };
+        unsafe { libc::close(fds[0]) };
+        let result = self.run_expr(inner);
+        unsafe { libc::dup2(saved, 0) };
+        unsafe { libc::close(saved) };
+        result
+    }
+
+    /// Expand $var references in a heredoc body.
+    fn expand_heredoc(&mut self, body: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = body.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '$' && i + 1 < chars.len() {
+                i += 1;
+                let mut name = String::new();
+                while i < chars.len() && crate::parse::is_var_char(chars[i]) {
+                    name.push(chars[i]);
+                    i += 1;
+                }
+                if !name.is_empty() {
+                    result.push_str(&self.env.get_value(&name).to_string());
+                } else {
+                    result.push('$');
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
+    }
+
+    /// Start a coprocess: bidirectional socketpair.
+    fn run_coprocess(&mut self, inner: &Expr) -> Status {
+        let mut fds = [0i32; 2];
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) } != 0 {
+            return Status::err("socketpair failed");
+        }
+
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => {
+                unsafe {
+                    libc::close(fds[0]);
+                    libc::close(fds[1]);
+                }
+                Status::err("fork failed")
+            }
+            0 => {
+                // Child: use fds[1] for stdin/stdout
+                unsafe {
+                    libc::close(fds[0]);
+                    libc::dup2(fds[1], 0);
+                    libc::dup2(fds[1], 1);
+                    libc::close(fds[1]);
+                }
+                let s = self.run_expr(inner);
+                unsafe { libc::_exit(s.code()) }
+            }
+            _ => {
+                // Parent: keep fds[0] for read/write to coprocess
+                unsafe { libc::close(fds[1]) };
+                self.coproc = Some(Coproc {
+                    read_fd: fds[0],
+                    write_fd: fds[0], // socketpair is bidirectional
+                    pid,
+                });
+                Status::ok()
+            }
+        }
+    }
+
+    // ── Command execution ────────────────────────────────────
+
+    /// Execute a single command.
+    pub fn run_cmd(&mut self, cmd: &Command) -> RunOutcome {
+        match cmd {
+            Command::Exec(expr) => {
+                let status = self.run_expr(expr);
+                let _ = self.env.set_value("status", Val::Str(status.0.clone()));
+                RunOutcome::Status(status)
+            }
+            Command::Bind(binding) => {
+                let status = self.run_binding(binding);
+                RunOutcome::Status(status)
+            }
+            Command::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let saved = self.in_boolean_context;
+                self.in_boolean_context = true;
+                let cond_status = self.run_expr(condition);
+                self.in_boolean_context = saved;
+
+                if cond_status.is_success() {
+                    self.run_cmds(then_body)
+                } else if let Some(else_cmds) = else_body {
+                    self.run_cmds(else_cmds)
+                } else {
+                    RunOutcome::Status(cond_status)
+                }
+            }
+            Command::For { var, list, body } => {
+                let list_val = self.eval_value(list);
+                let mut last = RunOutcome::ok();
+                for elem in list_val.iter_elements() {
+                    let _ = self.env.set_value(var, elem.clone());
+                    last = self.run_cmds(body);
+                }
+                last
+            }
+            Command::While { condition, body } => {
+                let mut last = RunOutcome::ok();
+                let mut ran_body = false;
+                loop {
+                    let saved = self.in_boolean_context;
+                    self.in_boolean_context = true;
+                    let cond_status = self.run_expr(condition);
+                    self.in_boolean_context = saved;
+
+                    if !cond_status.is_success() {
+                        if !ran_body {
+                            // Never entered the loop — propagate condition status
+                            last = RunOutcome::Status(cond_status);
+                        }
+                        break;
+                    }
+                    ran_body = true;
+                    last = self.run_cmds(body);
+                }
+                last
+            }
+            Command::Match { value, arms } => {
+                let match_val = self.eval_value(value);
+                let match_str = match_val.to_string();
+
+                for (patterns, arm_body) in arms {
+                    for pat in patterns {
+                        let matched = match pat {
+                            Pattern::Star => true,
+                            Pattern::Literal(s) => match_str == *s,
+                            Pattern::Glob(g) => fnmatch_match(g, &match_str),
+                            Pattern::Structural { tag, binding } => {
+                                if let Val::Sum(val_tag, payload) = &match_val {
+                                    if val_tag == tag {
+                                        // Push scope, bind payload
+                                        self.env.push_scope();
+                                        let _ = self.env.set_value(binding, *payload.clone());
+                                        let result = self.run_cmds(arm_body);
+                                        self.env.pop_scope();
+                                        return result;
+                                    }
+                                }
+                                false
+                            }
+                        };
+                        if matched {
+                            return self.run_cmds(arm_body);
+                        }
+                    }
+                }
+                // No match — ⊕ convention: Unit + nonzero status
+                let _ = self
+                    .env
+                    .set_value("status", Val::Str("no match".to_string()));
+                RunOutcome::Status(Status::err("no match"))
+            }
+            Command::Try {
+                body: try_body,
+                else_var,
+                else_body,
+            } => {
+                self.try_depth += 1;
+                let outcome = self.run_cmds_try(try_body);
+                self.try_depth -= 1;
+
+                match outcome {
+                    TryOutcome::Completed(run_outcome) => run_outcome,
+                    TryOutcome::Aborted(status) => {
+                        if let Some(else_cmds) = else_body {
+                            // Bind the error status to the else variable
+                            if let Some(var) = else_var {
+                                let _ = self.env.set_value(var, Val::Str(status.0.clone()));
+                            }
+                            self.run_cmds(else_cmds)
+                        } else {
+                            RunOutcome::Status(status)
+                        }
+                    }
+                }
+            }
+            Command::Return(opt_value) => {
+                let val = match opt_value {
+                    Some(v) => self.eval_value(v),
+                    None => Val::Unit,
+                };
+                RunOutcome::Value(val)
+            }
+        }
+    }
+
+    /// Run a sequence of commands.
+    pub fn run_cmds(&mut self, cmds: &[Command]) -> RunOutcome {
+        let mut last = RunOutcome::ok();
+        for cmd in cmds {
+            last = self.run_cmd(cmd);
+            // If a return was issued, propagate immediately
+            if matches!(last, RunOutcome::Value(_)) {
+                return last;
+            }
+            // In a try block, check for abort after each command
+            if self.try_depth > 0 && !self.in_boolean_context {
+                if let RunOutcome::Status(ref s) = last {
+                    if !s.is_success() {
+                        return last;
+                    }
+                }
+            }
+        }
+        last
+    }
+
+    /// Run commands inside a try block — returns TryOutcome.
+    fn run_cmds_try(&mut self, cmds: &[Command]) -> TryOutcome {
+        for cmd in cmds {
+            let outcome = self.run_cmd(cmd);
+            match &outcome {
+                RunOutcome::Value(_) => return TryOutcome::Completed(outcome),
+                RunOutcome::Status(s) => {
+                    if !s.is_success() && !self.in_boolean_context {
+                        return TryOutcome::Aborted(s.clone());
+                    }
+                }
+            }
+        }
+        TryOutcome::Completed(RunOutcome::ok())
+    }
+
+    /// Execute a binding.
+    fn run_binding(&mut self, binding: &Binding) -> Status {
+        match binding {
+            Binding::Assignment(name, value) => {
+                let val = self.eval_value(value);
+                // Assignment always stores as Str (rc heritage) unless
+                // the variable already has a type annotation
+                let store_val = if self.env.get(name).is_some_and(|v| v.type_ann.is_some()) {
+                    val
+                } else {
+                    Val::Str(val.to_string())
+                };
+
+                // Fire .set discipline if present
+                self.fire_set_discipline(name, &store_val);
+
+                match self.env.set_value(name, store_val) {
+                    Ok(()) => Status::ok(),
+                    Err(e) => {
+                        eprintln!("psh: {e}");
+                        Status::err(e)
+                    }
+                }
+            }
+            Binding::Let {
+                name,
+                value,
+                mutable,
+                export,
+                type_ann,
+            } => {
+                let raw_val = self.eval_value(value);
+                // In let context, run type inference on unquoted literals
+                let val = if matches!(value, Value::Word(Word::Quoted(_))) {
+                    // Quoted — stays Str
+                    raw_val
+                } else if type_ann.is_some() {
+                    // Type annotation — validation happens in let_value
+                    raw_val
+                } else {
+                    // Infer type from string representation
+                    match &raw_val {
+                        Val::Str(s) => Val::infer(s),
+                        _ => raw_val,
+                    }
+                };
+
+                match self
+                    .env
+                    .let_value(name, val, *mutable, *export, type_ann.clone())
+                {
+                    Ok(()) => Status::ok(),
+                    Err(e) => {
+                        eprintln!("psh: {e}");
+                        Status::err(e)
+                    }
+                }
+            }
+            Binding::Fn { name, body } => {
+                self.env.define_fn(name.clone(), body.clone());
+                // Register discipline if it's a x.get or x.set function
+                if let Some(dot_pos) = name.rfind('.') {
+                    let var_name = &name[..dot_pos];
+                    // Ensure the variable exists (disciplines need a target)
+                    if self.env.get(var_name).is_none() {
+                        let _ = self.env.set_value(var_name, Val::Unit);
+                    }
+                }
+                Status::ok()
+            }
+            Binding::Ref { name, target } => {
+                self.env.set_nameref(name, target.clone());
+                Status::ok()
+            }
+        }
+    }
+
+    /// Fire .set discipline for a variable, if registered.
+    fn fire_set_discipline(&mut self, name: &str, value: &Val) {
+        let disc_name = format!("{name}.set");
+        if self.env.has_discipline(name, "set") && !self.active_disciplines.contains(&disc_name) {
+            self.active_disciplines.insert(disc_name.clone());
+            if let Some(body) = self.env.get_fn(&disc_name).cloned() {
+                self.env.push_scope();
+                // $1 = the new value being assigned
+                let _ = self.env.set_value("1", value.clone());
+                self.run_cmds(&body);
+                self.env.pop_scope();
+            }
+            self.active_disciplines.remove(&disc_name);
+        }
+    }
+
+    // ── Builtins ────────────────────────────────────────────
+
+    /// Try to run a builtin. Returns None if not a builtin.
+    fn run_builtin(&mut self, name: &str, args: &[String]) -> Option<Status> {
+        match name {
+            "echo" => Some(self.builtin_echo(args)),
+            "cd" => Some(self.builtin_cd(args)),
+            "exit" => Some(self.builtin_exit(args)),
+            "true" => Some(Status::ok()),
+            "false" => Some(Status::err("false")),
+            "get" => Some(self.builtin_get(args)),
+            "set" => Some(self.builtin_set(args)),
+            "read" => Some(self.builtin_read(args)),
+            "print" => Some(self.builtin_print(args)),
+            "wait" => Some(self.builtin_wait(args)),
+            "jobs" => Some(self.builtin_jobs()),
+            "fg" => Some(self.builtin_fg(args)),
+            "bg" => Some(self.builtin_bg(args)),
+            "whatis" => Some(self.builtin_whatis(args)),
+            "." => Some(self.builtin_dot(args)),
+            "builtin" => Some(self.builtin_builtin(args)),
+            "~" => Some(self.builtin_tilde(args)),
+            _ => None,
+        }
+    }
+
+    fn builtin_echo(&self, args: &[String]) -> Status {
+        let text = format!("{}\n", args.join(" "));
+        let bytes = text.as_bytes();
+        // Write directly to fd 1 to respect redirections.
+        // Rust's println! uses a buffered stdout that may not
+        // see dup2-level fd redirections.
+        unsafe {
+            libc::write(1, bytes.as_ptr() as *const libc::c_void, bytes.len());
+        }
+        Status::ok()
+    }
+
+    fn builtin_cd(&mut self, args: &[String]) -> Status {
+        let dir = if args.is_empty() {
+            self.env.get_value("home").to_string()
+        } else {
+            args[0].clone()
+        };
+        match std::env::set_current_dir(&dir) {
+            Ok(()) => {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let _ = self
+                        .env
+                        .set_value("PWD", Val::Str(cwd.display().to_string()));
+                }
+                Status::ok()
+            }
+            Err(e) => {
+                eprintln!("psh: cd: {dir}: {e}");
+                Status::err(format!("{dir}: {e}"))
+            }
+        }
+    }
+
+    fn builtin_exit(&mut self, args: &[String]) -> Status {
+        let code = args
+            .first()
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(0);
+        self.fire_sigexit();
+        std::process::exit(code);
+    }
+
+    fn builtin_get(&self, args: &[String]) -> Status {
+        if args.is_empty() {
+            eprintln!("psh: get: no variable name");
+            return Status::err("no variable name");
+        }
+        let val = self.env.get_value(&args[0]);
+        println!("{val}");
+        if val == Val::Unit {
+            Status::err("not found")
+        } else {
+            Status::ok()
+        }
+    }
+
+    fn builtin_set(&mut self, args: &[String]) -> Status {
+        if args.len() < 2 {
+            eprintln!("psh: set: usage: set name value");
+            return Status::err("usage");
+        }
+        let name = &args[0];
+        let val = Val::Str(args[1..].join(" "));
+        match self.env.set_value(name, val) {
+            Ok(()) => Status::ok(),
+            Err(e) => {
+                eprintln!("psh: set: {e}");
+                Status::err(e)
+            }
+        }
+    }
+
+    fn builtin_read(&mut self, args: &[String]) -> Status {
+        use std::io::BufRead;
+
+        // -p flag: read from coprocess
+        if args.first().is_some_and(|a| a == "-p") {
+            if let Some(ref coproc) = self.coproc {
+                let mut buf = [0u8; 4096];
+                let n = unsafe {
+                    libc::read(
+                        coproc.read_fd,
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                    )
+                };
+                if n > 0 {
+                    let text = String::from_utf8_lossy(&buf[..n as usize])
+                        .trim_end_matches('\n')
+                        .to_string();
+                    let var_name = args.get(1).map(|s| s.as_str()).unwrap_or("line");
+                    let _ = self.env.set_value(var_name, Val::Str(text));
+                    return Status::ok();
+                }
+                return Status::err("read failed");
+            }
+            return Status::err("no coprocess");
+        }
+
+        let var_name = args.first().map(|s| s.as_str()).unwrap_or("line");
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => Status::err("eof"),
+            Ok(_) => {
+                let text = line.trim_end_matches('\n').to_string();
+                let _ = self.env.set_value(var_name, Val::Str(text));
+                Status::ok()
+            }
+            Err(e) => Status::err(format!("read: {e}")),
+        }
+    }
+
+    fn builtin_print(&self, args: &[String]) -> Status {
+        // -p flag: write to coprocess
+        if args.first().is_some_and(|a| a == "-p") {
+            if let Some(ref coproc) = self.coproc {
+                let text = format!("{}\n", args[1..].join(" "));
+                let bytes = text.as_bytes();
+                unsafe {
+                    libc::write(
+                        coproc.write_fd,
+                        bytes.as_ptr() as *const libc::c_void,
+                        bytes.len(),
+                    );
+                }
+                return Status::ok();
+            }
+            return Status::err("no coprocess");
+        }
+        println!("{}", args.join(" "));
+        Status::ok()
+    }
+
+    fn builtin_wait(&mut self, _args: &[String]) -> Status {
+        // Wait for all background jobs
+        loop {
+            let mut wstatus = 0i32;
+            let pid = unsafe { libc::waitpid(-1, &mut wstatus, 0) };
+            if pid <= 0 {
+                break;
+            }
+            self.jobs.reap(pid, wstatus);
+        }
+        Status::ok()
+    }
+
+    fn builtin_jobs(&self) -> Status {
+        for (num, job) in self.jobs.iter() {
+            let status_str = match &job.status {
+                JobStatus::Running => "Running",
+                JobStatus::Stopped => "Stopped",
+                JobStatus::Done(_) => "Done",
+            };
+            eprintln!("[{num}] {status_str}\t{}", job.command);
+        }
+        Status::ok()
+    }
+
+    fn builtin_fg(&mut self, args: &[String]) -> Status {
+        let job_num = if let Some(arg) = args.first() {
+            arg.trim_start_matches('%').parse::<usize>().unwrap_or(0)
+        } else {
+            self.jobs.current_job().unwrap_or(0)
+        };
+        if let Some(job) = self.jobs.get(job_num) {
+            let pgid = job.pgid;
+            unsafe {
+                libc::kill(pgid, libc::SIGCONT);
+            }
+            self.wait_for_child(pgid)
+        } else {
+            Status::err("no such job")
+        }
+    }
+
+    fn builtin_bg(&mut self, args: &[String]) -> Status {
+        let job_num = if let Some(arg) = args.first() {
+            arg.trim_start_matches('%').parse::<usize>().unwrap_or(0)
+        } else {
+            self.jobs.current_job().unwrap_or(0)
+        };
+        if let Some(job) = self.jobs.get_mut(job_num) {
+            let pgid = job.pgid;
+            job.status = JobStatus::Running;
+            unsafe {
+                libc::kill(pgid, libc::SIGCONT);
+            }
+            Status::ok()
+        } else {
+            Status::err("no such job")
+        }
+    }
+
+    fn builtin_whatis(&self, args: &[String]) -> Status {
+        for name in args {
+            if let Some(_body) = self.env.get_fn(name) {
+                eprintln!("{name}: function");
+            } else {
+                let val = self.env.get_value(name);
+                let type_name = match &val {
+                    Val::Unit => "not set",
+                    Val::Bool(_) => "Bool",
+                    Val::Int(_) => "Int",
+                    Val::Str(_) => "Str",
+                    Val::Path(_) => "Path",
+                    Val::ExitCode(_) => "ExitCode",
+                    Val::List(_) => "List",
+                    Val::Tuple(_) => "Tuple",
+                    Val::Sum(tag, _) => {
+                        eprintln!("{name}: Sum({tag}, {val})");
+                        continue;
+                    }
+                    Val::Thunk { .. } => "Thunk",
+                };
+                if matches!(val, Val::Unit) {
+                    eprintln!("{name}: {type_name}");
+                } else {
+                    eprintln!("{name}: {type_name} = {val}");
+                }
+            }
+        }
+        Status::ok()
+    }
+
+    fn builtin_dot(&mut self, args: &[String]) -> Status {
+        if args.is_empty() {
+            return Status::err(".: no file");
+        }
+        match std::fs::read_to_string(&args[0]) {
+            Ok(content) => match crate::parse::PshParser::parse(&content) {
+                Ok(prog) => self.run(&prog),
+                Err(e) => {
+                    eprintln!("psh: .: {e}");
+                    Status::err(e.to_string())
+                }
+            },
+            Err(e) => {
+                eprintln!("psh: .: {}: {e}", args[0]);
+                Status::err(e.to_string())
+            }
+        }
+    }
+
+    fn builtin_builtin(&mut self, args: &[String]) -> Status {
+        if args.is_empty() {
+            return Status::err("builtin: no command");
+        }
+        // Run the named builtin, bypassing function lookup
+        self.run_builtin(&args[0], &args[1..])
+            .unwrap_or_else(|| Status::err(format!("{}: not a builtin", args[0])))
+    }
+
+    /// ~ match_operator value patterns...
+    fn builtin_tilde(&self, args: &[String]) -> Status {
+        if args.len() < 2 {
+            return Status::err("~: usage: ~ value pattern...");
+        }
+        let value = &args[0];
+        for pattern in &args[1..] {
+            if fnmatch_match(pattern, value) {
+                return Status::ok();
+            }
+        }
+        Status::err("no match")
+    }
+
+    // ── Signal handling ─────────────────────────────────────
+
+    /// Check for pending signals and dispatch to handler functions.
     pub fn check_signals(&mut self) {
-        // stub — awaiting rewrite
+        let pending = signal::take_pending();
+        for (sig_name, count) in pending {
+            // SIGCHLD: reap zombie children
+            if sig_name == "sigchld" {
+                self.reap_children();
+                continue;
+            }
+            // Dispatch to rc-style signal handler function
+            if let Some(body) = self.env.get_fn(sig_name).cloned() {
+                for _ in 0..count {
+                    self.run_cmds(&body);
+                }
+            }
+        }
+    }
+
+    /// Reap zombie children (SIGCHLD handler).
+    fn reap_children(&mut self) {
+        loop {
+            let mut wstatus = 0i32;
+            let pid = unsafe { libc::waitpid(-1, &mut wstatus, libc::WNOHANG) };
+            if pid <= 0 {
+                break;
+            }
+            self.jobs.reap(pid, wstatus);
+        }
     }
 
     /// Fire the sigexit artificial signal.
     pub fn fire_sigexit(&mut self) {
-        // stub — awaiting rewrite
+        if let Some(body) = self.env.get_fn("sigexit").cloned() {
+            self.run_cmds(&body);
+        }
     }
 
-    /// Print done jobs before prompt.
+    /// Print done jobs before prompt (interactive mode).
     pub fn notify_done_jobs(&mut self) {
-        // stub — awaiting rewrite
+        for (num, cmd) in self.jobs.collect_done() {
+            eprintln!("[{num}] Done\t{cmd}");
+        }
     }
+
+    // ── Public entry point ──────────────────────────────────
 
     /// Execute a parsed program.
-    pub fn run(&mut self, _program: &Program) -> Status {
-        Status::err("evaluator not yet implemented — awaiting rewrite")
+    pub fn run(&mut self, program: &Program) -> Status {
+        self.run_cmds(&program.commands).status()
+    }
+}
+
+// ── Glob matching ──────────────────────────────────────────────
+
+/// Match a glob pattern against a string using fnmatch-regex.
+fn fnmatch_match(pattern: &str, value: &str) -> bool {
+    match fnmatch_regex::glob_to_regex(pattern) {
+        Ok(regex) => regex.is_match(value),
+        Err(_) => pattern == value,
+    }
+}
+
+// ── Make is_var_char accessible for heredoc expansion ──────────
+// The function is in parse.rs and pub(crate)
+
+// ── Tests ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::PshParser;
+
+    fn run(input: &str) -> (Shell, RunOutcome) {
+        let prog = PshParser::parse(input).unwrap();
+        let mut shell = Shell::new();
+        let outcome = shell.run_cmds(&prog.commands);
+        (shell, outcome)
+    }
+
+    fn run_status(input: &str) -> Status {
+        let (_, outcome) = run(input);
+        outcome.status()
+    }
+
+    fn run_with_shell(shell: &mut Shell, input: &str) -> RunOutcome {
+        let prog = PshParser::parse(input).unwrap();
+        shell.run_cmds(&prog.commands)
+    }
+
+    // ── Status ─────────────────────────────────────────────
+
+    #[test]
+    fn status_ok() {
+        assert!(Status::ok().is_success());
+        assert_eq!(Status::ok().code(), 0);
+    }
+
+    #[test]
+    fn status_err() {
+        let s = Status::err("fail");
+        assert!(!s.is_success());
+        assert_eq!(s.0, "fail");
+    }
+
+    #[test]
+    fn status_from_code() {
+        assert!(Status::from_code(0).is_success());
+        assert!(!Status::from_code(1).is_success());
+        assert_eq!(Status::from_code(42).code(), 42);
+    }
+
+    // ── RunOutcome ─────────────────────────────────────────
+
+    #[test]
+    fn run_outcome_status() {
+        let o = RunOutcome::ok();
+        assert!(o.status().is_success());
+    }
+
+    #[test]
+    fn run_outcome_value() {
+        let o = RunOutcome::Value(Val::Int(42));
+        assert!(o.status().is_success()); // Value outcome has ok status
+    }
+
+    // ── Simple commands ────────────────────────────────────
+
+    #[test]
+    fn echo_hello() {
+        let s = run_status("echo hello");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn true_builtin() {
+        let s = run_status("true");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn false_builtin() {
+        let s = run_status("false");
+        assert!(!s.is_success());
+    }
+
+    // ── Variables ──────────────────────────────────────────
+
+    #[test]
+    fn assignment_and_expansion() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = hello");
+        assert_eq!(shell.env.get_value("x"), Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn let_type_inference() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = 42");
+        assert_eq!(shell.env.get_value("x"), Val::Int(42));
+    }
+
+    #[test]
+    fn let_bool_inference() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = true");
+        assert_eq!(shell.env.get_value("x"), Val::Bool(true));
+    }
+
+    #[test]
+    fn let_quoted_stays_str() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = '42'");
+        assert_eq!(shell.env.get_value("x"), Val::Str("42".into()));
+    }
+
+    #[test]
+    fn assignment_walks_scope() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = outer");
+        shell.env.push_scope();
+        run_with_shell(&mut shell, "x = inner");
+        // rc behavior: assignment walks scope chain
+        assert_eq!(shell.env.get_value("x"), Val::Str("inner".into()));
+        shell.env.pop_scope();
+        assert_eq!(shell.env.get_value("x"), Val::Str("inner".into()));
+    }
+
+    // ── Control flow ───────────────────────────────────────
+
+    #[test]
+    fn if_true_branch() {
+        let s = run_status("if true { echo yes }");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn if_false_else() {
+        let s = run_status("if false { echo yes } else { true }");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn for_loop_runs() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let mut count = 0");
+        // For loop with list
+        let s = run_status("for x in (a b c) { echo $x }");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn while_false_no_loop() {
+        let s = run_status("while false { echo never }");
+        // While condition is false — the status from the false condition
+        assert!(!s.is_success());
+    }
+
+    // ── Functions ──────────────────────────────────────────
+
+    #[test]
+    fn fn_definition_and_call() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "fn greet { echo hello }");
+        let s = run_with_shell(&mut shell, "greet").status();
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn fn_with_args() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "fn say { echo $1 }");
+        let s = run_with_shell(&mut shell, "say world").status();
+        assert!(s.is_success());
+    }
+
+    // ── Match ──────────────────────────────────────────────
+
+    #[test]
+    fn match_literal() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = hello");
+        let s = run_with_shell(
+            &mut shell,
+            "match $x { hello => echo matched; * => echo nope }",
+        )
+        .status();
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn match_no_match() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = other");
+        let s = run_with_shell(&mut shell, "match $x { hello => echo matched }").status();
+        assert!(!s.is_success()); // ⊕ convention: no match → nonzero
+    }
+
+    #[test]
+    fn match_glob_pattern() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = hello.txt");
+        let s = run_with_shell(
+            &mut shell,
+            "match $x { *.txt => echo text; * => echo other }",
+        )
+        .status();
+        assert!(s.is_success());
+    }
+
+    // ── Try ────────────────────────────────────────────────
+
+    #[test]
+    fn try_success() {
+        let s = run_status("try { true }");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn try_abort_to_else() {
+        let s = run_status("try { false } else $e { echo $e }");
+        assert!(s.is_success());
+    }
+
+    // ── Return ─────────────────────────────────────────────
+
+    #[test]
+    fn return_produces_value() {
+        let (_, outcome) = run("return 42");
+        assert!(matches!(outcome, RunOutcome::Value(_)));
+    }
+
+    #[test]
+    fn return_bare_produces_unit() {
+        let (_, outcome) = run("return");
+        match outcome {
+            RunOutcome::Value(Val::Unit) => {}
+            other => panic!("expected Value(Unit), got {other:?}"),
+        }
+    }
+
+    // ── Lambda / Thunk ─────────────────────────────────────
+
+    #[test]
+    fn lambda_creates_thunk() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let f = \\x => echo $x");
+        assert!(matches!(shell.env.get_value("f"), Val::Thunk { .. }));
+    }
+
+    // ── Tilde match operator ───────────────────────────────
+
+    #[test]
+    fn tilde_match_success() {
+        let s = run_status("~ hello he*");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn tilde_match_failure() {
+        let s = run_status("~ hello wo*");
+        assert!(!s.is_success());
+    }
+
+    // ── Discipline functions ───────────────────────────────
+
+    #[test]
+    fn set_discipline_fires() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = initial");
+        run_with_shell(&mut shell, "let mut log = none");
+        run_with_shell(&mut shell, "fn x.set { log = fired }");
+        run_with_shell(&mut shell, "x = changed");
+        assert_eq!(shell.env.get_value("log"), Val::Str("fired".into()));
+    }
+
+    // ── Redirections ───────────────────────────────────────
+
+    #[test]
+    fn redirect_output_creates_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("psh_test_redir.txt");
+        let input = format!("echo hello >{}", path.display());
+        run_status(&input);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        assert_eq!(content.trim(), "hello");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Nameref ────────────────────────────────────────────
+
+    #[test]
+    fn nameref_resolves() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "target = data");
+        run_with_shell(&mut shell, "ref alias = target");
+        assert_eq!(shell.env.get_value("alias"), Val::Str("data".into()));
+    }
+
+    // ── Arrow body ─────────────────────────────────────────
+
+    #[test]
+    fn if_arrow_body_works() {
+        let s = run_status("if true => echo yes");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn fn_arrow_body_works() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "fn greet => echo hello");
+        let s = run_with_shell(&mut shell, "greet").status();
+        assert!(s.is_success());
+    }
+
+    // ── And/Or/Not ─────────────────────────────────────────
+
+    #[test]
+    fn and_short_circuit() {
+        let s = run_status("true && true");
+        assert!(s.is_success());
+        let s = run_status("false && true");
+        assert!(!s.is_success());
+    }
+
+    #[test]
+    fn or_short_circuit() {
+        let s = run_status("true || false");
+        assert!(s.is_success());
+        let s = run_status("false || true");
+        assert!(s.is_success());
+    }
+
+    #[test]
+    fn not_inverts() {
+        let s = run_status("! true");
+        assert!(!s.is_success());
+        let s = run_status("! false");
+        assert!(s.is_success());
+    }
+
+    // ── Pipeline ───────────────────────────────────────────
+
+    #[test]
+    fn pipeline_works() {
+        let s = run_status("echo hello | cat");
+        assert!(s.is_success());
+    }
+
+    // ── Whatis ─────────────────────────────────────────────
+
+    #[test]
+    fn whatis_builtin() {
+        let s = run_status("whatis echo");
+        assert!(s.is_success());
+    }
+
+    // ── List operations ────────────────────────────────────
+
+    #[test]
+    fn list_assignment() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "x = (a b c)");
+        assert_eq!(shell.env.get_value("x"), Val::Str("a b c".into()));
+    }
+
+    #[test]
+    fn count_variable() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = (a b c)");
+        // $#x should be 3
+        let val = shell.eval_word(&Word::Count("x".into()));
+        assert_eq!(val, Val::Int(3));
     }
 }

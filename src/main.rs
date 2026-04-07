@@ -15,7 +15,7 @@ use std::io::{self, BufRead, Write};
 
 use bpaf::Bpaf;
 
-use crate::{exec::Shell, parse::Parser};
+use crate::{exec::Shell, parse::PshParser};
 
 /// The pane system shell.
 #[derive(Debug, Clone, Bpaf)]
@@ -37,7 +37,7 @@ fn main() {
     if let Some(cmd) = opts.command {
         // psh -c 'command'
         signal::install_handlers();
-        match Parser::parse(&cmd) {
+        match PshParser::parse(&cmd) {
             Ok(prog) => {
                 let status = shell.run(&prog);
                 shell.check_signals();
@@ -55,7 +55,7 @@ fn main() {
         // psh file.psh
         signal::install_handlers();
         match std::fs::read_to_string(&file) {
-            Ok(content) => match Parser::parse(&content) {
+            Ok(content) => match PshParser::parse(&content) {
                 Ok(prog) => {
                     let status = shell.run(&prog);
                     shell.check_signals();
@@ -95,7 +95,7 @@ fn main() {
                         shell.check_signals();
                         continue;
                     }
-                    match Parser::parse(&line) {
+                    match PshParser::parse(&line) {
                         Ok(prog) => {
                             shell.run(&prog);
                         }

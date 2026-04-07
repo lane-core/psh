@@ -3,8 +3,9 @@
 //! psh's value model: a typed enum extending rc's list-of-strings
 //! heritage with discriminated types. Seven atoms (Unit, Bool, Int,
 //! Str, Path, ExitCode, List), one product constructor (Tuple),
-//! one coproduct constructor (Sum). Products give users Lenses.
-//! Coproducts give users Prisms.
+//! one coproduct constructor (Sum), one thunk constructor (Thunk).
+//! Products give users Lenses. Coproducts give users Prisms.
+//! Thunks are optic leaves (atomic, like ExitCode).
 //!
 //! rc heritage: lists are first-class, concat is pairwise/broadcast,
 //! truth is non-emptiness. The typed model adds inference in let
@@ -13,11 +14,14 @@
 
 use std::{fmt, path::PathBuf};
 
+use crate::ast::Command;
+
 /// A psh value — typed, with rc-heritage list semantics.
 ///
 /// Seven atoms: Unit (empty/false), Bool, Int, Str, Path,
 /// ExitCode (reified computation outcome), List.
-/// Two constructors: Tuple (product, Lens), Sum (coproduct, Prism).
+/// Three constructors: Tuple (product, Lens), Sum (coproduct, Prism),
+/// Thunk (suspended computation, CBPV's U(A → F(B))).
 ///
 /// rc compatibility: bare assignment (`x = val`) stays Str-valued;
 /// `let` bindings run type inference via `Val::infer`.
@@ -45,6 +49,20 @@ pub enum Val {
     /// Coproduct type — tag + payload. Construction: `tag payload`.
     /// Display shows payload only (tag stripped).
     Sum(String, Box<Val>),
+    /// Suspended computation — CBPV's U(A → F(B)). Named params,
+    /// capture-by-value for free variables. At lambda construction
+    /// time, free $var references (minus params) are snapshotted
+    /// from the current scope. At force time, captures are restored
+    /// into the scope before running the body. Named functions
+    /// (`fn name { body }`) do NOT capture — they use dynamic
+    /// resolution with positional params. Capture is lambda-only.
+    /// PartialEq is structural (same params + same body + same
+    /// captures = equal).
+    Thunk {
+        params: Vec<String>,
+        body: Vec<Command>,
+        captures: Vec<(String, Val)>,
+    },
 }
 
 impl Val {
@@ -87,6 +105,7 @@ impl Val {
             Val::List(v) => !v.is_empty(),
             Val::Tuple(_) => true,
             Val::Sum(_, _) => true,
+            Val::Thunk { .. } => true,
         }
     }
 
@@ -97,7 +116,6 @@ impl Val {
             Val::Unit => 0,
             Val::List(v) => v.len(),
             Val::Tuple(v) => v.len(),
-            Val::Sum(_, _) => 1,
             _ => 1,
         }
     }
@@ -197,9 +215,7 @@ impl Val {
     pub fn to_args(&self) -> Vec<String> {
         match self {
             Val::Unit => vec![],
-            Val::List(v) => v.iter().map(|val| val.to_string()).collect(),
-            Val::Tuple(v) => v.iter().map(|val| val.to_string()).collect(),
-            // Sum displays payload only (tag stripped)
+            Val::List(v) | Val::Tuple(v) => v.iter().map(|val| val.to_string()).collect(),
             Val::Sum(_, payload) => vec![payload.to_string()],
             other => vec![other.to_string()],
         }
@@ -256,7 +272,7 @@ impl Val {
     }
 
     /// Iterate over elements — for List, yields each element;
-    /// for Tuple, yields each element; for Sum, yields self;
+    /// for Tuple, yields each element; for Sum/Thunk, yields self;
     /// for scalars, yields self; for Unit, yields nothing.
     /// Used by for-loops and argument expansion.
     pub fn iter_elements(&self) -> ValIter<'_> {
@@ -309,6 +325,11 @@ impl fmt::Display for Val {
             }
             // Sum displays payload only — tag is control-flow metadata
             Val::Sum(_, payload) => write!(f, "{payload}"),
+            // Thunk display is diagnostic, not round-trippable
+            Val::Thunk { params, .. } => {
+                write!(f, "fn({})", params.join(" "))?;
+                write!(f, "{{...}}")
+            }
         }
     }
 }
@@ -569,10 +590,7 @@ mod tests {
     #[test]
     fn concat_sum_coerces_payload_only() {
         let s = Val::Sum("ok".into(), Box::new(Val::Int(42)));
-        assert_eq!(
-            s.concat(&Val::Str("!".into())),
-            Val::Str("42!".into())
-        );
+        assert_eq!(s.concat(&Val::Str("!".into())), Val::Str("42!".into()));
     }
 
     // ── Inference ───────────────────────────────────────────
@@ -772,10 +790,7 @@ mod tests {
         assert_eq!(Val::Int(42).as_str(), "");
         assert_eq!(Val::ExitCode(0).as_str(), "");
         assert_eq!(Val::Tuple(vec![Val::Int(1), Val::Int(2)]).as_str(), "");
-        assert_eq!(
-            Val::Sum("ok".into(), Box::new(Val::Int(42))).as_str(),
-            ""
-        );
+        assert_eq!(Val::Sum("ok".into(), Box::new(Val::Int(42))).as_str(), "");
     }
 
     // ── to_string_vec ───────────────────────────────────────
@@ -788,9 +803,6 @@ mod tests {
 
         let tuple = Val::Tuple(vec![Val::scalar("a"), Val::scalar("b")]);
         // Tuple flattens to multiple strings in to_string_vec
-        assert_eq!(
-            tuple.concat(&Val::scalar("!")),
-            Val::list(["a!", "b!"])
-        );
+        assert_eq!(tuple.concat(&Val::scalar("!")), Val::list(["a!", "b!"]));
     }
 }
