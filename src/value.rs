@@ -1,8 +1,10 @@
 //! Runtime values for psh.
 //!
 //! psh's value model: a typed enum extending rc's list-of-strings
-//! heritage with discriminated types. Scalars are Unit, Bool, Int,
-//! Str, or Path. Lists are heterogeneous Vec<Val>.
+//! heritage with discriminated types. Seven atoms (Unit, Bool, Int,
+//! Str, Path, ExitCode, List), one product constructor (Tuple),
+//! one coproduct constructor (Sum). Products give users Lenses.
+//! Coproducts give users Prisms.
 //!
 //! rc heritage: lists are first-class, concat is pairwise/broadcast,
 //! truth is non-emptiness. The typed model adds inference in let
@@ -13,8 +15,9 @@ use std::{fmt, path::PathBuf};
 
 /// A psh value — typed, with rc-heritage list semantics.
 ///
-/// Scalars: Unit (empty/false), Bool, Int, Str, Path.
-/// Compound: List (heterogeneous, ordered).
+/// Seven atoms: Unit (empty/false), Bool, Int, Str, Path,
+/// ExitCode (reified computation outcome), List.
+/// Two constructors: Tuple (product, Lens), Sum (coproduct, Prism).
 ///
 /// rc compatibility: bare assignment (`x = val`) stays Str-valued;
 /// `let` bindings run type inference via `Val::infer`.
@@ -30,8 +33,18 @@ pub enum Val {
     Str(String),
     /// Filesystem path.
     Path(PathBuf),
+    /// Reified computation outcome (i32). Distinct from Int —
+    /// ExitCode(0) is true (success), not false (zero).
+    /// Enters Val only through `try`. Never produced by infer().
+    ExitCode(i32),
     /// Heterogeneous list.
     List(Vec<Val>),
+    /// Product type — comma-separated construction: `(42, 7)`.
+    /// Always ≥2 elements by construction. 0-based indexing.
+    Tuple(Vec<Val>),
+    /// Coproduct type — tag + payload. Construction: `tag payload`.
+    /// Display shows payload only (tag stripped).
+    Sum(String, Box<Val>),
 }
 
 impl Val {
@@ -56,6 +69,13 @@ impl Val {
     }
 
     /// Is this value true? Non-empty and non-zero/non-false = true.
+    ///
+    /// ExitCode truthiness inverts Int: ExitCode(0) = true (success),
+    /// ExitCode(n≠0) = false (failure). These are different sorts —
+    /// ExitCode is a reified computation outcome, Int is data.
+    ///
+    /// Tuple is always true (≥2 elements by construction).
+    /// Sum is always true (has tag + payload).
     pub fn is_true(&self) -> bool {
         match self {
             Val::Unit => false,
@@ -63,24 +83,37 @@ impl Val {
             Val::Int(n) => *n != 0,
             Val::Str(s) => !s.is_empty(),
             Val::Path(p) => !p.as_os_str().is_empty(),
+            Val::ExitCode(code) => *code == 0,
             Val::List(v) => !v.is_empty(),
+            Val::Tuple(_) => true,
+            Val::Sum(_, _) => true,
         }
     }
 
     /// Number of elements. Scalars return 1 (Unit returns 0).
+    /// Tuple returns its element count. Sum returns 1 (one tagged value).
     pub fn count(&self) -> usize {
         match self {
             Val::Unit => 0,
             Val::List(v) => v.len(),
+            Val::Tuple(v) => v.len(),
+            Val::Sum(_, _) => 1,
             _ => 1,
         }
     }
 
     /// Index (1-based, rc convention). Returns Unit on out-of-bounds.
-    /// Scalars self-index at 1.
+    /// Scalars self-index at 1. Tuple uses 0-based indexing — use
+    /// `tuple_index` for structural projection.
     pub fn index(&self, i: usize) -> Val {
         match self {
             Val::List(v) => match v.get(i.wrapping_sub(1)) {
+                Some(val) => val.clone(),
+                None => Val::Unit,
+            },
+            // Tuple uses 1-based indexing in this method for consistency
+            // with rc's $x(n) syntax. Accessor .0/.1 uses tuple_index().
+            Val::Tuple(v) => match v.get(i.wrapping_sub(1)) {
                 Some(val) => val.clone(),
                 None => Val::Unit,
             },
@@ -94,6 +127,15 @@ impl Val {
         }
     }
 
+    /// 0-based tuple projection — structural access via .0, .1 etc.
+    /// Returns Unit on out-of-bounds or non-Tuple values.
+    pub fn tuple_index(&self, i: usize) -> Val {
+        match self {
+            Val::Tuple(v) => v.get(i).cloned().unwrap_or(Val::Unit),
+            _ => Val::Unit,
+        }
+    }
+
     /// As a single string (for contexts expecting a scalar).
     pub fn as_str(&self) -> &str {
         match self {
@@ -101,7 +143,7 @@ impl Val {
             Val::Bool(true) => "true",
             Val::Bool(false) => "false",
             Val::Str(s) => s.as_str(),
-            // Int and Path can't return &str — use to_string()
+            // Int, Path, ExitCode, Tuple, Sum can't return &str — use to_string()
             _ => "",
         }
     }
@@ -156,6 +198,9 @@ impl Val {
         match self {
             Val::Unit => vec![],
             Val::List(v) => v.iter().map(|val| val.to_string()).collect(),
+            Val::Tuple(v) => v.iter().map(|val| val.to_string()).collect(),
+            // Sum displays payload only (tag stripped)
+            Val::Sum(_, payload) => vec![payload.to_string()],
             other => vec![other.to_string()],
         }
     }
@@ -165,6 +210,9 @@ impl Val {
     /// "true"/"false" → Bool, parseable as i64 (no leading zeros
     /// except "0") → Int, starts with /, ./, ../, ~/ → Path,
     /// everything else → Str.
+    ///
+    /// ExitCode is NEVER inferred — it enters Val only through `try`.
+    /// Tuple and Sum are not literal-constructible via infer().
     pub fn infer(s: &str) -> Val {
         match s {
             "true" => return Val::Bool(true),
@@ -202,17 +250,19 @@ impl Val {
         match self {
             Val::Unit => vec![],
             Val::List(v) => v.iter().map(|val| val.to_string()).collect(),
+            Val::Tuple(v) => v.iter().map(|val| val.to_string()).collect(),
             other => vec![other.to_string()],
         }
     }
 
     /// Iterate over elements — for List, yields each element;
+    /// for Tuple, yields each element; for Sum, yields self;
     /// for scalars, yields self; for Unit, yields nothing.
     /// Used by for-loops and argument expansion.
     pub fn iter_elements(&self) -> ValIter<'_> {
         match self {
             Val::Unit => ValIter::Empty,
-            Val::List(v) => ValIter::List(v.iter()),
+            Val::List(v) | Val::Tuple(v) => ValIter::List(v.iter()),
             _ => ValIter::Scalar(Some(self)),
         }
     }
@@ -245,7 +295,8 @@ impl fmt::Display for Val {
             Val::Int(n) => write!(f, "{n}"),
             Val::Str(s) => write!(f, "{s}"),
             Val::Path(p) => write!(f, "{}", p.display()),
-            Val::List(v) => {
+            Val::ExitCode(code) => write!(f, "{code}"),
+            Val::List(v) | Val::Tuple(v) => {
                 let mut first = true;
                 for val in v {
                     if !first {
@@ -256,6 +307,8 @@ impl fmt::Display for Val {
                 }
                 Ok(())
             }
+            // Sum displays payload only — tag is control-flow metadata
+            Val::Sum(_, payload) => write!(f, "{payload}"),
         }
     }
 }
@@ -304,15 +357,12 @@ impl From<PathBuf> for Val {
 mod tests {
     use super::*;
 
-    #[test]
-    fn empty_is_false() {
-        assert!(!Val::empty().is_true());
-        assert!(!Val::Unit.is_true());
-    }
+    // ── Truthiness ──────────────────────────────────────────
 
     #[test]
-    fn scalar_is_true() {
-        assert!(Val::scalar("hello").is_true());
+    fn unit_is_false() {
+        assert!(!Val::Unit.is_true());
+        assert!(!Val::empty().is_true());
     }
 
     #[test]
@@ -329,7 +379,79 @@ mod tests {
     }
 
     #[test]
-    fn index_1_based() {
+    fn str_truth() {
+        assert!(Val::scalar("hello").is_true());
+        assert!(!Val::Str(String::new()).is_true());
+    }
+
+    #[test]
+    fn path_truth() {
+        assert!(Val::Path(PathBuf::from("/tmp")).is_true());
+    }
+
+    #[test]
+    fn exit_code_truth_inverts_int() {
+        // ExitCode(0) = success = true (opposite of Int(0))
+        assert!(Val::ExitCode(0).is_true());
+        // ExitCode(nonzero) = failure = false
+        assert!(!Val::ExitCode(1).is_true());
+        assert!(!Val::ExitCode(127).is_true());
+        assert!(!Val::ExitCode(-1).is_true());
+    }
+
+    #[test]
+    fn list_truth() {
+        assert!(Val::list(["a"]).is_true());
+        assert!(!Val::List(vec![]).is_true());
+    }
+
+    #[test]
+    fn tuple_always_true() {
+        // Tuples always have ≥2 elements by construction
+        assert!(Val::Tuple(vec![Val::Int(0), Val::Int(0)]).is_true());
+        assert!(Val::Tuple(vec![Val::Unit, Val::Unit]).is_true());
+    }
+
+    #[test]
+    fn sum_always_true() {
+        assert!(Val::Sum("ok".into(), Box::new(Val::Unit)).is_true());
+        assert!(Val::Sum("err".into(), Box::new(Val::ExitCode(1))).is_true());
+    }
+
+    // ── Count ───────────────────────────────────────────────
+
+    #[test]
+    fn count_scalars() {
+        assert_eq!(Val::Unit.count(), 0);
+        assert_eq!(Val::Int(42).count(), 1);
+        assert_eq!(Val::scalar("x").count(), 1);
+        assert_eq!(Val::ExitCode(0).count(), 1);
+        assert_eq!(Val::Bool(true).count(), 1);
+    }
+
+    #[test]
+    fn count_list() {
+        assert_eq!(Val::list(["a", "b", "c"]).count(), 3);
+    }
+
+    #[test]
+    fn count_tuple() {
+        assert_eq!(Val::Tuple(vec![Val::Int(1), Val::Int(2)]).count(), 2);
+        assert_eq!(
+            Val::Tuple(vec![Val::Int(1), Val::Int(2), Val::Int(3)]).count(),
+            3
+        );
+    }
+
+    #[test]
+    fn count_sum() {
+        assert_eq!(Val::Sum("ok".into(), Box::new(Val::Int(42))).count(), 1);
+    }
+
+    // ── Indexing ─────────────────────────────────────────────
+
+    #[test]
+    fn list_index_1_based() {
         let v = Val::list(["a", "b", "c"]);
         assert_eq!(v.index(1), Val::scalar("a"));
         assert_eq!(v.index(2), Val::scalar("b"));
@@ -346,12 +468,38 @@ mod tests {
     }
 
     #[test]
-    fn count() {
-        assert_eq!(Val::empty().count(), 0);
-        assert_eq!(Val::scalar("x").count(), 1);
-        assert_eq!(Val::Int(42).count(), 1);
-        assert_eq!(Val::list(["a", "b", "c"]).count(), 3);
+    fn tuple_index_via_method() {
+        let t = Val::Tuple(vec![Val::Int(42), Val::scalar("hello")]);
+        // 0-based structural projection
+        assert_eq!(t.tuple_index(0), Val::Int(42));
+        assert_eq!(t.tuple_index(1), Val::scalar("hello"));
+        assert_eq!(t.tuple_index(2), Val::Unit);
     }
+
+    #[test]
+    fn tuple_index_1_based_via_index() {
+        // The general index() method uses 1-based for rc compat
+        let t = Val::Tuple(vec![Val::Int(42), Val::scalar("hello")]);
+        assert_eq!(t.index(1), Val::Int(42));
+        assert_eq!(t.index(2), Val::scalar("hello"));
+        assert_eq!(t.index(0), Val::Unit);
+    }
+
+    #[test]
+    fn exit_code_self_index() {
+        let v = Val::ExitCode(0);
+        assert_eq!(v.index(1), Val::ExitCode(0));
+        assert_eq!(v.index(2), Val::Unit);
+    }
+
+    #[test]
+    fn sum_self_index() {
+        let v = Val::Sum("ok".into(), Box::new(Val::Int(42)));
+        assert_eq!(v.index(1), v);
+        assert_eq!(v.index(2), Val::Unit);
+    }
+
+    // ── Concat ──────────────────────────────────────────────
 
     #[test]
     fn concat_pairwise() {
@@ -393,14 +541,41 @@ mod tests {
 
     #[test]
     fn concat_typed_coercion() {
-        // Int concat Str → Str
         assert_eq!(
             Val::Int(42).concat(&Val::Str("px".into())),
             Val::Str("42px".into())
         );
     }
 
-    // ── Inference tests ──────────────────────────────────────
+    #[test]
+    fn concat_exit_code_coerces() {
+        assert_eq!(
+            Val::ExitCode(1).concat(&Val::Str(" failed".into())),
+            Val::Str("1 failed".into())
+        );
+    }
+
+    #[test]
+    fn concat_tuple_coerces() {
+        // Tuple's to_string_vec flattens to individual elements,
+        // so concat broadcasts the scalar across each element
+        let t = Val::Tuple(vec![Val::Int(1), Val::Int(2)]);
+        assert_eq!(
+            t.concat(&Val::Str(" items".into())),
+            Val::list(["1 items", "2 items"])
+        );
+    }
+
+    #[test]
+    fn concat_sum_coerces_payload_only() {
+        let s = Val::Sum("ok".into(), Box::new(Val::Int(42)));
+        assert_eq!(
+            s.concat(&Val::Str("!".into())),
+            Val::Str("42!".into())
+        );
+    }
+
+    // ── Inference ───────────────────────────────────────────
 
     #[test]
     fn infer_int() {
@@ -435,19 +610,187 @@ mod tests {
     }
 
     #[test]
-    fn display_val() {
+    fn infer_never_produces_exit_code() {
+        // "0" infers to Int(0), never ExitCode(0)
+        assert_eq!(Val::infer("0"), Val::Int(0));
+        assert_eq!(Val::infer("1"), Val::Int(1));
+        assert_eq!(Val::infer("127"), Val::Int(127));
+    }
+
+    // ── Display ─────────────────────────────────────────────
+
+    #[test]
+    fn display_atoms() {
         assert_eq!(Val::Unit.to_string(), "");
         assert_eq!(Val::Bool(true).to_string(), "true");
         assert_eq!(Val::Int(42).to_string(), "42");
         assert_eq!(Val::Str("hello".into()).to_string(), "hello");
         assert_eq!(Val::Path(PathBuf::from("/tmp")).to_string(), "/tmp");
+        assert_eq!(Val::ExitCode(0).to_string(), "0");
+        assert_eq!(Val::ExitCode(127).to_string(), "127");
+    }
+
+    #[test]
+    fn display_list() {
         assert_eq!(Val::list(["a", "b"]).to_string(), "a b");
     }
 
     #[test]
-    fn to_args_flattens() {
+    fn display_tuple() {
+        let t = Val::Tuple(vec![Val::Int(42), Val::Int(7)]);
+        assert_eq!(t.to_string(), "42 7");
+    }
+
+    #[test]
+    fn display_sum_payload_only() {
+        // Tag is stripped — payload only
+        let s = Val::Sum("ok".into(), Box::new(Val::Int(42)));
+        assert_eq!(s.to_string(), "42");
+        let e = Val::Sum("err".into(), Box::new(Val::ExitCode(1)));
+        assert_eq!(e.to_string(), "1");
+    }
+
+    // ── to_args ─────────────────────────────────────────────
+
+    #[test]
+    fn to_args_scalars() {
         assert_eq!(Val::Unit.to_args(), Vec::<String>::new());
         assert_eq!(Val::Int(42).to_args(), vec!["42"]);
+        assert_eq!(Val::ExitCode(0).to_args(), vec!["0"]);
+    }
+
+    #[test]
+    fn to_args_list() {
         assert_eq!(Val::list(["a", "b"]).to_args(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn to_args_tuple() {
+        let t = Val::Tuple(vec![Val::Int(1), Val::Int(2)]);
+        assert_eq!(t.to_args(), vec!["1", "2"]);
+    }
+
+    #[test]
+    fn to_args_sum() {
+        let s = Val::Sum("ok".into(), Box::new(Val::Int(42)));
+        assert_eq!(s.to_args(), vec!["42"]);
+    }
+
+    // ── iter_elements ───────────────────────────────────────
+
+    #[test]
+    fn iter_unit_is_empty() {
+        assert_eq!(Val::Unit.iter_elements().count(), 0);
+    }
+
+    #[test]
+    fn iter_scalar_yields_self() {
+        let v = Val::Int(42);
+        let elems: Vec<_> = v.iter_elements().collect();
+        assert_eq!(elems, vec![&Val::Int(42)]);
+    }
+
+    #[test]
+    fn iter_list_yields_elements() {
+        let v = Val::List(vec![Val::Int(1), Val::Int(2)]);
+        let elems: Vec<_> = v.iter_elements().collect();
+        assert_eq!(elems, vec![&Val::Int(1), &Val::Int(2)]);
+    }
+
+    #[test]
+    fn iter_tuple_yields_elements() {
+        let v = Val::Tuple(vec![Val::Int(1), Val::Int(2)]);
+        let elems: Vec<_> = v.iter_elements().collect();
+        assert_eq!(elems, vec![&Val::Int(1), &Val::Int(2)]);
+    }
+
+    #[test]
+    fn iter_sum_yields_self() {
+        let v = Val::Sum("ok".into(), Box::new(Val::Int(42)));
+        let elems: Vec<_> = v.iter_elements().collect();
+        assert_eq!(elems.len(), 1);
+        assert_eq!(elems[0], &v);
+    }
+
+    #[test]
+    fn iter_exit_code_yields_self() {
+        let v = Val::ExitCode(0);
+        let elems: Vec<_> = v.iter_elements().collect();
+        assert_eq!(elems, vec![&Val::ExitCode(0)]);
+    }
+
+    // ── From impls ──────────────────────────────────────────
+
+    #[test]
+    fn from_string() {
+        let v: Val = "hello".to_string().into();
+        assert_eq!(v, Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn from_str_ref() {
+        let v: Val = "hello".into();
+        assert_eq!(v, Val::Str("hello".into()));
+    }
+
+    #[test]
+    fn from_bool() {
+        let v: Val = true.into();
+        assert_eq!(v, Val::Bool(true));
+    }
+
+    #[test]
+    fn from_i64() {
+        let v: Val = 42i64.into();
+        assert_eq!(v, Val::Int(42));
+    }
+
+    #[test]
+    fn from_pathbuf() {
+        let v: Val = PathBuf::from("/tmp").into();
+        assert_eq!(v, Val::Path(PathBuf::from("/tmp")));
+    }
+
+    #[test]
+    fn from_vec_string() {
+        let v: Val = vec!["a".to_string(), "b".to_string()].into();
+        assert_eq!(v, Val::list(["a", "b"]));
+
+        let empty: Val = Vec::<String>::new().into();
+        assert_eq!(empty, Val::Unit);
+    }
+
+    // ── as_str ──────────────────────────────────────────────
+
+    #[test]
+    fn as_str_returns_reference() {
+        assert_eq!(Val::Unit.as_str(), "");
+        assert_eq!(Val::Bool(true).as_str(), "true");
+        assert_eq!(Val::Bool(false).as_str(), "false");
+        assert_eq!(Val::scalar("hello").as_str(), "hello");
+        // Types that can't return &str return ""
+        assert_eq!(Val::Int(42).as_str(), "");
+        assert_eq!(Val::ExitCode(0).as_str(), "");
+        assert_eq!(Val::Tuple(vec![Val::Int(1), Val::Int(2)]).as_str(), "");
+        assert_eq!(
+            Val::Sum("ok".into(), Box::new(Val::Int(42))).as_str(),
+            ""
+        );
+    }
+
+    // ── to_string_vec ───────────────────────────────────────
+
+    #[test]
+    fn to_string_vec_via_concat() {
+        // Verify via concat behavior that to_string_vec works for new types
+        let ec = Val::ExitCode(42);
+        assert_eq!(ec.concat(&Val::scalar("!")), Val::Str("42!".into()));
+
+        let tuple = Val::Tuple(vec![Val::scalar("a"), Val::scalar("b")]);
+        // Tuple flattens to multiple strings in to_string_vec
+        assert_eq!(
+            tuple.concat(&Val::scalar("!")),
+            Val::list(["a!", "b!"])
+        );
     }
 }

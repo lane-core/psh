@@ -10,7 +10,7 @@
 //! - **Binding** (μ̃-binders): extend the context Γ with a new name.
 //!   Assignment and function definition.
 //! - **Command** (cuts and control): connect producers to consumers
-//!   (Exec), or branch/iterate over values (If, For, Switch).
+//!   (Exec), or branch/iterate over values (If, For, Match).
 //!
 //! The former `Statement` mixed bindings, cuts, and control flow in
 //! one enum. The refactored AST separates them so the sort boundaries
@@ -149,7 +149,7 @@ pub enum Expr {
     Coprocess(Box<Expr>),
 }
 
-/// Pattern for switch/case and ~ matching.
+/// Pattern for match arms and ~ matching.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     /// Literal pattern
@@ -158,6 +158,13 @@ pub enum Pattern {
     Glob(String),
     /// Match any
     Star,
+    /// Structural pattern: tag $binding — coproduct elimination.
+    /// The tag is matched against Sum's tag; the binding receives
+    /// the payload. Distinguishing feature: `$` after the tag name.
+    Structural {
+        tag: String,
+        binding: String,
+    },
 }
 
 /// Type annotation for let bindings.
@@ -172,8 +179,21 @@ pub enum TypeAnnotation {
     Int,
     Str,
     Path,
+    /// Reified computation outcome. Matches Val::ExitCode.
+    ExitCode,
     /// List or List[ElementType]. None means untyped elements.
     List(Option<Box<TypeAnnotation>>),
+    /// Product type — componentwise validation.
+    Tuple(Vec<TypeAnnotation>),
+    /// Union type — value matches if it passes any branch.
+    /// Used for Sum validation: constrains which tags are legal.
+    Union(Vec<TypeAnnotation>),
+    /// Sugar for `T | ExitCode` with implied tags ok/err.
+    /// Result[T] matches Sum("ok", T) or Sum("err", ExitCode).
+    Result(Box<TypeAnnotation>),
+    /// Sugar for `T | Unit` with implied tags ok/none.
+    /// Maybe[T] matches Sum("ok", T) or Sum("none", Unit).
+    Maybe(Box<TypeAnnotation>),
 }
 
 /// A binding — extends the context Γ with a new name.
@@ -235,11 +255,13 @@ pub enum Command {
         list: Value,
         body: Vec<Command>,
     },
-    /// switch(value) { case pat { body } ... }
-    /// Multi-way case elimination.
-    Switch {
+    /// match value { pat => body; ... }
+    /// Multi-way case elimination — glob patterns and structural
+    /// coproduct decomposition. Arms use `=>` to introduce the body
+    /// and `;` to separate.
+    Match {
         value: Value,
-        cases: Vec<(Vec<Pattern>, Vec<Command>)>,
+        arms: Vec<(Vec<Pattern>, Vec<Command>)>,
     },
     /// while(expr) { body }
     /// Iterative looping — re-evaluates condition after each body.

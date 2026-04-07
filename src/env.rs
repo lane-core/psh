@@ -30,6 +30,11 @@ pub struct Discipline {
 pub struct Var {
     /// The stored value.
     pub value: Val,
+    /// Stderr from last failed try evaluation. For stored variables
+    /// (tiers 1-2), always None. For computed variables (try {}),
+    /// preserves the human-readable error string alongside the
+    /// ExitCode for diagnostic use.
+    pub error: Option<String>,
     /// Whether this variable is exported to child processes.
     pub exported: bool,
     /// Whether this variable is read-only.
@@ -51,6 +56,7 @@ impl Var {
     pub fn new(value: Val) -> Self {
         Var {
             value,
+            error: None,
             exported: false,
             readonly: false,
             mutable: true,
@@ -63,6 +69,7 @@ impl Var {
     pub fn exported(value: Val) -> Self {
         Var {
             value,
+            error: None,
             exported: true,
             readonly: false,
             mutable: true,
@@ -76,6 +83,7 @@ impl Var {
     pub fn nameref(target: String) -> Self {
         Var {
             value: Val::empty(),
+            error: None,
             exported: false,
             readonly: false,
             mutable: true,
@@ -308,6 +316,7 @@ impl Env {
 
         let var = Var {
             value: validated,
+            error: None,
             exported,
             readonly: false,
             mutable,
@@ -390,7 +399,9 @@ impl Env {
 ///
 /// Coercion policy: widening (Int→Str, Bool→Str, Path→Str) is
 /// allowed. Narrowing (Str→Int) is rejected. List[T] validates
-/// each element.
+/// each element. Tuple validates componentwise. Union passes if
+/// any branch matches. Result[T] and Maybe[T] validate as their
+/// desugared Sum forms.
 fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
     match (val, ann) {
         (Val::Unit, TypeAnnotation::Unit) => Ok(Val::Unit),
@@ -398,6 +409,7 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
         (Val::Int(_), TypeAnnotation::Int) => Ok(val.clone()),
         (Val::Str(_), TypeAnnotation::Str) => Ok(val.clone()),
         (Val::Path(_), TypeAnnotation::Path) => Ok(val.clone()),
+        (Val::ExitCode(_), TypeAnnotation::ExitCode) => Ok(val.clone()),
         (Val::List(_), TypeAnnotation::List(None)) => Ok(val.clone()),
         (Val::List(items), TypeAnnotation::List(Some(elem_ann))) => {
             let mut validated = Vec::with_capacity(items.len());
@@ -408,10 +420,74 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
             }
             Ok(Val::List(validated))
         }
+        // Tuple: componentwise validation
+        (Val::Tuple(items), TypeAnnotation::Tuple(anns)) => {
+            if items.len() != anns.len() {
+                return Err(format!(
+                    "tuple length mismatch: expected {}, got {}",
+                    anns.len(),
+                    items.len()
+                ));
+            }
+            let mut validated = Vec::with_capacity(items.len());
+            for (i, (item, elem_ann)) in items.iter().zip(anns).enumerate() {
+                validated.push(
+                    validate_type(item, elem_ann)
+                        .map_err(|e| format!("tuple element {i}: {e}"))?,
+                );
+            }
+            Ok(Val::Tuple(validated))
+        }
+        // Union: value matches if it passes any branch
+        (_, TypeAnnotation::Union(branches)) => {
+            for branch in branches {
+                if let Ok(v) = validate_type(val, branch) {
+                    return Ok(v);
+                }
+            }
+            Err(format!(
+                "type mismatch: expected {}, got {}",
+                type_ann_name(ann),
+                val_type_name(val),
+            ))
+        }
+        // Result[T]: Sum("ok", T) or Sum("err", ExitCode)
+        (Val::Sum(tag, payload), TypeAnnotation::Result(inner)) => match tag.as_str() {
+            "ok" => {
+                let validated = validate_type(payload, inner)
+                    .map_err(|e| format!("Result ok branch: {e}"))?;
+                Ok(Val::Sum("ok".into(), Box::new(validated)))
+            }
+            "err" => {
+                let validated = validate_type(payload, &TypeAnnotation::ExitCode)
+                    .map_err(|e| format!("Result err branch: {e}"))?;
+                Ok(Val::Sum("err".into(), Box::new(validated)))
+            }
+            _ => Err(format!(
+                "type mismatch: Result expects ok/err tags, got \"{tag}\""
+            )),
+        },
+        // Maybe[T]: Sum("ok", T) or Sum("none", Unit)
+        (Val::Sum(tag, payload), TypeAnnotation::Maybe(inner)) => match tag.as_str() {
+            "ok" => {
+                let validated = validate_type(payload, inner)
+                    .map_err(|e| format!("Maybe ok branch: {e}"))?;
+                Ok(Val::Sum("ok".into(), Box::new(validated)))
+            }
+            "none" => {
+                let validated = validate_type(payload, &TypeAnnotation::Unit)
+                    .map_err(|e| format!("Maybe none branch: {e}"))?;
+                Ok(Val::Sum("none".into(), Box::new(validated)))
+            }
+            _ => Err(format!(
+                "type mismatch: Maybe expects ok/none tags, got \"{tag}\""
+            )),
+        },
         // Widening coercions: narrow type → Str
         (Val::Int(n), TypeAnnotation::Str) => Ok(Val::Str(n.to_string())),
         (Val::Bool(b), TypeAnnotation::Str) => Ok(Val::Str(b.to_string())),
         (Val::Path(p), TypeAnnotation::Str) => Ok(Val::Str(p.display().to_string())),
+        (Val::ExitCode(c), TypeAnnotation::Str) => Ok(Val::Str(c.to_string())),
         // Narrowing from Str: attempt parse when assigning to typed variable.
         // This handles bare `x = 99` when x was declared `let mut x : Int`.
         (Val::Str(s), TypeAnnotation::Int) => s
@@ -433,14 +509,26 @@ fn validate_type(val: &Val, ann: &TypeAnnotation) -> Result<Val, String> {
     }
 }
 
-fn type_ann_name(ann: &TypeAnnotation) -> &'static str {
+fn type_ann_name(ann: &TypeAnnotation) -> String {
     match ann {
-        TypeAnnotation::Unit => "Unit",
-        TypeAnnotation::Bool => "Bool",
-        TypeAnnotation::Int => "Int",
-        TypeAnnotation::Str => "Str",
-        TypeAnnotation::Path => "Path",
-        TypeAnnotation::List(_) => "List",
+        TypeAnnotation::Unit => "Unit".into(),
+        TypeAnnotation::Bool => "Bool".into(),
+        TypeAnnotation::Int => "Int".into(),
+        TypeAnnotation::Str => "Str".into(),
+        TypeAnnotation::Path => "Path".into(),
+        TypeAnnotation::ExitCode => "ExitCode".into(),
+        TypeAnnotation::List(None) => "List".into(),
+        TypeAnnotation::List(Some(inner)) => format!("List[{}]", type_ann_name(inner)),
+        TypeAnnotation::Tuple(anns) => {
+            let parts: Vec<String> = anns.iter().map(type_ann_name).collect();
+            format!("({})", parts.join(", "))
+        }
+        TypeAnnotation::Union(branches) => {
+            let parts: Vec<String> = branches.iter().map(type_ann_name).collect();
+            parts.join(" | ")
+        }
+        TypeAnnotation::Result(inner) => format!("Result[{}]", type_ann_name(inner)),
+        TypeAnnotation::Maybe(inner) => format!("Maybe[{}]", type_ann_name(inner)),
     }
 }
 
@@ -451,7 +539,10 @@ fn val_type_name(val: &Val) -> &'static str {
         Val::Int(_) => "Int",
         Val::Str(_) => "Str",
         Val::Path(_) => "Path",
+        Val::ExitCode(_) => "ExitCode",
         Val::List(_) => "List",
+        Val::Tuple(_) => "Tuple",
+        Val::Sum(_, _) => "Sum",
     }
 }
 
@@ -524,11 +615,11 @@ mod tests {
     #[test]
     fn readonly_var_rejects_mutation() {
         let mut env = Env::new();
-        // Manually create a readonly var
         env.scopes[0].set(
             "ro".into(),
             Var {
                 value: Val::scalar("frozen"),
+                error: None,
                 exported: false,
                 readonly: true,
                 mutable: true,
@@ -575,7 +666,104 @@ mod tests {
         let mut env = Env::new();
         env.set_nameref("a", "b".into());
         env.set_nameref("b", "a".into());
-        // Should not panic; returns empty since neither has a value
         let _ = env.get_value("a");
+    }
+
+    // ── Type validation: new variants ───────────────────────
+
+    #[test]
+    fn validate_exit_code() {
+        let val = Val::ExitCode(0);
+        assert!(validate_type(&val, &TypeAnnotation::ExitCode).is_ok());
+        assert!(validate_type(&val, &TypeAnnotation::Int).is_err());
+    }
+
+    #[test]
+    fn validate_exit_code_widens_to_str() {
+        let val = Val::ExitCode(42);
+        let result = validate_type(&val, &TypeAnnotation::Str).unwrap();
+        assert_eq!(result, Val::Str("42".into()));
+    }
+
+    #[test]
+    fn validate_tuple_componentwise() {
+        let val = Val::Tuple(vec![Val::Int(42), Val::Bool(true)]);
+        let ann = TypeAnnotation::Tuple(vec![TypeAnnotation::Int, TypeAnnotation::Bool]);
+        assert!(validate_type(&val, &ann).is_ok());
+    }
+
+    #[test]
+    fn validate_tuple_length_mismatch() {
+        let val = Val::Tuple(vec![Val::Int(42)]);
+        let ann = TypeAnnotation::Tuple(vec![TypeAnnotation::Int, TypeAnnotation::Bool]);
+        assert!(validate_type(&val, &ann).is_err());
+    }
+
+    #[test]
+    fn validate_tuple_element_mismatch() {
+        let val = Val::Tuple(vec![Val::Int(42), Val::Int(7)]);
+        let ann = TypeAnnotation::Tuple(vec![TypeAnnotation::Int, TypeAnnotation::Bool]);
+        assert!(validate_type(&val, &ann).is_err());
+    }
+
+    #[test]
+    fn validate_union_matches_any_branch() {
+        let ann = TypeAnnotation::Union(vec![TypeAnnotation::Int, TypeAnnotation::Str]);
+        assert!(validate_type(&Val::Int(42), &ann).is_ok());
+        assert!(validate_type(&Val::scalar("hello"), &ann).is_ok());
+        // Bool widens to Str, so it passes the Str branch
+        assert!(validate_type(&Val::Bool(true), &ann).is_ok());
+        // A type with no widening path fails
+        let narrow = TypeAnnotation::Union(vec![TypeAnnotation::Int, TypeAnnotation::Path]);
+        assert!(validate_type(&Val::Bool(true), &narrow).is_err());
+    }
+
+    #[test]
+    fn validate_result_ok() {
+        let val = Val::Sum("ok".into(), Box::new(Val::Int(42)));
+        let ann = TypeAnnotation::Result(Box::new(TypeAnnotation::Int));
+        let result = validate_type(&val, &ann).unwrap();
+        assert_eq!(result, val);
+    }
+
+    #[test]
+    fn validate_result_err() {
+        let val = Val::Sum("err".into(), Box::new(Val::ExitCode(1)));
+        let ann = TypeAnnotation::Result(Box::new(TypeAnnotation::Int));
+        assert!(validate_type(&val, &ann).is_ok());
+    }
+
+    #[test]
+    fn validate_result_wrong_tag() {
+        let val = Val::Sum("bad".into(), Box::new(Val::Int(42)));
+        let ann = TypeAnnotation::Result(Box::new(TypeAnnotation::Int));
+        assert!(validate_type(&val, &ann).is_err());
+    }
+
+    #[test]
+    fn validate_maybe_ok() {
+        let val = Val::Sum("ok".into(), Box::new(Val::scalar("hello")));
+        let ann = TypeAnnotation::Maybe(Box::new(TypeAnnotation::Str));
+        assert!(validate_type(&val, &ann).is_ok());
+    }
+
+    #[test]
+    fn validate_maybe_none() {
+        let val = Val::Sum("none".into(), Box::new(Val::Unit));
+        let ann = TypeAnnotation::Maybe(Box::new(TypeAnnotation::Str));
+        assert!(validate_type(&val, &ann).is_ok());
+    }
+
+    #[test]
+    fn validate_maybe_wrong_tag() {
+        let val = Val::Sum("err".into(), Box::new(Val::Unit));
+        let ann = TypeAnnotation::Maybe(Box::new(TypeAnnotation::Str));
+        assert!(validate_type(&val, &ann).is_err());
+    }
+
+    #[test]
+    fn var_error_field_defaults_none() {
+        let var = Var::new(Val::Int(42));
+        assert!(var.error.is_none());
     }
 }

@@ -8,7 +8,7 @@
 //! Grammar (informal):
 //!
 //!   program     = command*
-//!   command     = assignment | if | for | while | switch | fn | ref | expr_cmd
+//!   command     = assignment | if | for | while | match | fn | ref | expr_cmd
 //!   expr_cmd    = or_expr (& | ; | \n)?
 //!   or_expr     = and_expr (|| and_expr)*
 //!   and_expr    = pipeline (&& pipeline)*
@@ -24,18 +24,31 @@ use anyhow::{bail, Result};
 
 use crate::ast::*;
 
+/// Variable-name alphabet — used after `$`, `$#`, `$"`.
+/// rc's variable-name set: alphanumerics, `_`, and `*`.
+/// Variable names terminate at the first character not in this set,
+/// enabling `$home/bin` to parse as `$home` followed by `/bin`.
+fn is_var_char(c: char) -> bool {
+    matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '*')
+}
+
+/// Bare-word alphabet — for literals, function names, paths.
+/// Includes `.` (discipline names), `/` (paths), `@` (user@host),
+/// and other non-operator characters. `~` is NOT included —
+/// it receives special handling (tilde expansion vs match builtin).
 fn is_word_char(c: char) -> bool {
     matches!(c,
         'a'..='z' | 'A'..='Z' | '0'..='9' |
         '_' | '-' | '.' | '/' | ':' | '+' |
-        ',' | '%' | '~' | '*' | '?' | '[' | ']'
+        ',' | '%' | '*' | '?' | '[' | ']' | '@'
     )
 }
 
 fn is_keyword(s: &str) -> bool {
     matches!(
         s,
-        "if" | "else" | "for" | "in" | "switch" | "case" | "fn" | "while" | "ref" | "let"
+        "if" | "else" | "for" | "in" | "match" | "fn" | "while" | "ref" | "let" | "try"
+            | "return"
     )
 }
 
@@ -167,6 +180,8 @@ impl<'a> RecParser<'a> {
     fn at_word_start(&self) -> bool {
         match self.peek() {
             Some(c) if is_word_char(c) || c == '$' || c == '`' || c == '\'' => true,
+            // ~ starts tilde expansion (not in word_char — special handling)
+            Some('~') => true,
             // <{ starts a process substitution word
             Some('<') if self.peek2() == Some('{') => true,
             _ => false,
@@ -187,11 +202,31 @@ impl<'a> RecParser<'a> {
 
     // ── Leaf parsers ───────────────────────────────────────
 
-    /// Read a bare word (sequence of word characters).
+    /// Read a bare word (sequence of word_char characters).
     fn read_bare_word(&mut self) -> Option<String> {
         let start = self.pos;
         while let Some(c) = self.peek() {
             if is_word_char(c) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.pos > start {
+            Some(self.input[start..self.pos].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Read a variable name (sequence of var_char characters).
+    /// Used after `$`, `$#`, and `$"` — the narrow alphabet that
+    /// terminates at `.`, `/`, `@` etc. to enable free carets and
+    /// accessor syntax.
+    fn read_var_name(&mut self) -> Option<String> {
+        let start = self.pos;
+        while let Some(c) = self.peek() {
+            if is_var_char(c) {
                 self.advance();
             } else {
                 break;
@@ -327,19 +362,19 @@ impl<'a> RecParser<'a> {
                 self.advance();
                 if self.peek() == Some('#') {
                     self.advance();
-                    let name = self.read_bare_word().ok_or_else(|| {
+                    let name = self.read_var_name().ok_or_else(|| {
                         anyhow::anyhow!("{}: expected variable name after $#", self.pos_str())
                     })?;
                     Ok(Word::Count(name))
                 } else if self.peek() == Some('"') {
                     // rc heritage: $"x joins list elements with spaces
                     self.advance();
-                    let name = self.read_bare_word().ok_or_else(|| {
+                    let name = self.read_var_name().ok_or_else(|| {
                         anyhow::anyhow!("{}: expected variable name after $\"", self.pos_str())
                     })?;
                     Ok(Word::Stringify(name))
                 } else {
-                    let name = self.read_bare_word().ok_or_else(|| {
+                    let name = self.read_var_name().ok_or_else(|| {
                         anyhow::anyhow!("{}: expected variable name after $", self.pos_str())
                     })?;
                     if self.peek() == Some('(') {
@@ -387,6 +422,15 @@ impl<'a> RecParser<'a> {
                 }
                 self.advance();
                 Ok(Word::ProcessSub(body))
+            }
+            // ~ is not in word_char — handle tilde specially.
+            // Read `~` plus any following word_chars as a single literal
+            // so that ~/path and bare ~ both work. Tilde expansion
+            // happens at eval time, not parse time.
+            Some('~') => {
+                self.advance();
+                let rest = self.read_bare_word().unwrap_or_default();
+                Ok(Word::Literal(format!("~{rest}")))
             }
             Some(c) if is_word_char(c) => {
                 let s = self.read_bare_word().unwrap();
@@ -438,7 +482,7 @@ impl<'a> RecParser<'a> {
                 if let Some(w) = self.read_bare_word() {
                     if matches!(
                         w.as_str(),
-                        "if" | "for" | "while" | "switch" | "fn" | "ref" | "let"
+                        "if" | "for" | "while" | "match" | "fn" | "ref" | "let"
                     ) {
                         self.restore(saved);
                         return Ok(None);
@@ -521,7 +565,7 @@ impl<'a> RecParser<'a> {
                         "if" => return self.if_cmd(),
                         "for" => return self.for_cmd(),
                         "while" => return self.while_cmd(),
-                        "switch" => return self.switch_cmd(),
+                        "match" => return self.match_cmd(),
                         "fn" => return self.fn_cmd(),
                         "ref" => return self.ref_cmd(),
                         "let" => return self.let_cmd(),
@@ -577,14 +621,21 @@ impl<'a> RecParser<'a> {
         Ok(Command::While { condition, body })
     }
 
-    fn switch_cmd(&mut self) -> Result<Command> {
+    /// Parse `match value { case pat... { body } ... }`.
+    ///
+    /// The prototype uses `case` sub-keywords with braced bodies.
+    /// The spec mandates `pat => body; ...` — that syntax change
+    /// lands in Phase B (combine parser rewrite). This method
+    /// preserves the prototype's `case`-based parsing but emits
+    /// `Command::Match` with the `arms` field.
+    fn match_cmd(&mut self) -> Result<Command> {
         let val = self.value()?;
         self.skip_ws();
         if self.peek() != Some('{') {
-            bail!("{}: expected '{{' after switch value", self.pos_str());
+            bail!("{}: expected '{{' after match value", self.pos_str());
         }
         self.advance();
-        let mut cases = Vec::new();
+        let mut arms = Vec::new();
         self.skip_terminators();
         while self.check_keyword("case") {
             let mut patterns = Vec::new();
@@ -604,15 +655,15 @@ impl<'a> RecParser<'a> {
                 }
             }
             let body = self.body()?;
-            cases.push((patterns, body));
+            arms.push((patterns, body));
             self.skip_terminators();
         }
         self.skip_ws();
         if self.peek() != Some('}') {
-            bail!("{}: expected '}}' to close switch", self.pos_str());
+            bail!("{}: expected '}}' to close match", self.pos_str());
         }
         self.advance();
-        Ok(Command::Switch { value: val, cases })
+        Ok(Command::Match { value: val, arms })
     }
 
     fn fn_cmd(&mut self) -> Result<Command> {
@@ -1355,14 +1406,14 @@ mod tests {
     }
 
     #[test]
-    fn switch_cmd() {
-        let prog = parse("switch $x { case foo { echo foo } case * { echo other } }");
+    fn match_cmd() {
+        let prog = parse("match $x { case foo { echo foo } case * { echo other } }");
         match &prog.commands[0] {
-            Command::Switch { value: _, cases } => {
-                assert_eq!(cases.len(), 2);
-                assert!(matches!(&cases[1].0[0], Pattern::Star));
+            Command::Match { value: _, arms } => {
+                assert_eq!(arms.len(), 2);
+                assert!(matches!(&arms[1].0[0], Pattern::Star));
             }
-            other => panic!("expected switch, got {other:?}"),
+            other => panic!("expected match, got {other:?}"),
         }
     }
 

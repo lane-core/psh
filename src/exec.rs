@@ -348,12 +348,12 @@ impl Shell {
                 }
                 status
             }
-            Command::Switch { value, cases } => {
+            Command::Match { value, arms } => {
                 let val = self.eval_value(value);
-                let val_str = val.as_str().to_string();
-                for (patterns, body) in cases {
+                let val_str = val.to_string();
+                for (patterns, body) in arms {
                     for pat in patterns {
-                        if self.match_pattern(&val_str, pat) {
+                        if self.match_pattern(&val, &val_str, pat) {
                             return self.run_cmds(body);
                         }
                     }
@@ -1639,14 +1639,19 @@ impl Shell {
         last_status
     }
 
-    fn match_pattern(&self, value: &str, pattern: &Pattern) -> bool {
+    fn match_pattern(&self, val: &Val, val_str: &str, pattern: &Pattern) -> bool {
         match pattern {
-            Pattern::Literal(s) => value == s,
+            Pattern::Literal(s) => val_str == s,
             Pattern::Star => true,
             Pattern::Glob(pat) => match fnmatch_regex::glob_to_regex(pat) {
-                Ok(re) => re.is_match(value),
-                Err(_) => value == pat,
+                Ok(re) => re.is_match(val_str),
+                Err(_) => val_str == pat,
             },
+            // Structural: tag must match Sum's tag. Binding is set
+            // in the arm body by the caller (not yet implemented —
+            // requires scope push with binding variable). For now,
+            // match on tag only.
+            Pattern::Structural { tag, binding: _ } => matches!(val, Val::Sum(t, _) if t == tag),
         }
     }
 }
@@ -1883,9 +1888,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_stmt() {
+    fn match_stmt() {
         let prog = Parser::parse(
-            "x = foo\nswitch $x { case foo { result = matched } case * { result = default } }",
+            "x = foo\nmatch $x { case foo { result = matched } case * { result = default } }",
         )
         .unwrap();
         let mut shell = Shell::new();
