@@ -11,6 +11,7 @@ combine = "4"
 fnmatch-regex = "0.3"
 libc = "0.2"
 rustix = { version = "1", features = ["pipe", "process", "stdio", "termios", "fs", "net"] }
+smallvec = { version = "1", features = ["union"] }
 signals_receipts = { version = "0.2", features = ["premade", "channel_notify_facility"] }
 
 [features]

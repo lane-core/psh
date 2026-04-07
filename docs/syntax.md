@@ -357,8 +357,10 @@ by concatenation.
 
     value       = '(' word* ')'
                 | tagged_val                        -- [planned]
+                | lambda
                 | word
     tagged_val  = NAME value                        -- [planned]
+    lambda      = '\' (NAME+ | '(' ')') '=>' ('{' program '}' | command)
 
 **Accessors** **[planned]** project into structured values. Since
 `.` is NOT in `var_char`, after `$pos` the parser sees `.0` as
@@ -563,21 +565,28 @@ captured output has its trailing newline stripped.
 rc heritage (Duff 1990, §Pipeline branching). Enables
 non-linear pipeline topologies: `cmp <{old} <{new}`.
 
-### Line continuation
+### Line continuation and `\`
 
-A backslash immediately followed by a newline is consumed by
-the lexer as whitespace. The command continues on the next line.
-Backslash is not otherwise special — it is not an escape
-character. There is no `\n` for newline, no `\t` for tab.
+Backslash has two roles, disambiguated by one character of
+lookahead:
+
+- `\` + newline → line continuation (consumed as whitespace)
+- `\` + NAME or `(` → lambda expression (see §Thunks)
 
     echo $very_long_variable \
          $another_variable \
          $a_third_one
 
-rc heritage (rc(1): "A long command line may be continued on
-subsequent lines by typing a backslash followed by a newline.
-This sequence is treated as though it were a blank. Backslash
-is not otherwise a special character.").
+    let inc = \x => expr $x + 1
+
+Backslash has no escape semantics — `\n` in a lambda is a
+parameter named `n`, not a newline character. `\` cannot
+appear in bare words (it is not in `var_char` or `word_char`).
+
+rc heritage for line continuation (rc(1): "A long command line
+may be continued on subsequent lines by typing a backslash
+followed by a newline. This sequence is treated as though it
+were a blank."). Lambda syntax is a psh extension.
 
 ### Concatenation
 
@@ -597,8 +606,8 @@ rc heritage (Duff 1990, §Concatenation).
 ## Type system
 
 psh values are typed. The type system has seven atomic types,
-two type constructors (products and coproducts), and sugar for
-common patterns.
+three type constructors (products, coproducts, thunks), and
+sugar for common patterns.
 
 ### Atoms and List
 
@@ -659,6 +668,97 @@ The tag is an open string namespace. Any script can define new
 tags. Pane protocol enum variants map to tag strings when
 messages cross from Rust into the shell.
 
+### Thunks (first-class functions)
+
+    Thunk       suspended computation. CBPV's U(A → F(B)).
+
+A thunk is a first-class function — a computation suspended as
+a value. It carries parameter names and a body (AST), but no
+captured environment. Free variables resolve dynamically at
+force time, consistent with rc/ksh function semantics.
+
+    let greet = \name => echo hello $name
+    $greet world                    # forces the thunk: "hello world"
+
+    let inc = \x => expr $x + 1
+    let result = `{ $inc 41 }      # "42"
+
+    let multi = \x y => {
+        echo $x
+        echo $y
+    }
+
+**`\` syntax and `fn` sort split.** `\` introduces a lambda
+(thunk literal) in value position. `fn` introduces a named
+function definition in command position. They are different
+syntax for different sorts:
+
+- `fn name { body }` — command-level binding. μ̃-binder that
+  extends Γ with a named function. Only valid in command
+  position (inside blocks). Uses positional parameters (`$1`,
+  `$2`, `$*`). rc heritage.
+- `\params => body` — value-level lambda. Produces
+  `Val::Thunk`. Only valid in value position (RHS of let,
+  argument to a command). Uses named parameters.
+
+The sort boundary is visible in the syntax: `fn` is always a
+binding (left of the turnstile), `\` is always a term (right
+of the turnstile). `let f = fn { body }` is illegal — use
+`let f = \() => body`.
+
+**Lambda grammar:**
+
+    lambda        = '\' lambda_params '=>' lambda_body
+    lambda_params = NAME+ | '(' ')'
+    lambda_body   = '{' program '}' | command
+
+The `=>` is mandatory — it separates parameters from body,
+consistent with match arms where `=>` separates pattern from
+body. The body after `=>` is either a braced block or a single
+command (terminated by `;`, newline, or `}`).
+
+    \x => echo $x               # single command
+    \x => { echo $x; echo done }  # braced block
+    \x y => expr $x + $y        # multi-param
+    \() => curl -f $url          # nullary
+
+**`\` and line continuation.** `\` followed by a newline is
+line continuation (rc heritage, consumed as whitespace). `\`
+followed by a NAME or `(` is a lambda. The disambiguation is
+LL(1) — the character sets are disjoint. `\` has no other
+role; it is not an escape character.
+
+**Forcing.** `$f args` — when a command name evaluates to
+`Val::Thunk`, the evaluator forces the thunk by pushing a scope,
+binding named parameters, and running the body. This is CBPV's
+`force : U(C) → C` — the polarity crossing from value to
+computation.
+
+The thunk is positive (inert, Clone, PartialEq). The body is
+data (AST). No live resources, no continuations, no captured
+mutable state. Negativity (computation, side effects) appears
+only at force time. This is CBPV's U operator — the thunk wraps
+a negative computation in a positive envelope.
+
+**Dynamic resolution, not closures.** Free variables in the body
+resolve against the calling scope at force time, not the defining
+scope at creation time. This matches how `fn name { body }`
+already works. Closures (capture-by-value at creation time) are
+a possible future extension but not part of the initial design.
+Currying (`\x => \y => expr $x + $y`) does not work — the
+inner thunk does not close over `$x`.
+
+**Thunk as optic leaf.** A thunk has no internal optic structure
+for the user — no `.params` or `.body` accessor. It is atomic
+from the accessor perspective, like ExitCode. A Tuple containing
+a thunk is Lens-accessible at the thunk's position, but the
+thunk itself is opaque. PartialEq on thunks is structural (same
+params + same AST = equal), which preserves the Lens laws.
+
+Display: `fn(x y){...}` — diagnostic. Not round-trippable.
+Truthiness: always true (a thunk exists).
+Concat: coerces to display string.
+
 ### Sugar
 
     Result[T]   = T | ExitCode       implied tags: ok, err
@@ -676,9 +776,10 @@ coproduct with these specific tags. `Maybe[T]` uses `ok` and
     type_ann    = 'Unit' | 'Bool' | 'Int' | 'Str' | 'Path'
                 | 'ExitCode'
                 | 'List' '[' type_ann ']'
-                | '[' type_ann ']'
-                | '(' type_ann (',' type_ann)+ ')'
+                | '(' type_ann ')'                     -- sugar for List[T]
+                | '(' type_ann (',' type_ann)+ ')'     -- Tuple
                 | type_ann '|' type_ann
+                | 'Fn' '(' type_ann* ')'               -- Thunk (arity check)
                 | 'Result' '[' type_ann ']'
                 | 'Maybe' '[' type_ann ']'
 
@@ -699,13 +800,20 @@ pub enum Val {
     List(Vec<Val>),
     Tuple(Vec<Val>),
     Sum(String, Box<Val>),
+    Thunk(Thunk),
+}
+
+pub struct Thunk {
+    pub params: Vec<String>,
+    pub body: Vec<Command>,
 }
 ```
 
-Nine variants. Seven atoms, one product constructor (Tuple),
-one coproduct constructor (Sum). Products give users Lenses.
-Coproducts give users Prisms. The optic hierarchy is fully
-inhabited.
+Ten variants. Seven atoms, one product constructor (Tuple),
+one coproduct constructor (Sum), one thunk constructor (Thunk).
+Products give users Lenses. Coproducts give users Prisms.
+Thunks are optic leaves (atomic, like ExitCode). The optic
+hierarchy is fully inhabited.
 
 ### Var metadata
 
@@ -746,7 +854,8 @@ erased at this boundary — pipes carry bytes.
     ExitCode      the numeric code: 0, 1, 42
     List          space-separated elements
     Tuple         space-separated elements (same as List)
-    Sum        payload only (tag stripped)
+    Sum           payload only (tag stripped)
+    Thunk         fn(params){...} (diagnostic, not round-trippable)
 
 **Sum display is payload-only.** `echo $result` where
 result = `Sum("ok", Int(42))` prints `42`, not `ok 42`.
@@ -774,7 +883,8 @@ behavior for values used in boolean contexts.
     List([])      false
     List(_)       true
     Tuple         true  (always ≥2 elements)
-    Sum        true  (always has content)
+    Sum           true  (always has content)
+    Thunk         true  (a suspended computation exists)
 
 **ExitCode truthiness inverts Int truthiness.** `ExitCode(0)`
 is true (success). `Int(0)` is false (zero). These are
@@ -810,7 +920,8 @@ are inferred:
     (a b c)       List — elements inferred individually
 
 ExitCode is NEVER inferred from literals. It enters the
-value world only through `try`.
+value world only through `try`. Thunk is produced by the
+`fn(params) body` literal syntax, not by inference.
 
 ### Coercion
 

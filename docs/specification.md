@@ -268,7 +268,7 @@ node types reflecting the sequent calculus:
 
 | psh sort | λμμ̃ analog | Evaluation | Examples |
 |---|---|---|---|
-| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | `Literal`, `Var`, `CommandSub`, `Concat`, `Tuple`, `Sum` |
+| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | `Literal`, `Var`, `CommandSub`, `Concat`, `Tuple`, `Sum`, `ThunkLiteral` |
 | `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | `Pipeline`, `Redirect`, `Background` |
 | `Binding` | μ̃-binder (let) | Extends context Γ | `Assignment`, `Fn`, `Let`, `LetTry`, `Ref` |
 | `Command` | Cut / control | Connects producers to consumers, or branches | `Exec`, `If`, `For`, `Match`, `Try` |
@@ -480,6 +480,7 @@ Val's type constructors map directly to the optic hierarchy:
 | Sum (coproduct, +) | Prism | Cocartesian |
 | Tuple × Sum | AffineTraversal | Cartesian + Cocartesian |
 | List (sequence) | Traversal | Monoidal |
+| Thunk (U(C)) | Leaf (Getter only) | Profunctor (dimap) |
 
 Products give users Lenses: `$pos.0` projects the first element
 of a tuple. Coproducts give users Prisms: `match $result { case ok $v { } }` decomposes a tagged value. Composing both gives
@@ -494,6 +495,17 @@ operationally unreachable for user-defined domains. Every script
 needing domain-specific alternatives would encode them as lists
 with tag strings — the void-pointer pattern the type system
 exists to prevent.
+
+Thunk is CBPV's U(A → F(B)) — a computation thunked into the
+value sort. It carries parameter names and a body (AST) but no
+captured environment; free variables resolve dynamically at force
+time. Thunk is an optic leaf — atomic from the accessor
+perspective, like ExitCode. PartialEq on Thunk is structural
+(same params + same AST = equal), which preserves the Lens laws
+in any Tuple or List containing a Thunk. The optic hierarchy
+gains no new optic from Thunk (Grate exists but is inert for
+read-only accessors); it simply gains a new atomic value that
+composes cleanly with existing Lenses and Prisms.
 
 ExitCode is a reified computation outcome. It enters the value
 world through `try` (the ↑ shift). `try { body }` runs the body
