@@ -14,15 +14,17 @@ not from being tied to a specific system.
 
 ## Current state (2026-04-06)
 
-14 commits, 5940 lines across 8 source files, 157 tests passing.
-The shell is a functional rc successor with ksh93 extensions and a
-typed value model grounded in sequent calculus / duploid theory.
+A functional prototype (5940 lines, 157 tests) and a complete
+target language specification (1103 + 801 lines). The spec
+supersedes the prototype's grammar — this is a restart-worthy
+respecification. The prototype validated feasibility; the spec
+is the real design.
 
-### What exists
+### What exists (prototype)
 
 | Feature | Status |
 |---------|--------|
-| Typed Val (Unit, Bool, Int, Str, Path, List\<Val\>) | Complete |
+| Typed Val (Unit, Bool, Int, Str, Path, List\<Val\>) | Complete (6 variants) |
 | let bindings (mut, export, : Type, List[T]) | Complete |
 | Type inference (let-only: 42→Int, /tmp→Path) | Complete |
 | Prism validation on typed assignments | Complete |
@@ -35,7 +37,7 @@ typed value model grounded in sequent calculus / duploid theory.
 | Here-documents (`<<EOF`) and here-strings (`<<<word`) | Complete |
 | Globbing (fnmatch-regex, recursive) | Complete |
 | Tilde expansion (~ and ~/path) | Complete |
-| Discipline functions (.get purity, .set reentrancy) | Complete |
+| Discipline functions (.get notification, .set reentrancy) | Complete |
 | Signal handlers as functions (fn sigint/sigexit) | Complete |
 | Job control (fg/bg/jobs/wait, terminal control) | Complete |
 | Coprocesses (socketpair, read -p, print -p) | Complete |
@@ -47,19 +49,53 @@ typed value model grounded in sequent calculus / duploid theory.
 | rc-style $home/$path/$user | Complete |
 | CLI (-c, file, interactive REPL stub) | Complete |
 
+### What the spec adds (not yet implemented)
+
+| Feature | Spec location |
+|---------|---------------|
+| `match` keyword (replaces `switch`) with `=>` arm syntax | §Control flow |
+| `try` block (scoped ⅋, lexically-scoped `set -e`) | §Control flow |
+| `try` in value position (returns `Result[T]`) | §`try` in value position |
+| `=>` single-line body introducer (all control flow) | §Control flow |
+| `;` arm separators in `match` blocks | §Control flow |
+| `return` for value-producing blocks | §Control flow |
+| Val::ExitCode(i32) — distinct from Int | §Type system |
+| Val::Tuple(Vec\<Val\>) — products, comma-separated | §Type system |
+| Val::Tagged(String, Box\<Val\>) — coproducts | §Type system |
+| Two-alphabet split (var\_char / word\_char) | §Two character sets |
+| Free carets (implicit `^` at var/word boundary) | §Free carets |
+| Accessor syntax ($x.0, $x.ok, $x.err, $x.code) | §Words |
+| ${name} brace-delimited variable names | §Brace-delimited variable names |
+| Shared `capture_subprocess` primitive | §Command substitution |
+| Union type annotations (A \| B) | §Type annotations |
+| Result[T] / Maybe[T] sugar | §Sugar |
+| Heredoc variable expansion (unquoted delimiters) | §Redirections |
+| `<>` read-write redirect | §Redirections |
+| `>{cmd}` output process substitution | §Missing rc I/O features |
+| `whatis` with type information | §`whatis` output format |
+| Live re-evaluation via `.get` disciplines | §Live re-evaluation |
+
 ### Architecture
 
 ```
 src/
   ast.rs       277 lines  four-sort AST (Word/Expr/Binding/Command)
-                           Word::Quoted, TypeAnnotation, Binding::Let
-  parse.rs    1622 lines  recursive descent on &str (fused lex+parse)
+  parse.rs    1622 lines  recursive descent — TO BE REPLACED with combine
   exec.rs     2470 lines  evaluator: rustix + libc, typed Val, disciplines
   env.rs       581 lines  scoped vars, type validation, readonly, namerefs
-  value.rs     453 lines  Val enum (6 variants), inference, Prism access
+  value.rs     453 lines  Val enum (6 variants) — TO BE REWRITTEN (9 variants)
   job.rs       287 lines  JobTable, JobStatus, process group tracking
   signal.rs    129 lines  signals_receipts handlers, rc-style fn sig*
   main.rs      121 lines  bpaf CLI (-c, file, interactive)
+
+docs/
+  syntax.md   1103 lines  normative grammar (the target language spec)
+  specification.md  801 lines  theoretical foundation (duploid, optics, CBPV)
+
+tests/
+  harness.rs         integration test harness (run psh as subprocess)
+  integration.rs     test entry point
+  *.rs               16 test modules (need rewrite against new spec)
 ```
 
 ### Dependencies
@@ -68,7 +104,7 @@ src/
 default:
   anyhow              error handling
   bpaf                 CLI argument parsing
-  combine              monadic parser combinators (available, not yet used)
+  combine              monadic parser combinators — USE THIS for the rewrite
   fnmatch-regex        glob pattern matching
   libc                 fork/waitpid/setpgid/execvp/_exit
   rustix               safe Unix syscalls (pipe, open, write, dup2, socketpair)
@@ -83,163 +119,157 @@ feature-gated (pane):
 
 | Document | Location |
 |----------|----------|
-| Specification (theoretical foundation) | `docs/specification.md` (651 lines) |
+| Syntax specification (normative grammar) | `docs/syntax.md` (1103 lines) |
+| Theoretical specification | `docs/specification.md` (801 lines) |
 | Shell design vision | pane repo `docs/shell.md` |
 | Style guide | `STYLEGUIDE.md` |
 
 ### Key design decisions
 
-- **Val is a 6-variant enum** (Unit, Bool, Int, Str, Path, List<Val>).
-  Inference runs in let context only. Bare `x = val` stays Str (rc heritage).
-- **let is the typed μ̃-binder.** `let [mut] [export] name [: Type] = val`.
-  Local by default, immutable by default. Bare `x = val` walks scope chain (rc heritage).
-- **par is NOT a direct dependency.** Enters through pane-session only.
-- **Pipes carry bytes.** Types don't cross fork boundary. Concat coerces to Str.
-- **Profunctor AST.** Redirections wrap expressions (not bolted on). Evaluation order is structural.
-- **⊕ error convention only.** Status returns, no longjmp. ⅋ (traps) deferred.
-- **Tests require `--test-threads=1`** due to fork-based tests interfering in parallel.
+- **Val is a 9-variant enum** (Unit, Bool, Int, Str, Path, ExitCode,
+  List, Tuple, Tagged). ExitCode enters only through `try`.
+  Tuple is product (Lens). Tagged is coproduct (Prism).
+- **let is always CBV.** Immutable by default, local by default.
+  No call-by-name `let`. Live re-evaluation uses `.get` disciplines.
+- **`match` with `=>` and `;`.** Arms use `=>` to introduce bodies,
+  `;` to separate. Newlines inside `match { }` are trivia.
+- **`try` is the ⊕→⅋ converter.** Scoped error handling (block form)
+  and fallible capture (value-position form) sharing one
+  `capture_subprocess` primitive with `` `{cmd}`` — siblings, not
+  desugaring.
+- **`return` for value-producing blocks.** CBPV's `return : A → F(A)`.
+  Unambiguous polarity shift from command to value sort.
+- **`=>` is a single-line body introducer.** Uniform across all
+  control flow: match arms, if/else, for, while, try.
+- **Two character predicates.** `var_char` for `$`-refs, `word_char`
+  for bare words. Enables free carets and accessor syntax.
+- **Profunctor AST.** Redirections wrap expressions. Structural.
+- **⊕ error convention.** Status returns. `try` is scoped ⅋.
+- **Tests require `--test-threads=1`** (fork interference).
 
 ---
 
 ## Now
 
-### Testing infrastructure
+### Implementation restart
 
-- [ ] **Robust test suite derived from ksh93.** Adapt ksh93u+m's test
-      suite (`/Users/lane/src/ksh93/src/cmd/ksh93/tests/`) for psh.
-      Focus on: variable expansion, quoting, pipelines, redirections,
-      subshells, signal handling, job control. Port tests that exercise
-      rc-compatible features. Skip POSIX-specific tests (psh is not POSIX).
-      Reference: ksh26's test infrastructure at `/Users/lane/src/ksh/ksh/`.
-- [ ] **Integration test harness.** Script-level tests that run psh as
-      a subprocess and compare stdout/stderr/exit code. Separate from
-      unit tests (which test internal APIs).
-- [ ] **Fix the `combine` situation.** combine is a dependency but unused.
-      Either use it for the parser (replace recursive descent) or remove it.
+The spec (`docs/syntax.md`) is the target. The prototype is a
+reference, not the starting point. Implementation order:
+
+- [ ] **1. Parser rewrite with `combine`.** Replace `parse.rs`
+      entirely. The `combine` crate is in Cargo.toml, mandated.
+      The new grammar (accessors, two-alphabet split, structural
+      match patterns, `=>` arms, `try` in multiple positions,
+      `return` as value-tail) warrants combinators.
+
+- [ ] **2. Two-alphabet split.** `is_var_char` / `is_word_char`.
+      Remove `~` from word chars. Add `@`. Enables free carets,
+      tilde fix, and accessor parsing.
+
+- [ ] **3. Val extension.** Rewrite `value.rs` with 9 variants.
+      ExitCode (inverted truthiness), Tuple (0-based projection),
+      Tagged (payload-only display, always truthy).
+
+- [ ] **4. `match` with `=>` and `;`.** Rename Switch → Match.
+      Add structural patterns. `=>` introduces arm body. `;`
+      separates arms. Newlines trivia inside `match { }`.
+
+- [ ] **5. `try` block.** Scoped ⅋. `in_try` flag on Shell,
+      checked after each command. Boolean contexts exempt.
+
+- [ ] **6. `=>` single-line body.** Extend `body` production.
+      Uniform across if/for/while/try/else/fn.
+
+- [ ] **7. Accessor syntax.** `$x.0`, `$x.ok`, `$x.err`, `$x.code`.
+      Accessor takes priority over free carets after `$`-variables.
+
+- [ ] **8. `try` in value position + `capture_subprocess`.** Shared
+      fork+pipe+capture+waitpid primitive. `try` wraps as
+      Result[T]. `` `{cmd}`` projects stdout only.
+
+- [ ] **9. `return` in value-producing blocks.** `return word`
+      injects a value from the command sort into the value sort.
+
+- [ ] **10. Type annotations.** ExitCode, `(A, B)` tuples,
+      `A | B` unions, `Result[T]` / `Maybe[T]` sugar.
+
+- [ ] **11. Heredoc expansion, missing I/O.** Unquoted `<<EOF`
+      expands `$var`. `<>file`. `>{cmd}`. `<[fd]`. `>>[fd]`.
+
+### Test rewrite
+
+- [ ] **Rewrite integration tests against `docs/syntax.md`.**
+      Every example in the spec becomes a test. `[planned]`
+      productions get `#[ignore]` tests.
+- [ ] **ksh93-derived test suite.** Adapt ksh93u+m tests for
+      psh's rc-heritage features. Skip POSIX-specific tests.
 
 ### Interactive features
 
-- [ ] **Line editing.** reedline or rustyline. vi/emacs modes (ksh93 heritage).
+- [ ] **Line editing.** reedline or rustyline. vi/emacs modes.
 - [ ] **History.** Persistent (~/.psh_history), searchable (Ctrl-R).
-      Use atomicwrites for crash-safe persistence.
-- [ ] **Tab completion.** Filesystem paths + pane namespace (when available).
-      The AffineFold composition model from the spec drives completion.
-- [ ] **Prompt.** Command substitution in PS1 for live system state.
-      `fn prompt { echo `{ get /pane/focused/attrs/title }' $ ' }`
+- [ ] **Tab completion.** Filesystem paths + pane namespace.
+- [ ] **Prompt.** Command substitution in PS1.
 
 ### Missing rc features
 
-- [ ] **Assignment-before-command.** `x=local cmd` — temporary binding
-      scoped to one command. Parsed into SimpleCommand.assignments but
-      never evaluated.
-- [ ] **`$0`** — name of the script being executed.
+- [ ] **Assignment-before-command.** `x=local cmd`.
+- [ ] **`$0`** — script name.
 - [ ] **`shift`** — shift positional parameters.
-- [ ] **`flag`** — rc's flag-parsing builtin.
 
 ### Infrastructure
 
 - [ ] **FdTable.** Runtime fd tracking with save/restore stack.
-      Spec describes it (specification.md §"fd tracking") but not implemented.
-- [ ] **Parse-time fd bitset.** Static analysis for use-after-close.
-- [ ] **CaptureBuffer.** Two-tier command substitution capture
-      (memory with spill-to-file on overflow).
-- [ ] **Tilde expansion refinement.** Bare `~` should not expand when
-      it's the match operator (`whatis ~` currently expands to $home).
-
-### Pane integration (feature-gated)
-
-- [ ] **`get`/`set` for `/pane/` paths.** Connect through pane-session.
-      The session type refinement tells the shell what type to expect.
-- [ ] **Tab completion for pane namespace.** Query pane server for
-      available pane IDs and attribute names.
-- [ ] **pane-terminal wrapper.** LooperCore<TerminalHandler> hosting
-      the interpreter. Separate binary.
+- [ ] **CaptureBuffer.** Two-tier capture (memory + spill to file).
 
 ---
 
 ## Later
 
-- [ ] **`${ cmd }` shared-state comsub** (no fork). From ksh93.
+- [ ] **`${ cmd }` shared-state comsub** (no fork). ksh93 heritage.
+      Deferred — `return` in value-producing blocks covers the
+      primary use case. `${ }` is for in-process stdout capture
+      when external commands need shared state.
 - [ ] **KEYBD trap** for interactive pane-aware keybindings.
-- [ ] **Coprocess protocol typing.** Opt-in typed coprocess channels.
-- [ ] **psh as sysadmin interface.** The spec's Phase 2 interactive vision.
+- [ ] **Coprocess protocol typing.** Opt-in typed channels.
+- [ ] **psh as sysadmin interface.** Phase 2 interactive vision.
 
 ---
 
-## Session log (2026-04-06)
+## Pane integration (feature-gated)
 
-### What was accomplished
+- [ ] **`get`/`set` for `/pane/` paths.** Connect through pane-session.
+- [ ] **Tab completion for pane namespace.**
+- [ ] **pane-terminal wrapper.** LooperCore<TerminalHandler>.
+- [ ] **Live variables via `.get` disciplines.**
+      `fn cursor.get { cursor = `{ get /pane/focused/attrs/cursor } }`
 
-Lane and the agent (Opus 4.6) built psh from scratch in one session,
-starting from the theoretical design (eight agent consultations on
-the shell concept, duploid analysis, polarity classifications) and
-ending with a functional 5940-line implementation.
+---
 
-**Theoretical work (first half):**
+## Session log
 
-1. Four-agent roundtable (Plan 9, Be, session type, optics) on whether
-   an rc successor grounded in sequent calculus is compelling. Unanimous
-   yes. The three-sort structure (values/stacks/commands) maps naturally
-   to shell constructs.
+### Session 1 (2026-04-06): Prototype
 
-2. Duploid analysis: Plan 9 is co-Kleisli, BeOS is already a duploid
-   (not primarily Kleisli as initially hypothesized). pane is the duploid
-   unifying both. BMessage's polarity confusion (positive data × negative
-   continuation in one struct) identified as the design flaw psh avoids.
+Lane and agent (Opus 4.6) built psh from scratch. 5940 lines,
+15 commits. Theoretical work (duploid analysis, polarity tables,
+shell design doc) then implementation (AST, parser, evaluator,
+all features). See `docs/specification.md` for theoretical
+foundation.
 
-3. Polarity classification tables for Be, Plan 9, and pane abstractions.
-   Stored in serena (`pane/polarity_classifications`).
+### Session 2 (2026-04-06): Syntax specification
 
-4. Shell design doc written (`pane/docs/shell.md`): two-binary
-   architecture (psh standalone + pane-terminal wrapper), rc grammar,
-   ksh93 discipline functions/coprocesses/namerefs, `get`/`set` namespace
-   builtins, system-first adoption path.
+Lane directed a complete syntax formalization through the
+four-agent roundtable (Plan 9, Be, session type, optics). 25+
+roundtable sessions, multiple refinement rounds. Produced
+`docs/syntax.md` (1103 lines) — the normative target grammar.
 
-5. Dependency deliberation: par removed as direct dependency (enters
-   through pane-session only). fp-library rejected. Final set: anyhow,
-   bpaf, combine, fnmatch-regex, libc, rustix, signals_receipts.
+Key decisions: `match` with `=>` and `;` (not `switch`/`case`);
+9-variant Val (ExitCode, Tuple, Tagged); two character predicates;
+`try` as scoped ⅋ and value-position capture; `return` for
+value-producing blocks; shared `capture_subprocess` primitive
+(siblings, not desugaring); CBV-only `let`; `.get` disciplines
+for live re-evaluation; accessor syntax; free carets.
 
-**Implementation (second half):**
-
-6. Initial prototype: AST, lexer, parser, evaluator, value model. 50 tests.
-
-7. Code review against rc paper and ksh93 source. Fixed concat semantics
-   (pairwise, not cross-product) and redirect evaluation order (left-to-right).
-
-8. Specification document (`docs/specification.md`, 651 lines) written
-   by four agents, cross-deliberated, with five resolutions from Lane
-   (affine not linear, intuitionistic/classical boundary, AST refactor,
-   MonadicLens scope, .get purity enforcement).
-
-9. Rewrite with rustix (safe fd management), fused lex+parse, all bug
-   fixes from code review.
-
-10. Feature additions: globbing, tilde expansion, signal handlers, job
-    control, coprocesses, here-documents, process substitution, ~ match,
-    $" stringify, namerefs, whatis.
-
-11. Four-agent roundtable on typed values. Initial rejection of heavy
-    typing (nushell-style). Second round with five base types
-    (Unit/Bool/Int/Str/Path) accepted unanimously. Val rewrite to
-    6-variant enum with let bindings, type annotations, List[T] syntax,
-    Prism validation, inference in let context.
-
-12. sfio analysis (all 12 documents from ksh26) informed I/O architecture:
-    FdTable design, CaptureBuffer, socketpair coprocesses, Plan 9
-    directness principle ("if your I/O layer exceeds 200 lines, you've
-    taken a wrong turn").
-
-**Key references used:**
-- ksh26 SPEC.md (polarity/duploid analysis of ksh93)
-- ksh26 sfio-analysis suite (12 documents on I/O substrate)
-- ksh93u+m source (nvdisc.c, xec.c, io.c, jobs.c, name.c)
-- Plan 9 rc paper (Duff 1990)
-- Mangel/Melliès/Munch-Maccagnoni 2025 (duploids, L-calculus)
-- Ueno/Das ESOP 2025 (refinement session type inference)
-- Clarke et al. (profunctor optics, MonadicLens)
-
-**serena memories updated:**
-- `pane/duploid_analysis` — refined with Be correction
-- `pane/polarity_classifications` — Be, Plan 9, pane tables
-- `pane/shell_sequent_calculus_analysis` — full deliberation history
-- `pane/rustix_migration` — instructions for pane-session migration
+The spec supersedes the prototype grammar. Implementation restart
+required — parser rewrite with `combine`, `value.rs` rewrite,
+new control flow constructs.
