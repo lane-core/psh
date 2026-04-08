@@ -71,6 +71,16 @@ The shifts exist in rc but are unnamed:
 | `<{cmd}` process substitution | Namespace extension (bind) | computation → name |
 | `x=val; rest` | μ̃-binding (let) | bind value, continue |
 
+psh adds one shift that rc did not have:
+
+| psh mechanism | Shift type | Direction |
+|---|---|---|
+| `$((...))` arithmetic | In-process eval (↓→↑) | computation → value (Int) |
+
+`$((...))` is the same ↓→↑ shift as command substitution, but
+the computation is arithmetic evaluated in-process rather than
+a subprocess. ksh93/POSIX heritage.
+
 psh makes two shifts explicit that rc left implicit:
 
 1. **Command substitution without IFS.** psh splits on newlines,

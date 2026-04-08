@@ -395,9 +395,15 @@ command that consumes them runs.
     accessor    = '.' (NUM | NAME)
                 | '`{' program '}'
                 | '<{' program '}'
+                | '$((' arith_expr '))'
                 | '~' '/' LITERAL
                 | '~'
                 | lambda
+
+    arith_expr  = arith_term (arith_op arith_term)*
+    arith_term  = NUM | VARNAME | '(' arith_expr ')'
+    arith_op    = '+' | '-' | '*' | '/' | '%'
+                | '>' | '<' | '>=' | '<=' | '==' | '!='
 
     var_ref     = '$' VARNAME
 
@@ -441,6 +447,33 @@ Accessors compose: `${nested.0.1}` = projection into element
 
 ksh93 heritage for the brace-delimited convention. See
 specification.md §Tuples for the typing rules.
+
+### Arithmetic (`$((...))`)
+
+Arithmetic expressions in `$((...))` are evaluated in-process
+and return a typed `Val::Int`. Inside the double-parens,
+variable names refer to their integer values without `$`, and
+arithmetic operators are not shell syntax (no quoting needed).
+
+    let x = 42
+    let y = $((x + 1))          # 43
+    let z = $((x * 2))          # 84
+    let ok = $((x > 10))        # 1 (true)
+    let sum = $((x + y * z))    # standard precedence
+
+Variables inside `$((...))` are looked up by name and coerced
+to integer. Non-integer values are an error. Nested parens
+for grouping: `$((x * (y + z)))`.
+
+This is a polarity shift: computation (arithmetic) → value
+(Int). Like command substitution `` `{} `` but the computation
+is arithmetic rather than a subprocess — no fork, evaluated
+in-process.
+
+ksh93/POSIX heritage. rc had no arithmetic (used external
+`expr` or `bc`). psh adds `$((...))` because quoting
+arithmetic operators (`'*'`, `'>'`) in a builtin `expr` defeats
+the purpose of avoiding a fork.
 
 ### Free carets
 
