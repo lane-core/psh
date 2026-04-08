@@ -94,10 +94,10 @@ the result is stored. There is no call-by-name `let` form.
 ### cmd
 
 `cmd name { body }` defines a named computation — a cut
-template in the command sort. This is rc's `fn` [1,
-§Functions], renamed to honestly name the sort. rc's `fn` was
-always a misnomer — it defines a command (a cut), not a
-function (a morphism in a category).
+template in the command sort. This is rc's `fn` [1, §Functions], renamed. Duff chose `fn`
+deliberately, but psh draws a distinction between commands
+(cuts) and functions (morphisms) that rc did not make. `cmd`
+names the sort.
 
 Three forms:
 
@@ -222,7 +222,7 @@ this convention.
 **`else` instead of `if not`.** Duff acknowledged: "The one
 bit of large-scale syntax that Bourne unquestionably does
 better than rc is the if statement with else clause" [1,
-§Why not]. rc's `if not` was a separate command reading
+§Design Principles]. rc's `if not` was a separate command reading
 `$status` implicitly — a state dependency. psh's `else` is a
 syntactic clause of the `if` node.
 

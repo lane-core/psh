@@ -137,6 +137,19 @@ the evaluator, not in the value type.
 shell and external systems (user input, filesystem, coprocess
 wire format). Internal code trusts internal invariants.
 
+**CLOEXEC by default.** Every fd created by the shell
+(pipes, redirections, coprocess socketpairs) is O_CLOEXEC
+unless explicitly inherited by a child. This prevents fd
+leaks across exec boundaries. rustix's pipe and socket
+creation functions support CLOEXEC flags natively.
+
+**Signal safety across fork.** Between `fork()` and
+`execve()`, signal handlers are inherited. The shell must
+either block signals before fork and restore after exec, or
+ensure all signal handlers are async-signal-safe in the child.
+The self-pipe pattern via signal_receipts handles this: signal
+handlers only write a byte to the pipe fd, which is safe.
+
 **No global mutable state.** The `Shell` struct owns all
 mutable state. No `static mut`, no thread-local mutation.
 The reentrancy guard for discipline functions is a field on

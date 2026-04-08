@@ -76,7 +76,7 @@ psh makes two shifts explicit that rc left implicit:
 1. **Command substitution without IFS.** psh splits on newlines,
    not on an arbitrary `$ifs`. The return operation (bytes → list)
    is fixed. Duff kept `$ifs` only because "indispensable" [1,
-   §Why not]; psh removes it, closing the last re-scanning hole.
+   §Design Principles]; psh removes it, closing the last re-scanning hole.
 
 2. **Process substitution as namespace extension.** rc's `<{cmd}`
    returned an fd path while the child ran concurrently. This is
@@ -113,9 +113,12 @@ whole mediates the value/computation boundary.
 is pushed onto a stream with buffered data [SFIO-7], the two
 possible bracketings yield different results because data
 already in value mode (buffered) cannot be re-processed through
-a new computation discipline. This is the duploid's failed
-fourth equation (Mangel/Melliès/Munch-Maccagnoni [2], the
-non-associative composition of call-by-value and call-by-name).
+a new computation discipline. This is structurally analogous to
+the duploid's failed fourth equation (Mangel/Melliès/
+Munch-Maccagnoni [2], the non-associative composition of
+call-by-value and call-by-name). The pattern matches; the full
+duploid composition laws have not been formally verified for
+sfio's discipline stack.
 
 **The lesson for psh:** ksh93's authors built correct polarity
 discipline in sfio and then failed to propagate it to the shell
@@ -163,7 +166,9 @@ non-associative categories integrating call-by-value (Kleisli/
 monadic) and call-by-name (co-Kleisli/comonadic) computation.
 Three of four associativity equations hold; the fourth's failure
 captures the CBV/CBN distinction. Maps restoring full
-associativity are thunkable (pure, value-like).
+associativity are thunkable (pure, value-like). In a dialogue
+duploid (with involutive negation), thunkable = central: purity
+and commutativity coincide (the Führmann-Thielecke theorem).
 
 **Munch-Maccagnoni's thesis** [3] is where duploids originate.
 The companion paper [9] gives the clearest self-contained
@@ -284,7 +289,7 @@ Key syntactic decisions with semantic grounding:
 - **rc parentheses** around conditions: `if(cond)`,
   `while(cond)`, `for(x in list)`, `match(expr)`.
 - **`else` instead of `if not`.** Duff acknowledged rc's
-  weakness here [1, §Why not].
+  weakness here [1, §Design Principles].
 - **`match`/`=>` instead of `switch`/`case`.** rc's `case` arms
   are top-level commands in a list; psh's `match` uses structured
   `=>` arms with `;` separators. The operation is genuinely
@@ -315,10 +320,10 @@ them in the `Namval_t` machinery.
 | rc analog | `fn name { body }` [1, §Functions] | (no rc analog — extension) |
 | Invocation | `name arg1 arg2` | `$f(arg1, arg2)` |
 
-The `cmd` keyword replaces rc's `fn` because rc's `fn` was
-always a misnomer — rc functions are commands (cuts), not
-functions in the mathematical sense (morphisms in a category).
-`cmd` names the sort honestly.
+The `cmd` keyword replaces rc's `fn`. Duff chose `fn`
+deliberately, but psh renames it because psh draws a distinction
+between commands (cuts) and functions (morphisms in a category)
+that rc did not make. `cmd` names the sort.
 
 
 ## Discipline functions
@@ -380,7 +385,7 @@ infinite recursion. ksh93 heritage [SPEC, §Discipline functions].
 ### MonadicLens structure
 
 A variable with `.get` and `.set` disciplines is a MonadicLens
-[Clarke, Definition 3.5]:
+[Clarke, def:monadiclens]:
 
     MndLens_Ψ((A,B),(S,T)) = W(S,A) × W(S×B, ΨT)
 
@@ -415,6 +420,10 @@ The profunctor structure:
 
 - `Output` = rmap (post-compose on output continuation)
 - `Input` = lmap (pre-compose on input source)
+
+Dup and Close are structural rules on the fd context, not
+profunctor maps:
+
 - `Dup` = contraction (two fds alias one resource)
 - `Close` = weakening (discard a resource)
 
@@ -429,8 +438,10 @@ rc-compatible base:
 1. **Redirections** — Adapter (Profunctor constraint only)
 2. **fd save/restore** — Lens (Cartesian constraint)
 
-Word expansion is Kleisli composition in the shell's effect
-monad — a composition pattern, not an optic. It provides the
+Word expansion has Kleisli structure — each stage is a function
+`Word → Val` with possible effects, composing sequentially.
+This is a composition pattern in the shell's effect monad,
+not an optic. It provides the
 view morphism that the discipline system's MonadicLens uses.
 
 The full optic hierarchy (Prism, AffineTraversal, Traversal)
@@ -489,10 +500,13 @@ Each tag has the session type `Send<Req, Recv<Resp, End>>` —
 exactly one legal action at each step. The tag is a session
 identifier, not a reason to abandon session discipline.
 
-This is how 9P worked at the fid level: the connection
-multiplexed by tags, but each fid's lifecycle was a strict
-state machine. Each fid was independently session-typed; tags
-were the multiplexing layer.
+This mirrors 9P's multiplexing: tags are transaction
+identifiers (one per outstanding request, like 9P's uint16
+tags), and each tag identifies an independent request-response
+exchange. In 9P, fids are the stateful session-like entities
+(with lifecycles: walk → open → read/write → clunk); tags
+correlate requests to responses across concurrent fids. psh's
+coprocess tags serve the same correlation role.
 
 The tag space is uint16 (65535). The practical limit comes
 from backpressure (socketpair buffer full = sender blocks),
