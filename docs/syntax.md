@@ -194,7 +194,7 @@ a braced block or `=>` single-line form.
 
     match_arm   = glob_arm | structural_arm
     glob_arm    = glob_pats '=>' lambda_body
-    structural_arm = NAME NAME '=>' lambda_body
+    structural_arm = NAME '(' NAME ')' '=>' lambda_body
     glob_pats   = '(' NAME+ ')' | NAME
 
     body        = '{' program '}'
@@ -281,17 +281,21 @@ Match arms use `=>` to introduce the body and `;` to
 separate. Each arm is an independent branch. Multiple
 patterns per arm use list syntax: `(*.txt *.md) => body`.
 
-**Structural matching** on Sum values (future extension):
+**Structural matching** on Sum values:
 
     match($result) {
-        ok val  => echo 'success: '$val;
-        err msg => echo 'error: '$msg
+        ok(val)  => echo 'success: '$val;
+        err(msg) => echo 'error: '$msg
     }
 
-Structural arms have the form `tag name =>` — the tag, a
-binding name, then `=>`. The binding is a μ̃-binder scoped
+Structural arms use `tag(binding) =>` — the same parens
+syntax as sum construction. The binding is a μ̃-binder scoped
 to the arm body. The variable does not escape the arm. The
 wildcard arm `* =>` does not bind a variable.
+
+The presence of `NAME(` (no space before paren) distinguishes
+structural from glob arms. Glob patterns never have parens
+immediately after a word.
 
 ### try / catch
 
@@ -399,9 +403,11 @@ command that consumes them runs.
 
     value       = '(' word* ')'
                 | tuple
+                | sum_val
                 | lambda
                 | word
     tuple       = '(' word ',' (word ',')* word? ')'
+    sum_val     = NAME '(' value ')'
 
 **Tuples.** Comma-separated values in parentheses. Lists are
 space-separated (rc heritage). The comma disambiguates.
@@ -431,7 +437,7 @@ braces, `.` is always a free caret boundary (rc heritage).
 
 Accessors compose: `${nested.0.1}` = projection into element
 0, then projection into element 1 of that (Lens . Lens = Lens).
-Future: `${result.ok.0}` = Prism then Lens (AffineTraversal).
+`${result.ok.0}` = Prism then Lens (AffineTraversal).
 
 ksh93 heritage for the brace-delimited convention. See
 specification.md §Tuples for the typing rules.
@@ -534,7 +540,7 @@ inside braces projects into structured values.
     $"x               stringify: join elements with spaces
     ${name}           explicit variable name delimiting
     ${name.N}         tuple projection (Lens)
-    ${name.tag}       sum projection (Prism, future)
+    ${name.tag}       sum projection (Prism)
 
 rc heritage for all forms [1, §Variables, §Indexing].
 

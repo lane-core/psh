@@ -225,6 +225,7 @@ In psh's AST, terms are the `Word`/`Value` sort.
 | `(a b c)` | List | Product of strings |
 | `$x^$y` | Concatenation | Kleisli composition of two terms |
 | `\(x) => body` | Lambda | Thunked computation as value (`U` in CBPV) |
+| `ok(42)` | Sum (injection) | Tagged value — coproduct introduction |
 
 ### Coterms (consumers) — Δ
 
@@ -284,7 +285,7 @@ profunctor layer:
 
 | psh sort | λμμ̃ analog | Evaluation | Examples |
 |---|---|---|---|
-| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | Literal, Var, CommandSub, Concat, List, Tuple |
+| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | Literal, Var, CommandSub, Concat, List, Tuple, Sum |
 | `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | Pipeline, Redirect, Background |
 | `Binding` | μ̃-binder | Extends context Γ | Assignment, Cmd, Let |
 | `Command` | Cut / control | Connects terms to coterms, or branches | Exec, If, For, Match, Try, Trap |
@@ -770,23 +771,60 @@ in the type system rather than implicit in the `Namval_t`
 machinery.
 
 
-## Extension path
+## Sums (coproducts, +)
 
-Extensions add connectives to the μμ̃ framework, not new
-sorts. The sorts remain producers/consumers/commands.
+Sums are coproducts — tagged values representing alternatives.
+They are the second connective psh adds beyond rc's base types.
 
-### Sums (coproducts, +)
+**Syntax.** `tag(payload)` constructs a tagged value. `tag` is
+a bare word, immediately followed by `(` (no space). The
+payload is a value inside the parens.
 
-Introduction: `tag payload` constructs a tagged value.
-Elimination: `match` with structural arms.
+    let result = ok(42)
+    let e = err('not found')
+    let opt = some('/tmp/file')
+    let empty = none()
+
+In command position, `ok 42` (with space) is a command named
+`ok` with argument `42` — not sum construction. The `NAME(`
+token (no space) commits the parser to sum construction.
+
+**Typing rule** (coproduct introduction, classical):
 
     Γ ⊢ t : Aᵢ | Δ
     ──────────────────────
     Γ ⊢ injᵢ(t) : A₁ + A₂ | Δ
 
-Profunctor constraint: Cocartesian. Accessor `$result.ok` is
-a Prism preview. Composition across products and coproducts
-yields AffineTraversal (Cartesian + Cocartesian).
+**Elimination** via `match` with structural arms:
+
+    match($result) {
+        ok(val)  => echo 'got '$val;
+        err(msg) => echo 'failed: '$msg
+    }
+
+Structural arms use `tag(binding) =>` — the same parens syntax
+as construction. The binding is a μ̃-binder scoped to the arm
+body. The variable does not escape the arm.
+
+**Accessor syntax** (coproduct elimination — Prism preview):
+
+    echo ${result.ok}       # Prism preview: 42 (or empty if err)
+    echo ${result.err}      # Prism preview: 'not found' (or empty if ok)
+
+`${x.tag}` is a Prism preview — partial projection that
+succeeds if the tag matches, fails (returns empty) otherwise.
+Profunctor constraint: Cocartesian. Composition across products
+and coproducts yields AffineTraversal (Cartesian +
+Cocartesian): `${result.ok.0}` = Prism then Lens.
+
+Sums are positive (value sort), admit all structural rules.
+They are inert data — Clone, no embedded effects.
+
+
+## Extension path
+
+Extensions add connectives to the μμ̃ framework, not new
+sorts. The sorts remain producers/consumers/commands.
 
 ### Prenex polymorphism
 
@@ -801,16 +839,16 @@ complications.
 |---|---|---|
 | Lists (rc base) | Traversal (iteration) | Monoidal |
 | Tuples (products) | Lens (projection) | Cartesian |
+| Sums (coproducts) | Prism (preview) | Cocartesian |
+| Products × Coproducts | AffineTraversal | Cartesian + Cocartesian |
 | fd table (save/restore) | Lens | Cartesian |
 | Redirections | Adapter | Profunctor |
-| Sums (future) | Prism | Cocartesian |
-| Products × Coproducts (future) | AffineTraversal | Cartesian + Cocartesian |
 
-The accessor syntax `${x.N}` (tuples) and `${x.tag}` (sums,
-future) is stable across extensions. Braces are always
-required. What changes is whether the accessor is a Lens
-(product), Prism (coproduct), or AffineTraversal (mixed),
-determined by the type at the access point.
+The accessor syntax `${x.N}` (tuples) and `${x.tag}` (sums)
+is stable. Braces are always required. What changes is whether
+the accessor is a Lens (product), Prism (coproduct), or
+AffineTraversal (mixed), determined by the type at the access
+point.
 
 
 ## References
