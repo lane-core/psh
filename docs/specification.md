@@ -284,7 +284,7 @@ profunctor layer:
 
 | psh sort | λμμ̃ analog | Evaluation | Examples |
 |---|---|---|---|
-| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | Literal, Var, CommandSub, Concat, List |
+| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | Literal, Var, CommandSub, Concat, List, Tuple |
 | `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | Pipeline, Redirect, Background |
 | `Binding` | μ̃-binder | Extends context Γ | Assignment, Cmd, Let |
 | `Command` | Cut / control | Connects terms to coterms, or branches | Exec, If, For, Match, Try, Trap |
@@ -718,23 +718,57 @@ names it. Lexically scoped: inner shadows outer, uninstalled
 on body exit.
 
 
-## Extension path
+## Tuples (products, ×)
 
-Each extension adds connectives to the μμ̃ framework, not new
-sorts. The sorts remain producers/consumers/commands.
+Tuples are products — fixed-size heterogeneous containers.
+They are the first connective psh adds beyond rc's list-of-
+strings base type.
 
-### Tuples (products, ×)
+**Syntax.** Comma-separated values in parentheses.
+Space-separated values in parentheses remain lists (rc
+heritage). The comma is the disambiguator.
 
-Introduction: `(a, b, c)` constructs a product.
-Elimination: `$t.0`, `$t.1` (projection — Lens).
+    (a b c)         # list — rc heritage, space-separated
+    (10, 20)        # tuple — comma-separated
+    ('lane', '/home/lane', 1000)
+
+**Typing rule** (product introduction, classical):
 
     Γ ⊢ t₁ : A₁ | Δ    Γ ⊢ t₂ : A₂ | Δ
     ─────────────────────────────────────────
     Γ ⊢ (t₁, t₂) : A₁ × A₂ | Δ
 
-Profunctor constraint: Cartesian. Accessor `$t.0` is `first`
-from the Cartesian class. Composition: `$nested.0.1` = `first
-. second`.
+**Accessor syntax** (product elimination — Lens projection):
+
+    let pos = (10, 20)
+    echo $pos.0          # 10
+    echo $pos.1          # 20
+
+    let record = ('lane', '/home/lane', 1000)
+    echo $record.0       # lane
+    echo $record.2       # 1000
+
+Accessors `.0`, `.1`, `.2` etc. are Lens projections — the
+`first`, `second` etc. of the Cartesian profunctor class.
+Composition: `$nested.0.1` = `first . second` — ordinary
+function composition of profunctor optics.
+
+Tuples are positive (value sort), admit all structural rules
+(weakening, contraction, exchange). They are inert data —
+Clone, no embedded effects.
+
+**ksh93 lineage.** ksh93's compound variables (`typeset -C`)
+were its struct system. `${x.field}` accessed named fields;
+disciplines mediated access. psh's tuples with positional
+accessors are the typed version — same functionality, explicit
+in the type system rather than implicit in the `Namval_t`
+machinery.
+
+
+## Extension path
+
+Extensions add connectives to the μμ̃ framework, not new
+sorts. The sorts remain producers/consumers/commands.
 
 ### Sums (coproducts, +)
 
@@ -756,21 +790,22 @@ Type abbreviations with parameters:
 over types, no impredicativity. Decidable, no inference
 complications.
 
-### Incremental optics activation
+### Optics activation
 
-| Phase | Types added | Optics gained | Profunctor constraint |
-|---|---|---|---|
-| Base (rc) | List of strings | Adapter (redirections), Lens (fd table) | Profunctor (Adapter), Cartesian (Lens) |
-| +Tuples | Products | Lens on user data | Cartesian |
-| +Sums | Coproducts | Prism | Cocartesian |
-| +Both | Products × Coproducts | AffineTraversal | Cartesian + Cocartesian |
-| +Traversal | List-aware iteration | Traversal | + Monoidal |
+| Type | Optic | Profunctor constraint |
+|---|---|---|
+| Lists (rc base) | Traversal (iteration) | Monoidal |
+| Tuples (products) | Lens (projection) | Cartesian |
+| fd table (save/restore) | Lens | Cartesian |
+| Redirections | Adapter | Profunctor |
+| Sums (future) | Prism | Cocartesian |
+| Products × Coproducts (future) | AffineTraversal | Cartesian + Cocartesian |
 
-No rethinking at each stage. Each phase adds a constraint
-class; composition across phases falls out from the type-class
-union. The accessor syntax `$x.field` is stable — what changes
-is whether the accessor is a Lens (product), Prism (coproduct),
-or AffineTraversal (mixed).
+The accessor syntax `$x.N` (tuples) and `$x.tag` (sums, future)
+is stable across extensions. What changes is whether the
+accessor is a Lens (product), Prism (coproduct), or
+AffineTraversal (mixed), determined by the type at the access
+point.
 
 
 ## References

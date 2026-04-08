@@ -398,19 +398,43 @@ command that consumes them runs.
     accessor    = '.' (NUM | NAME)
 
     value       = '(' word* ')'
+                | tuple
                 | lambda
                 | word
+    tuple       = '(' word ',' (word ',')* word? ')'
 
-### Accessor syntax (reserved)
+**Tuples.** Comma-separated values in parentheses. Lists are
+space-separated (rc heritage). The comma disambiguates.
 
-`$x.0`, `$x.ok` are reserved for future use (tuples, sums).
-In the base system, these are parse errors. This prevents
-user-defined names from colliding with the future accessor
-paths.
+    (a b c)              # list — space-separated
+    (10, 20)             # tuple — comma-separated
+    ('lane', '/home/lane', 1000)
 
-When activated (tuples/sums extension), accessors compose:
-`$result.ok.name` = Prism then Lens (AffineTraversal). See
-specification.md §Extension path.
+A trailing comma is permitted: `(10, 20,)` = `(10, 20)`.
+A single-element tuple requires a trailing comma: `(42,)`.
+Without the comma, `(42)` is a one-element list.
+
+psh extension — rc had no tuples.
+
+### Accessor syntax
+
+Accessors project into structured values. `.N` (numeric)
+projects from tuples (Lens). `.name` (alphabetic) is reserved
+for future sum/record access (Prism).
+
+    $pos.0               # tuple projection (0-based)
+    $pos.1               # second element
+    $record.2            # third element
+
+Accessors take priority over free carets when the token
+immediately following a `var_ref` is `.` followed by a digit
+or `NAME`. Use explicit caret (`$stem^.c`) or brace
+delimiting (`${stem}.c`) to get concatenation instead.
+
+Accessors compose: `$nested.0.1` = projection into element 0,
+then projection into element 1 of that (Lens . Lens = Lens).
+Future: `$result.ok.0` = Prism then Lens (AffineTraversal).
+See specification.md §Tuples.
 
 ### Free carets
 
