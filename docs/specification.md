@@ -69,7 +69,6 @@ The shifts exist in rc but are unnamed:
 |---|---|---|
 | `` `{cmd} `` command substitution | Force then return (↓→↑) | computation → value |
 | `<{cmd}` process substitution | Namespace extension (bind) | computation → name |
-| `eval "$string"` | Force (elim ↓) | value → computation |
 | `x=val; rest` | μ̃-binding (let) | bind value, continue |
 
 psh makes two shifts explicit that rc left implicit:
@@ -77,7 +76,7 @@ psh makes two shifts explicit that rc left implicit:
 1. **Command substitution without IFS.** psh splits on newlines,
    not on an arbitrary `$ifs`. The return operation (bytes → list)
    is fixed. Duff kept `$ifs` only because "indispensable" [1,
-   §Design]; psh removes it, closing the last re-scanning hole.
+   §Why not]; psh removes it, closing the last re-scanning hole.
 
 2. **Process substitution as namespace extension.** rc's `<{cmd}`
    returned an fd path while the child ran concurrently. This is
@@ -130,8 +129,7 @@ psh makes polarity explicit:
 
 - **Typed fd roles** (`Pipe`, `File`, `Tty`, `Coproc`,
   `Session`) — not sfio's universal `Sfio_t` with runtime mode
-  bits. This is the approach Be's BDataIO hierarchy [Be] took:
-  explicit types in the class hierarchy, not runtime flags.
+  bits. Explicit types over runtime flags.
 - **Wrapped redirections** that make evaluation order structural
   — the AST nesting determines the only legal evaluation order.
   No Dccache problem possible because the profunctor composition
@@ -226,24 +224,22 @@ focalization — the same deterministic reduction order that
 Curien and Munch-Maccagnoni's focused calculus [8] achieves
 syntactically, psh achieves operationally.
 
-### Intuitionistic within process, classical across forks
+### Classical control
 
-psh uses the ⊕ error convention exclusively (v1). Every
-operation returns `Status`. There is no `siglongjmp`, no
-continuation capture, no `checkpt` stack. This restricts psh to
-intuitionistic control within a single process: the sequent
-Γ ⊢ A has a single conclusion.
-
-Across fork boundaries, psh is classical. `@{ cmds }` duplicates
-the continuation (classical contraction — each copy evolves
+psh is classical. The sequent Γ ⊢ A | Δ has multiple
+conclusions — Δ is populated by `trap` bindings (μ-binders
+that name signal continuations). `@{ cmds }` duplicates the
+continuation (classical contraction — each copy evolves
 independently). The fork boundary is the shift between the
-intuitionistic interior and the classical exterior.
+local context and the classical exterior.
 
-This eliminates ksh93's continuation-stack corruption bugs [SPEC,
-§"Continuations and classical control"] by absence. ksh93's
-`sigjmp_buf`/`checkpt` mechanism was classical control with
-reified continuations. psh's ⊕-only discipline means every
-computation returns exactly once to its immediate caller.
+psh avoids ksh93's continuation-stack corruption bugs [SPEC,
+§"Continuations and classical control"] by making the μ-binder
+lexically scoped. ksh93's `sigjmp_buf`/`checkpt` mechanism used dynamic
+traps with global mutation (`sh.prefix`, `sh_getscope`). psh's
+lexical `trap` binds a continuation in Δ for the duration of
+a block — no global state, no stack corruption, no longjmp.
+The classical control is tamed by lexical scope, not eliminated.
 
 ### Three operations, three roles
 
@@ -289,8 +285,10 @@ Key syntactic decisions with semantic grounding:
   `while(cond)`, `for(x in list)`, `match(expr)`.
 - **`else` instead of `if not`.** Duff acknowledged rc's
   weakness here [1, §Why not].
-- **`match`/`=>` instead of `switch`/`case`.** No fall-through
-  makes `switch` a false cognate. `match` names the operation.
+- **`match`/`=>` instead of `switch`/`case`.** rc's `case` arms
+  are top-level commands in a list; psh's `match` uses structured
+  `=>` arms with `;` separators. The operation is genuinely
+  different. `match` names the operation honestly.
 - **`try`/`catch`** — scoped ErrorT. See §Error model.
 - **`trap SIGNAL { handler } { body }`** — lexical μ-binder.
   See §Error model.
@@ -313,7 +311,7 @@ them in the `Namval_t` machinery.
 | First-class | No — named computation in Θ | Yes — value in Γ, storable |
 | Scope | Dynamic (reads current scope) | Captures at definition |
 | Effects | May have effects (oblique map) | Purity inferred (thunkable when pure) |
-| CBPV type | `U(F(Status))` | `U(A → B)` or `U(A → F(B))` |
+| CBPV type | `F(Status)` | `U(A → B)` or `U(A → F(B))` |
 | rc analog | `fn name { body }` [1, §Functions] | (no rc analog — extension) |
 | Invocation | `name arg1 arg2` | `$f(arg1, arg2)` |
 
@@ -325,21 +323,26 @@ functions in the mathematical sense (morphisms in a category).
 
 ## Discipline functions
 
-### .get — pure observation (Getter)
+### .get — pure notification hook
 
 `cmd x.get` is not legal. `.get` disciplines are pure — they
-are Getters in the profunctor optics framework [Clarke, §4.7],
-morphisms S → A in the base category. They cannot perform I/O,
-cannot mutate the variable they observe, cannot call external
-commands.
+cannot perform I/O, cannot mutate the variable they observe,
+cannot call external commands.
 
 A `.get` discipline is defined as a lambda:
 
     let x.get = \() => { ... pure computation ... }
 
-The body fires on every `$x` access as a notification — a
-side-effect-free observation. The returned value is always the
-stored value, not the body's output.
+The body fires on every `$x` access as a pure notification —
+side-effect-free observation (logging, tracing). The returned
+value is always the stored value, not the body's output. The
+body's return value is discarded.
+
+Because `.get` does not compute the value (it merely observes
+access), the variable read itself is the Getter: `view(s) = s`,
+identity on the stored slot. `.get` is a hook attached to
+the Getter, not the Getter itself. The purity constraint
+ensures the hook cannot disturb the Getter's idempotence.
 
 **Why pure .get is enforced.** An impure `.get` that queries
 external resources creates the Dccache bug class at the
@@ -350,10 +353,11 @@ expression yield different values. Enforcing purity on `.get`
 eliminates this by construction — the polarity boundary prevents
 circular dependencies from forming.
 
-This is the optics-theoretic argument: a pure `.get` is a Getter
-(idempotent, composable, cacheable). An impure `.get` degrades
-to MonadicGetter, which loses law preservation (PutGet fails)
-and breaks compositional soundness across the discipline system.
+The optics argument: the variable read is a Getter (S → A,
+idempotent, composable, cacheable) in the base category W. An
+impure `.get` hook would degrade the read to a Kleisli arrow
+S → ΨA, which loses idempotence and breaks compositional
+soundness across the discipline system.
 
 **Live variable refresh** happens through a separate mechanism:
 an explicit `cmd` that writes to the variable's stored slot.
@@ -376,7 +380,7 @@ infinite recursion. ksh93 heritage [SPEC, §Discipline functions].
 ### MonadicLens structure
 
 A variable with `.get` and `.set` disciplines is a MonadicLens
-[Clarke, §4.6]:
+[Clarke, Definition 3.5]:
 
     MndLens_Ψ((A,B),(S,T)) = W(S,A) × W(S×B, ΨT)
 
@@ -419,18 +423,18 @@ Duff: "Redirections are evaluated from left to right" [1,
 the only legal evaluation order the correct one. The profunctor
 laws hold by construction.
 
-The profunctor constraint is Adapter-level (pure `Profunctor p
-=> dimap`): no Cartesian or Cocartesian structure needed. This
-is the minimal system — three genuine optics survive in the
+This is the minimal system — two genuine optics survive in the
 rc-compatible base:
 
-1. **Redirections** — Adapter (Profunctor constraint)
+1. **Redirections** — Adapter (Profunctor constraint only)
 2. **fd save/restore** — Lens (Cartesian constraint)
-3. **Word expansion** — Kleisli composition (not an optic per
-   se, but the view half of MonadicLens)
 
-The full optic hierarchy activates when products and coproducts
-are added.
+Word expansion is Kleisli composition in the shell's effect
+monad — a composition pattern, not an optic. It provides the
+view morphism that the discipline system's MonadicLens uses.
+
+The full optic hierarchy (Prism, AffineTraversal, Traversal)
+activates when products and coproducts are added.
 
 ### Word expansion as Kleisli pipeline
 
@@ -497,14 +501,16 @@ operate at the floor.
 
 ### PendingReply handles
 
-`print -p` returns a `PendingReply` — a `#[must_use]` linear
-handle. `read -p` consumes a `PendingReply` to get the
-response. Dropping a `PendingReply` without reading sends a
-cancel (the Tflush equivalent — affine gap compensation). The
-tag cannot be reused until the handle is consumed or dropped.
+`print -p` returns a `PendingReply` — a `#[must_use]` handle.
+`read -p` consumes a `PendingReply` to get the response.
+Dropping a `PendingReply` without reading sends a cancel (the
+Tflush equivalent — affine gap compensation). The tag cannot
+be reused until the handle is consumed or dropped.
 
-This is session type discipline materialized as a Rust value:
-linear, consuming, self-documenting. The user never sees
+PendingReply is affine in Rust's type system (Drop exists) but
+linear by intent (must be consumed). Drop-as-cancel is the
+compensation that bridges the gap. This is session type
+discipline materialized as a Rust value. The user never sees
 session types, protocol annotations, or state machines. They
 see `print -p` returning something they must eventually
 `read -p`.
@@ -588,14 +594,18 @@ extends the scope chain into the filesystem honestly.
 
 ## Error model
 
-### ⊕ only (v1)
+### ⊕ and ⅋
 
 Every operation returns `Status(pub String)`. rc: "On Plan 9
 status is a character string describing an error condition. On
 normal termination it is empty" [1, §Exit status]. psh preserves
 this. `Status::is_success()` checks emptiness.
 
-### try/catch — scoped ErrorT
+The ⊕/⅋ duality: `$status` is ⊕ (positive — caller inspects a
+tagged value). Traps are ⅋ (negative — callee invokes a
+continuation). Both are present.
+
+### try/catch — scoped ErrorT (⊕ discipline)
 
 `try { body } catch e { handler }` changes the sequencing
 combinator within `body` from unconditional `;` to monadic `;ₜ`
@@ -607,20 +617,13 @@ Equivalent to lexically-scoped `set -e` without POSIX `set -e`'s
 composability defects. Boolean contexts (if/while conditions,
 &&/|| LHS, `!` commands) are exempt.
 
-### trap — lexical μ-binder
+### trap — lexical μ-binder (⅋ discipline)
 
 `trap SIGNAL { handler } { body }` installs a signal handler
 for the duration of the body. The handler is the μ-binder of
 Curien-Herbelin [5, §2.1] — it captures the continuation and
 names it. Lexically scoped: inner shadows outer, uninstalled
 on body exit.
-
-### ⅋ — deferred
-
-Full classical control (traps as reified continuations with
-`siglongjmp` semantics) is deferred. The ⊕/⅋ duality holds:
-`$status` is ⊕ (caller inspects), traps are ⅋ (callee invokes
-continuation). The design does not close the door on ⅋.
 
 
 ## Extension path
@@ -665,7 +668,7 @@ complications.
 
 | Phase | Types added | Optics gained | Profunctor constraint |
 |---|---|---|---|
-| Base (rc) | List of strings | Adapter, Lens (fd table) | Profunctor, Cartesian |
+| Base (rc) | List of strings | Adapter (redirections), Lens (fd table) | Profunctor (Adapter), Cartesian (Lens) |
 | +Tuples | Products | Lens on user data | Cartesian |
 | +Sums | Coproducts | Prism | Cocartesian |
 | +Both | Products × Coproducts | AffineTraversal | Cartesian + Cocartesian |

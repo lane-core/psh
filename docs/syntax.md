@@ -159,7 +159,7 @@ AST analysis: if the body contains no assignments to variables
 outside the lambda's scope, no fork/exec, no side-effecting
 builtins, no I/O, no coprocess interaction — the lambda is
 classified pure. Pure lambdas are thunkable/central in the
-duploid [3, Proposition 6]. Impure lambdas work but degrade
+duploid [9, Table 1]. Impure lambdas work but degrade
 to oblique maps. See specification.md §Two kinds of callable.
 
 ### Discipline .get functions
@@ -267,13 +267,15 @@ rc's `while() echo y` (empty parens = always true) becomes
         * => echo 'unknown'
     }
 
-**`match` instead of `switch`.** rc's `switch`/`case` had
-implicit fall-through — execution ran from one `case` to the
-next [1, §Switch]. psh's `match` uses `=>` arms with `;`
-separators and no fall-through. Using `switch` would be a
-false cognate — it looks like rc heritage but has different
-semantics. `match` names the operation honestly: pattern
-matching / coproduct elimination.
+**`match` instead of `switch`.** rc's `switch`/`case` used
+`case` labels as top-level commands within a list body — the
+`switch` body is syntactically a `{list}` with `case`
+sub-commands [1, §Switch]. psh's `match` uses structured `=>`
+arms with `;` separators — a genuinely different syntactic
+form. Using `switch` would be a false cognate — it looks like
+rc heritage but has a different syntactic role. `match` names
+the operation honestly: pattern matching / coproduct
+elimination.
 
 Match arms use `=>` to introduce the body and `;` to
 separate. Each arm is an independent branch. Multiple
@@ -316,8 +318,6 @@ This is categorically different from `if`:
 Boolean contexts are exempt: `if` conditions, `while`
 conditions, `&&`/`||` LHS, `!` commands are not checked.
 
-`try` without `catch` is legal — errors abort the block
-silently and Status propagates to the enclosing scope.
 `try` blocks nest: inner catches before outer.
 
 See specification.md §Error model for the full semantic
@@ -368,7 +368,7 @@ redirections, pipelines, and operators.
 §Coprocesses for the full discipline.
 
 **`@{ }` subshell.** Fork with a copy of the current scope.
-Equivalent to rc's `rfork nefs` [1, §Built-in commands].
+rc's `@` operator [1, §Operators] — a subshell fork.
 Classical contraction — continuation duplicated, each copy
 independent.
 
@@ -576,3 +576,6 @@ Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
 [4] Levy. *Call-by-Push-Value.* Springer, 2004.
 
 [5] Curien, Herbelin. "The Duality of Computation." ICFP, 2000.
+
+[9] Munch-Maccagnoni. "Models of a Non-Associative Composition."
+    FoSSaCS, 2014.
