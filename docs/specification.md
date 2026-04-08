@@ -191,16 +191,112 @@ as syntax.
 
 ## The three sorts, made explicit
 
-psh's AST has four node types reflecting the sequent calculus.
-ksh93 [SPEC] had this structure implicitly in `Shnode_t` via
-`tretyp & COMMSK` tags. psh separates them as Rust enums:
+In Curien-Herbelin's λμμ̃ [5], the three syntactic categories
+are:
+
+- **Terms** (producers): values that have been computed or are
+  ready to compute. They live on the left of the cut.
+- **Coterms** (consumers): contexts that are waiting to receive
+  a value. They live on the right of the cut.
+- **Commands** (cuts): a term meeting a coterm — ⟨t | e⟩ — the
+  moment of interaction where computation happens.
+
+A cut is not a command definition. A cut is the *statement*
+that connects a producer to a consumer. `echo hello` is a cut:
+the producer `hello` meets the consumer (echo's I/O context —
+stdout, the continuation of the script). The `cmd` keyword
+defines a computation; the cut happens when the computation is
+invoked with arguments.
+
+### Terms (producers) — Γ
+
+Terms are values: literals, variable references, command
+substitution results, lists, lambdas, concatenations. They are
+evaluated eagerly (CBV) by `eval_word` before the command that
+consumes them runs. Terms inhabit the context Γ.
+
+In psh's AST, terms are the `Word`/`Value` sort.
+
+| psh construct | Term type | Notes |
+|---|---|---|
+| `hello` | Literal | Positive, inert |
+| `$x` | Variable reference | Projects from Γ |
+| `` `{cmd} `` | Command substitution | Shift ↓→↑: computation forced, result returned as value |
+| `(a b c)` | List | Product of strings |
+| `$x^$y` | Concatenation | Kleisli composition of two terms |
+| `\(x) => body` | Lambda | Thunked computation as value (`U` in CBPV) |
+
+### Coterms (consumers) — Δ
+
+Coterms are contexts waiting to receive a value. They are
+the part of the computation that hasn't happened yet — what
+comes next after a value is produced. In rc, coterms were
+entirely implicit. psh names them.
+
+| psh construct | Coterm type | Notes |
+|---|---|---|
+| Pipe reader (`stdin` of next stage) | Continuation | Waiting for bytes from the producer |
+| Redirect target (`>file`) | I/O context | Waiting for output to direct somewhere |
+| The rest of the script after `x = val` | Continuation (μ̃) | `x = val; rest` — `rest` is the coterm |
+| Signal handler in `trap` | Named continuation (μ) | Waiting for a signal to fire |
+| `catch e { handler }` | Error continuation | Waiting for a nonzero status |
+
+Coterms populate Δ. In the classical sequent Γ ⊢ A | Δ,
+Δ contains the continuations — alternative futures that the
+computation might jump to. In psh, Δ is populated by:
+
+- **trap bindings**: `trap SIGINT { handler } { body }` binds
+  the handler as a continuation in Δ for the duration of the
+  body. The μ-binder `μα.c` in the calculus [5] — α names the
+  signal continuation, c is the body that runs with α in scope.
+- **catch bindings**: `try { body } catch e { handler }` binds
+  the error handler as a continuation in Δ for the duration of
+  the try body. Semantically similar but triggered by status
+  rather than signal.
+
+The evaluator function `run_expr` handles the coterm sort:
+pipelines (co-Kleisli — demand-driven) and redirections
+(profunctor transformations on the I/O context).
+
+### Commands (cuts) — ⟨t | e⟩
+
+A command is a cut: a term meets a coterm and computation
+happens. The statement `echo $x` is the cut ⟨$x | echo-context⟩
+where the producer ($x, evaluated) meets the consumer (echo's
+stdout binding + the script continuation).
+
+| psh construct | Cut structure | Notes |
+|---|---|---|
+| `echo hello` | ⟨hello \| stdout + continuation⟩ | Simple command |
+| `cmd1 \| cmd2` | ⟨cmd1-stdout \| cmd2-stdin⟩ | Pipeline: cut via pipe |
+| `x = val` | ⟨val \| μ̃x.rest⟩ | Assignment: value cut against a binder |
+| `if(cond) { A } else { B }` | ⟨status \| case(A, B)⟩ | Coproduct elimination |
+| `match(v) { arms }` | ⟨v \| case(arm₁, ..., armₙ)⟩ | Multi-way elimination |
+
+In psh's AST, the `Binding` sort handles μ̃-binders (context
+extension: assignment, let, cmd, ref) and the `Command` sort
+handles cuts and control flow (exec, if, for, match, try, trap).
+
+### The AST's four sorts
+
+The AST has four node types — the three logical sorts plus the
+profunctor layer:
 
 | psh sort | λμμ̃ analog | Evaluation | Examples |
 |---|---|---|---|
 | `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | Literal, Var, CommandSub, Concat, List |
 | `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | Pipeline, Redirect, Background |
-| `Binding` | μ̃-binder (let) | Extends context Γ | Assignment, Cmd, Let |
-| `Command` | Cut / control | Connects producers to consumers, or branches | Exec, If, For, Match, Try, Trap |
+| `Binding` | μ̃-binder | Extends context Γ | Assignment, Cmd, Let |
+| `Command` | Cut / control | Connects terms to coterms, or branches | Exec, If, For, Match, Try, Trap |
+
+The `Expr` sort is an engineering choice, not a logical one —
+it separates the profunctor transformations (redirections,
+pipelines) from the cut/control layer. Logically, `Expr`
+constructs are part of the coterm apparatus: pipelines build
+co-Kleisli contexts, redirections transform I/O contexts via
+profunctor maps. The evaluator boundary `run_expr` enforces
+this: it handles the coterm machinery before `run_cmd` performs
+the cut.
 
 
 ## Polarity discipline
