@@ -664,26 +664,6 @@ coprocess-to-coprocess communication — star topology. Deadlock
 freedom by asymmetric initiator/responder topology (shell
 always initiates, coprocess always responds).
 
-### "Pane-in-miniature"
-
-Session-typed coprocesses are a proof-of-concept for pane's
-core design thesis: typed bidirectional communication between
-concurrent processes. The coprocess proves the type discipline
-works for the easy case (one channel, two parties, reliable
-transport). Pane extends to harder environments (unreliable
-transport, authentication, multi-party).
-
-The mapping:
-
-| Coprocess | Pane |
-|---|---|
-| `def name : ...` | `impl Handles<P>` |
-| `name \|&` (fork + socketpair) | DeclareInterest + connection |
-| `print -p` / `read -p` | ServiceHandle send/recv |
-| Coprocess exit | PaneExited / ServiceTeardown |
-| Parse failure on recv | FrameCodec deserialization error |
-
-
 ## Namespace (three tiers)
 
 | Tier | Resolution | Structural rules |
