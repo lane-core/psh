@@ -1,15 +1,24 @@
 # psh syntax
 
 Formal grammar for psh. Starts from rc (Duff 1990) and names
-each extension. Productions marked **[planned]** are not yet
-implemented. Unmarked productions are implemented and tested.
+each extension. Theoretical foundation: `docs/specification.md`.
 
-Implementation status: 10 Val variants exist in the runtime.
-Parser constructs all except Tuple literals `(a, b)` and Sum
-construction `tag[value]`, which remain planned.
+rc reference: `reference/plan9/man/1/rc` and
+`reference/plan9/papers/rc.ms`.
 
-rc reference: `reference/plan9/man/1/rc` and `reference/plan9/papers/rc.ms`.
-Theoretical foundation: `docs/specification.md`.
+
+## Design principle
+
+rc's actual syntax is the baseline. Every convention from rc
+is preserved unless explicitly departed from with justification.
+Extensions are faithful to the spirit of rc: a keyword before
+braces for new block constructs, operators where operators are
+expected, no overloading of existing rc syntax for new purposes.
+
+Duff's first principle — "input is never scanned more than
+once" [1, §Design Principles] — governs all parsing decisions.
+The parser does not consult the environment; parsing is
+context-free.
 
 
 ## Notation
@@ -35,8 +44,8 @@ A program is a sequence of commands separated by terminators
     terminator  = '\n' | ';'
     comment     = '#' (any char except '\n')*
 
-A comment starts with `#` and runs to end of line. Comments do
-not nest.
+A comment starts with `#` and runs to end of line. Comments
+do not nest. rc heritage [1, §Simple commands].
 
 
 ## Commands
@@ -47,320 +56,293 @@ flow construct, or an expression.
     command     = binding | control | return_cmd | expr_cmd
     return_cmd  = 'return' value?
 
-### Bindings
+
+## Bindings
 
 Bindings extend the context Γ with a new name. They are
 μ̃-binders in the sequent calculus reading (specification.md
-§The four sorts).
+§The three sorts).
 
-    binding     = assignment | let_binding | fn_def | ref_def
+    binding     = assignment | let_binding | cmd_def | ref_def
 
     assignment  = NAME '=' value
     let_binding = 'let' let_quals NAME (':' type_ann)? '=' value
-    let_quals   = 'mut'? 'export'?         -- order free, duplicates rejected
-    fn_def      = 'fn' NAME fn_params? body
-    fn_params   = '(' NAME* ')'
+    let_quals   = 'mut'? 'export'?
+    cmd_def     = 'cmd' NAME cmd_params? body
     ref_def     = 'ref' NAME '=' NAME
 
-    type_ann    -- see §Type annotations for the full grammar
+    type_ann    -- see §Type annotations (future)
 
-**Assignment** (`x = val`) walks the scope chain and updates the
-first matching variable. If no variable exists, creates one in
-the current scope. Always produces `Val::Str` — no type
-inference. rc heritage (Duff 1990, §Variables and Assignment).
+### Assignment
 
-**let** (`let x = val`) always creates in the current scope.
-Immutable by default. Runs type inference: `42` → Int, `true` →
-Bool, `/tmp` → Path, `hello` → Str. Quoted values (`'42'`) stay
-Str. Leading-zero integers (`042`) stay Str. Optional type
+`x = val` walks the scope chain and updates the first matching
+variable. If no variable exists, creates one in the current
+scope. Always produces `Val::Str` — no type inference. rc
+heritage [1, §Variables and Assignment].
+
+### let
+
+`let x = val` always creates in the current scope. Immutable
+by default. Runs type inference: `42` → Int, `true` → Bool,
+`/tmp` → Path, `hello` → Str. Quoted values (`'42'`) stay Str.
+Leading-zero integers (`042`) stay Str. Optional type
 annotation validates via Prism check. psh extension.
 
 `let` is always CBV. The RHS is evaluated at binding time and
 the result is stored. There is no call-by-name `let` form.
 
-For live re-evaluation (tier-3, pane namespace queries), use a
-`.get` discipline on the variable:
+### cmd
 
-    let mut cursor : Int = 0
-    fn cursor.get { cursor = `{ get /pane/editor/attrs/cursor } }
+`cmd name { body }` defines a named computation — a cut
+template in the command sort. This is rc's `fn` [1,
+§Functions], renamed to honestly name the sort. rc's `fn` was
+always a misnomer — it defines a command (a cut), not a
+function (a morphism in a category).
 
-The `.get` fires on every `$cursor` access (notification hook),
-and the assignment inside updates the stored value. See
-§Discipline functions above.
+Three forms:
 
-For capturing fallible computation results as typed values, use
-`try` in expression position:
+    cmd name { body }           # positional params: $1, $2, $*
+    cmd name() { body }         # nullary: takes no arguments
+    cmd name(a b c) { body }    # named params: $a, $b, $c
 
-    let result : Result[Int] = try { get /pane/editor/attrs/cursor }
-
-`try` in value position forks, captures stdout + exit status,
-and returns `Result[T]`. See §`try` in value position below.
-
-**fn** defines a function. Three forms:
-
-    fn name { body }           # positional params: $1, $2, $*
-    fn name() { body }         # nullary: takes no arguments
-    fn name(a b c) { body }   # named params: $a, $b, $c
-
-Without parentheses, the function uses rc-style positional
+Without parentheses, the command uses rc-style positional
 parameters (`$1`, `$2`, `$*`, `$#*`). With parentheses, the
-function declares its parameter interface — `()` means nullary,
+command declares its parameter interface — `()` means nullary,
 `(a b c)` binds arguments to named variables. Named parameters
-are bound in the function scope alongside positional `$1`, `$2`
+are bound in the command scope alongside positional `$1`, `$2`
 etc. for compatibility.
 
-Also handles discipline functions: `fn x.get { body }`,
-`fn x.set { body }`, `fn x.set(val) { body }`.
-rc heritage for plain functions; ksh93 heritage for disciplines.
+A `cmd` is not first-class; it is not a value; it cannot be
+stored in a variable or passed as an argument. It is a named
+entry in the computation context Θ.
 
-**Discipline functions.** `fn x.get { body }` fires as a
-notification on `$x` access — a side-effect hook, not a view
-transformer. The `.get` body runs in a readonly scope (mutations
-rejected). The returned value is always the stored value, not
-the body's output. The `.get` body cannot influence what `$x`
-evaluates to. `fn x.set { body }` fires on assignment to `x`,
-with `$1` bound to the new value. Reentrancy guard prevents
-`fn x.set { x = $1 }` from recursing. ksh93 heritage.
+Also handles discipline `.set` functions: `cmd x.set { body }`,
+`cmd x.set(val) { body }`. ksh93 heritage. Note: `.get`
+disciplines are pure and defined as lambdas, not `cmd` — see
+§Discipline functions.
 
-**ref** (`ref name = target`) creates a nameref — an alias that
-resolves through `target` on every access. The target is a
-literal name, not an expression. Disciplines are keyed to the
-syntactic name, not the resolved target: `$y` where `ref y = x`
-does not fire `fn x.get`. ksh93 heritage.
+### ref
 
-### Control flow
+`ref name = target` creates a nameref — an alias that resolves
+through `target` on every access. The target is a literal name,
+not an expression. ksh93 heritage.
+
+
+## Functions (values, not commands)
+
+Functions are values in the value sort, created by `let`-binding
+a lambda expression. They are first-class: storable, passable,
+composable.
+
+    lambda      = '\' params '=>' (body | command)
+    params      = '(' NAME* ')' | NAME
+
+    let double = \(x) => expr $x '*' 2
+    let greet  = \(name) => { echo 'hello '$name; return 0 }
+    let add    = \(x) => \(y) => expr $x + $y    # currying
+
+In CBPV terms [4], a lambda is `U(A₁ → ... → Aₙ → F(B))`
+when impure, or `U(A₁ → ... → Aₙ → B)` when pure. The `U`
+(thunk) wraps a computation as a value. The distinction between
+`cmd` and `let`+`\` is the CBPV value/computation boundary
+surfaced as syntax. See specification.md §Two kinds of callable.
+
+**Capture semantics.** Lambdas capture free variables at
+definition time — `Vec<(String, Val)>`, positive, Clone. This
+is the closed-term property. Named `cmd` definitions use
+dynamic resolution (read current scope at call time). The
+distinction is the sort boundary: values (lambdas) are
+self-contained; computations (cmds) live in a context.
+
+**Purity inference.** The shell infers purity by conservative
+AST analysis: if the body contains no assignments to variables
+outside the lambda's scope, no fork/exec, no side-effecting
+builtins, no I/O, no coprocess interaction — the lambda is
+classified pure. Pure lambdas are thunkable/central in the
+duploid [3, Proposition 6]. Impure lambdas work but degrade
+to oblique maps. See specification.md §Two kinds of callable.
+
+### Discipline .get functions
+
+`.get` disciplines are pure — they are Getters (specification.md
+§Discipline functions). Defined as lambdas:
+
+    let x.get = \() => { ... pure computation ... }
+
+The body fires on every `$x` access as a notification. The
+returned value is always the stored value, not the body's
+output. `.get` bodies cannot perform I/O, cannot mutate the
+variable they observe, cannot call external commands. See
+specification.md §Discipline functions for the full rationale.
+
+
+## Control flow
 
 Control flow constructs branch or iterate. Each takes its
-condition or value as a bare expression and its body as a braced
-block.
+condition or value in rc-style parentheses and its body as
+a braced block or `=>` single-line form.
 
     control     = if_cmd | for_cmd | while_cmd
-                | match_cmd | try_cmd
+                | match_cmd | try_cmd | trap_cmd
 
-    if_cmd      = 'if' pipeline body ('else' (if_cmd | body))?
-    for_cmd     = 'for' NAME 'in' value body
-    while_cmd   = 'while' pipeline body
-    match_cmd   = 'match' value '{' match_arm (';' match_arm)* ';'? '}'
-    try_cmd     = 'try' body ('else' NAME body)?
+    if_cmd      = 'if' '(' pipeline ')' body ('else' (if_cmd | body))?
+    for_cmd     = 'for' '(' NAME 'in' value ')' body
+    while_cmd   = 'while' '(' pipeline ')' body
+    match_cmd   = 'match' '(' value ')' '{' match_arm (';' match_arm)* ';'? '}'
+    try_cmd     = 'try' body 'catch' NAME body
+    trap_cmd    = 'trap' SIGNAL body body
 
     match_arm   = glob_arm | structural_arm
     glob_arm    = glob_pats '=>' lambda_body
-    structural_arm = NAME '[' NAME ']' '=>' lambda_body
+    structural_arm = NAME NAME '=>' lambda_body
     glob_pats   = '(' NAME+ ')' | NAME
 
     body        = '{' program '}'
                 | '=>' command
 
 `=>` is a dependent keyword — a single-line body introducer.
-It can appear after any keyword-initiated clause: `if`, `for`,
-`while`, `try`, `else`, `fn`, or a `match` pattern. After `=>`,
-the parser reads a single command (terminated by `;`, newline,
-or `}`). `{` opens a multi-line body as before. Both forms are
-interchangeable wherever `body` appears in the grammar.
+After `=>`, the parser reads a single command (terminated by
+`;`, newline, or `}`). `{` opens a multi-line body. Both forms
+are interchangeable wherever `body` appears.
 
-Inside `match { }`, arms are separated by `;` with an optional
-trailing `;` before `}`. Newlines between arms are trivia —
-the parser ignores them. This means multi-line and single-line
-match blocks use the same grammar:
+### if / else
 
-    # Multi-line
-    match $type {
-        editor   => return '📝';
-        terminal => return '💻';
-        * => return '?'
+    if(test -f $file) {
+        echo 'exists'
+    } else {
+        echo 'missing'
     }
 
-    # Single-line (same grammar, just horizontal)
-    match $type { editor => return '📝'; terminal => return '💻'; * => return '?' }
+    if(test -d $dir) => echo 'is directory'
 
-Note: `ok => { }` (single word before `=>`) is a glob match on
-the literal string "ok", not structural decomposition. Structural
-arms use brackets: `ok[v] => { }` (tag + binding). The presence of
-`[]` distinguishes structural from glob arms. Multi-pattern
-glob arms use list syntax: `(*.txt *.md) => { }`.
+**rc parens for conditions.** `if(cond)` — rc's parentheses
+around the condition [1, §Conditional execution]. psh preserves
+this convention.
 
-**Divergence from rc:** rc wraps conditions in parentheses:
-`if(list) command`, `for(name in list) command`,
-`while(list) command`, `switch(word){ ... }`. psh does not. Four
-related changes:
+**`else` instead of `if not`.** Duff acknowledged: "The one
+bit of large-scale syntax that Bourne unquestionably does
+better than rc is the if statement with else clause" [1,
+§Why not]. rc's `if not` was a separate command reading
+`$status` implicitly — a state dependency. psh's `else` is a
+syntactic clause of the `if` node.
 
-1. **No parentheses around conditions.** The opening `{` of the
-   body terminates the condition. rc used `()` for this, but `()`
-   also means list literal — an overloading psh avoids. The `{`
-   token is unambiguous: it cannot appear as a bare word.
+**`else if` chaining.** `if(cond1) { A } else if(cond2) { B }
+else { C }` — the parser checks for `if` after `else` and
+recursively parses.
 
-2. **`else` instead of `if not`.** rc's `if not` is a separate
-   command that reads `$status` left by the preceding `if` — an
-   implicit state dependency. Duff acknowledged: "The one bit of
-   large-scale syntax that Bourne unquestionably does better than
-   rc is the if statement with else clause" (rc.ms §Why not).
-   psh's `else` is a syntactic clause of the `if`
-   node. The AST represents both branches as fields of one
-   `Command::If` — a proper coproduct elimination. No state
-   dependency, no dangling-else ambiguity.
+### for
 
-3. **Bodies use `{` or `=>`.** rc allows a single command as
-   body: `if(cond) cmd`. psh uses two body forms: `{ program }`
-   for multi-line bodies and `=> command` for single-line bodies.
-   Without parentheses to delimit the condition, the body needs
-   an unambiguous introducer — `{` or `=>` serves that role.
-   This enables `else` (the parser knows the then-body is
-   complete at `}` or `;`) and resolves the dangling-else by
-   making structure explicit.
+    for(x in (a b c)) {
+        echo $x
+    }
 
-4. **`match` arms use `=>`, separated by `;`.** rc delimits
-   case bodies implicitly — execution runs from one `case`
-   keyword to the next. psh uses `=>` to introduce each arm's
-   body and `;` to separate arms. Each arm is an independent
-   branch. Multiple patterns per arm are supported:
-   `a b => body` matches either `a` or `b`. Fall-through is not
-   available — `;` terminates each arm.
+    for(f in $files) => echo $f
 
-These four changes form a coherent package. Removing parentheses
-requires explicit body introducers (`{` or `=>`), which enables
-structural `else`, which makes `=>` + `;` the natural arm syntax.
+`for(name in value) body` parses exactly one `value`: either
+a parenthesized list `(a b c)` or a single word. To iterate
+over multiple elements, use a list. rc heritage [1, §For
+loops].
 
-**`match` instead of `switch`.** rc used `switch` as the outer
-keyword with `case` for arms inside. psh uses `match` — a new
-keyword for a new construct. rc's `case` was an arm-introducer
-(sub-keyword inside `switch`). Reusing `case` as a block-
-introducer creates a false cognate — it looks like rc
-heritage but has a different syntactic role. `match` is honest:
-it names the operation (pattern matching / coproduct elimination)
-without pretending to be rc's `case`.
+### while
 
-psh's `match` does two kinds of dispatch: glob pattern matching
-on string values (rc heritage) and structural coproduct
-elimination on Sum values (psh extension). Arms use `=>`
-to introduce the body and `;` to separate. No sub-keyword
-needed.
+    while(test -f /tmp/lock) {
+        sleep 1
+    }
 
-    # Glob matching on strings (rc heritage)
-    match $filename {
+rc's `while() echo y` (empty parens = always true) becomes
+`while(true) { echo y }`. The `true` builtin is explicit.
+
+### match
+
+    match($filename) {
         *.txt => echo 'text file';
         *.rs  => echo 'rust source';
         * => echo 'other'
     }
 
-    # Structural matching on Sum values (psh extension)
-    match $result {
-        ok[v]  => echo 'success: '$v;
-        err[e] => echo 'error: '$e
+    # Multi-pattern arm
+    match($ext) {
+        (c h) => echo 'C source';
+        (rs toml) => echo 'Rust';
+        * => echo 'unknown'
     }
 
-Structural arms have the form `tag[var] =>` — the tag name,
-brackets containing the binding name, then `=>`. Glob arms use a
-single pattern (`pattern =>`) or a parenthesized list
-(`(pat ...) =>`). The presence of `[]` distinguishes structural
-from glob. No `$` in binding position — `$` means reference, always.
+**`match` instead of `switch`.** rc's `switch`/`case` had
+implicit fall-through — execution ran from one `case` to the
+next [1, §Switch]. psh's `match` uses `=>` arms with `;`
+separators and no fall-through. Using `switch` would be a
+false cognate — it looks like rc heritage but has different
+semantics. `match` names the operation honestly: pattern
+matching / coproduct elimination.
 
-**Value-producing blocks.** When a body appears in value
-position (RHS of `let`, etc.), it ends with `return value`
-to produce a typed value. Commands in the body run for effects;
-`return` injects a value from the command sort into the value
-sort (CBPV's `return : A → F(A)`). Without `return`, the
-body produces `Unit`.
+Match arms use `=>` to introduce the body and `;` to
+separate. Each arm is an independent branch. Multiple
+patterns per arm use list syntax: `(*.txt *.md) => body`.
 
-    let icon = match $type {
-        editor   => return '📝';
-        terminal => return '💻';
-        * => return '?'
+**Structural matching** on Sum values (future extension):
+
+    match($result) {
+        ok val  => echo 'success: '$val;
+        err msg => echo 'error: '$msg
     }
 
-    let greeting = if $lang =~ fr => return 'bonjour'; else => return 'hello'
+Structural arms have the form `tag name =>` — the tag, a
+binding name, then `=>`. The binding is a μ̃-binder scoped
+to the arm body. The variable does not escape the arm. The
+wildcard arm `* =>` does not bind a variable.
 
-    # Multi-line with effects before return
-    let result = match $code {
-        200 => {
-            log 'success'
-            return ok $body
-        };
-        * => return err 'unexpected'
-    }
-
-`return` is unambiguous — the keyword marks the polarity shift.
-Bare words in a body are always commands. `return` followed by
-a word is always a value injection. No disambiguation needed.
-`return` always terminates the enclosing computation (η for F(A))
-— it means the same thing in every context.
-
-**`take` in value-producing `for`.** `for` in value position
-collects values via `take` (Raku's gather/take heritage). Each
-`take` contributes one element to the result List. `return`
-inside a `for` body exits the enclosing function, not the loop.
-
-    let txts = for f in $files {
-        if $f =~ *.txt => take $f
-    }
-    # txts = (readme.txt notes.txt)
-
-    # Transform: take on every iteration
-    let names = for f in $files {
-        take `{ basename $f .txt }
-    }
-
-    # Multiple takes per iteration permitted
-    let pairs = for f in $files {
-        take $f
-        take `{ wc -l <$f }
-    }
-
-`take` is the Traversal's introduction form (Wander). `return`
-is the Affine introduction form (Choice + Strong). Different
-optic constraints, different keywords. `take` is only valid
-inside a `for`-in-value-position block — error elsewhere.
-A `for` where nothing is taken produces Unit.
-
-**`try` block.** Scoped error handling — the ⊕→⅋ converter.
-Inside `try`, any command with nonzero Status aborts the block
-and transfers control to the `else` clause. The `else` variable
-receives the Status string of the failing command.
+### try / catch
 
     try {
-        let title = `{ get /pane/focused/attrs/title }
-        let cursor = `{ get /pane/focused/attrs/cursor }
+        let title = `{ cat /srv/window/title }
+        let cursor = `{ cat /srv/window/cursor }
         echo $title' ['$cursor']'
-    } else e {
-        echo 'pane unavailable: '$e
+    } catch e {
+        echo 'unavailable: '$e
     }
 
-Semantics:
-- After each command inside `try`, if `$status` is nonzero,
-  execution jumps to `else`.
-- Boolean contexts are exempt: `if` conditions, `while`
-  conditions, `&&`/`||` LHS, `!` commands.
-- `try` without `else` is legal — errors abort the block
-  silently and Status propagates to the enclosing scope.
-- `try` blocks nest: inner catches before outer.
-- No longjmp, no continuation stack. Implementation: `in_try`
-  flag, checked after each command in `run_cmds`.
+Scoped error handling — ErrorT monad transformer over command
+sequences. `try` changes the sequencing combinator from
+unconditional `;` to monadic `;ₜ` that checks Status after
+each command. On nonzero status, execution aborts to `catch`.
+The `catch e` binding is a μ̃-binder on the error case.
 
-psh extension. Equivalent to lexically-scoped `set -e` without
-the composability defects of POSIX `set -e`. The specification
-identifies this as the ⊕→⅋ converter from ksh26 SPEC.md, with
-proper scoping.
+This is categorically different from `if`:
+- `if` = single coproduct elimination (check one command's
+  status, branch)
+- `try` = natural transformation on sequencing (change the
+  semicolon's behavior for an entire block)
 
-**`for` list termination.** `for name in value { body }` parses
-exactly one `value`: either a parenthesized list `(a b c)` or a
-single word. To iterate over multiple elements, use a list:
-`for x in (a b c) { ... }`. A variable reference
-`for x in $list { ... }` expands at runtime to the variable's
-elements. This differs from rc's `for(x in a b c)` where the
-parentheses group multiple bare words into the list. The grammar
-is LL(1) — after `in`, the parser reads one value, then
-expects `{`.
+Boolean contexts are exempt: `if` conditions, `while`
+conditions, `&&`/`||` LHS, `!` commands are not checked.
 
-**`while` with empty condition.** rc's `while() echo y` (empty
-parens = always true) becomes `while true { echo y }` in psh.
-The `true` builtin is explicit.
+`try` without `catch` is legal — errors abort the block
+silently and Status propagates to the enclosing scope.
+`try` blocks nest: inner catches before outer.
 
-**`else if` chaining.** psh supports `else if` as syntactic
-sugar for a nested `if` in the else branch:
+See specification.md §Error model for the full semantic
+analysis.
 
-    if cond1 { A } else if cond2 { B } else { C }
+### trap
 
-The parser handles this — after `else`, it checks for `if` and
-recursively parses an `if_cmd`.
+    trap SIGINT { echo 'interrupted'; return 1 } {
+        long_running_command
+        another_command
+    }
+
+Lexically-scoped signal handler — the μ-binder of the sequent
+calculus [5, §2.1]. The handler is installed for the duration
+of the body. When the body exits, the handler is uninstalled.
+Inner traps shadow outer traps for the same signal.
+
+`try` and `trap` are distinct constructs:
+- `try` = synchronous, checked at each `;`, status-only
+- `trap` = asynchronous, signal-delivered, continuation-capturing
+
+They compose freely: `try` inside `trap`, `trap` inside `try`.
+
+See specification.md §Error model for the design rationale
+(lexical vs dynamic scoping, sequent calculus faithfulness).
 
 
 ## Expressions
@@ -380,14 +362,26 @@ redirections, pipelines, and operators.
                 | simple_cmd redirect*
 
     simple_cmd  = WORD+
-    redirect    -- see §Redirections for the full grammar
+
+**`|&` coprocess.** `cmd |&` starts a coprocess with a
+9P-shaped bidirectional protocol. See specification.md
+§Coprocesses for the full discipline.
+
+**`@{ }` subshell.** Fork with a copy of the current scope.
+Equivalent to rc's `rfork nefs` [1, §Built-in commands].
+Classical contraction — continuation duplicated, each copy
+independent.
+
+**`!` negation.** Inverts exit status. rc heritage.
+
+**`&` background.** Runs the command asynchronously. rc
+heritage.
 
 
 ## Words
 
-Words are positive (CBV) — evaluated eagerly before the command
-that consumes them runs. A word is one or more word atoms joined
-by concatenation.
+Words are positive (CBV) — evaluated eagerly before the
+command that consumes them runs.
 
     word        = word_atom ('^' word_atom)*
     word_atom   = LITERAL | QUOTED
@@ -398,49 +392,47 @@ by concatenation.
                 | '<{' program '}'
                 | '~' '/' LITERAL
                 | '~'
+                | lambda
 
-    var_ref     = '$' VARNAME accessor* ('(' word ')')?
+    var_ref     = '$' VARNAME accessor*
     accessor    = '.' (NUM | NAME)
 
     value       = '(' word* ')'
-                | tagged_val                        -- [planned]
                 | lambda
                 | word
-    tagged_val  = NAME '[' value ']'                -- [planned]
-    lambda      = '\' (NAME+ | '(' ')') '=>' ('{' program '}' | command)
 
-**Accessors** project into structured values. Since `.` is not in
-`var_char`, after `$pos` the parser sees `.0` as the start of a new
-token. The `accessor` production captures this: `$pos.0` is tuple
-projection (π₀), `$result.ok` is tagged decomposition (Prism
-preview), `$e.code` is ExitCode extraction. Accessors chain:
-`$result.ok.name` is Prism then Lens (AffineTraversal). The
-accessor takes priority over free carets when the token immediately
-following a `var_ref` is `.` followed by a digit or `NAME`.
+### Accessor syntax (reserved)
 
-**Sum construction** **[planned]** uses bracket syntax: `ok[42]`,
-`err["not found"]`, `KeyEvent[(97, 0)]`. The `[]` visually
-mirrors type syntax (`Result[T]`) and is unambiguous — `NAME '['`
-commits to Sum construction, with the payload parsed as a standard
-value. This applies anywhere a value is expected: `let` RHS,
-match arm bodies, command arguments.
+`$x.0`, `$x.ok` are reserved for future use (tuples, sums).
+In the base system, these are parse errors. This prevents
+user-defined names from colliding with the future accessor
+paths.
 
-Examples:
-```psh
-let result : Result[Int] = ok[42]
-let opt : Maybe[Path] = some[/tmp/file]
-let nested = result[ok[42]]
-```
+When activated (tuples/sums extension), accessors compose:
+`$result.ok.name` = Prism then Lens (AffineTraversal). See
+specification.md §Extension path.
 
-In command position, `ok[42]` is simply a command named `ok` with
-argument `[42]` — the brackets are literal characters in a word.
-Sum construction only occurs in value position.
+### Free carets
+
+rc's concatenation rule [1, §Free Carets]: when two word atoms
+are adjacent with no intervening whitespace, an implicit `^`
+(concatenation) is inserted between them.
+
+    $stem.c           →  $stem ^ .c
+    $home/bin         →  $home ^ /bin
+    $user@$host       →  $user ^ @ ^ $host
+    'hello'$name      →  'hello' ^ $name
+
+Explicit `^` remains available and allows whitespace on either
+side: `a ^ b` concatenates `a` and `b`. Free carets require
+adjacency — whitespace between atoms produces separate
+arguments.
+
+Concatenation always goes through stringification — the
+positive-to-positive Kleisli map. All values have a string
+representation via Display.
 
 ### Two character sets
-
-psh uses two character predicates for different parsing contexts.
-This mechanism enables free carets and discipline function names
-to coexist.
 
     var_char    = [a-zA-Z0-9_*]
     word_char   = [a-zA-Z0-9_\-./+:,%*?\[\]@]
@@ -452,77 +444,25 @@ to coexist.
 
 **`var_char`** is rc's variable-name alphabet. Used after `$`,
 `$#`, and `$"`. Variable names terminate at the first character
-not in this set. This means `$home/bin` parses as `$home`
-followed by `/bin` — the `/` is not part of the variable name.
+not in this set: `$home/bin` parses as `$home` followed by
+`/bin`.
 
-**`word_char`** is the bare-word alphabet. Used for literals,
-function names (after `fn`), and other name positions. Includes
-`.` (for discipline function names: `fn x.get { }`), `/` (for
-paths), and other characters that are not shell operators.
+**`word_char`** is the bare-word alphabet. Includes `.` (for
+discipline function names: `cmd x.set { }`), `/` (for paths).
 
-`~` is not in either set. It receives special handling (see
-§Tilde below).
-
-**Divergence from rc:** rc used a single word alphabet for both
-contexts, but rc's variable names were implicitly restricted to
-alphanumerics and `_` because all other characters triggered
-free caret insertion. psh makes the split explicit and adds `.`
-to `word_char` (not `var_char`) to support discipline function
-names — a construct rc did not have.
-
-### Free carets
-
-When two word atoms are adjacent with no intervening whitespace,
-an implicit `^` (concatenation) is inserted between them. This
-is rc's free caret rule (Duff 1990, §Free Carets).
-
-The rule fires when: after parsing a word atom, the next
-character (with no whitespace) can start another word atom —
-that is, it is `$`, `'`, `` ` ``, `<{`, `~`, or any `word_char`.
-
-Examples:
-
-    $stem.c           →  $stem ^ .c        (var ends at .)
-    $home/bin         →  $home ^ /bin      (var ends at /)
-    $user@$host       →  $user ^ @ ^ $host
-    'hello'$name      →  'hello' ^ $name
-    $file.$ext        →  $file ^ . ^ $ext
-
-**Interaction with accessors:** The accessor production takes
-priority over free carets after a `var_ref`. `$pos.0` parses as
-tuple projection, not `$pos ^ .0`. This means `$stem.c` parses
-as tag projection from `$stem`, not `$stem ^ .c`. Use explicit
-caret (`$stem^.c`) or brace delimiting (`${stem}.c`) to obtain
-the concat behavior. This tradeoff enables the optic composition
-story (Prism, Lens, AffineTraversal).
-
-Explicit `^` remains available and allows whitespace on either
-side: `a ^ b` concatenates `a` and `b`. Free carets require
-adjacency — whitespace between atoms produces separate arguments.
-
-**Divergence from rc:** rc states: "Whenever one of `$ ' `` ` ``
-follows a quoted or unquoted word or an unquoted word follows a
-quoted word with no intervening blanks or tabs, a `^` is inserted
-between the two" (rc(1) §Free Carets). psh's rule is equivalent,
-adapted to the two-alphabet split: the boundary between `var_char`
-and `word_char` is where free carets fire after `$`-references.
+**Divergence from rc:** rc used a single word alphabet. psh
+makes the split explicit and adds `.` to `word_char` (not
+`var_char`) to support discipline function names.
 
 ### Quoting
 
 Single quotes only. Inside quotes, `''` produces a literal
 single quote. No double quotes. No backslash escaping inside
-quotes.
+quotes. rc heritage [1, §Quotation].
 
     'hello world'      literal string with space
     'it''s'            produces: it's
     '$x'               literal $x, no expansion
-
-**`Word::Quoted` vs `Word::Literal`.** The AST distinguishes
-quoted from unquoted words. In `let` context, this controls type
-inference: `let x = 42` infers Int, `let x = '42'` stays Str.
-Outside `let`, both evaluate to `Val::Str`. The distinction is
-consumed at evaluation time and does not propagate into the
-runtime value model. psh extension — rc had no types.
 
 ### Tilde expansion
 
@@ -532,804 +472,107 @@ runtime value model. psh extension — rc had no types.
   word start, immediately followed by `/`.
 - **Bare `~`** — expands to `$home`.
 
-`~` is always tilde expansion. There is no parse-position
-ambiguity — pattern matching uses the `=~` operator (see
-§Pattern matching below), not `~`.
-
 **Divergence from rc:** rc treated `~` as a keyword for pattern
-matching and had no tilde expansion (Plan 9 used `$home`
-exclusively). psh separates the two: `~` is tilde expansion
-(POSIX/ksh heritage), `=~` is pattern matching (Perl/Ruby
-heritage with rc glob semantics).
+matching and had no tilde expansion. psh separates the two:
+`~` is tilde expansion (POSIX/ksh heritage), `=~` is pattern
+matching.
 
 ### Pattern matching (`=~`)
 
-The `=~` operator tests whether a value matches one or more
-glob patterns. Infix: value on the left, patterns on the right.
+Infix operator: value on the left, glob patterns on the right.
 Returns success (exit 0) if any pattern matches, failure
 otherwise.
 
-    if $x =~ *.txt { echo 'text file' }
-    if $name =~ (foo bar baz) { echo 'known' }
+    if($x =~ *.txt) { echo 'text file' }
+    if($name =~ (foo bar baz)) { echo 'known' }
     $filename =~ (*.c *.h) && echo 'C source'
 
-Patterns use fnmatch glob syntax (`*`, `?`, `[chars]`). The
-value is compared as a string. Multiple patterns are given as
-a list — the match succeeds if any pattern matches.
-
-`=~` is a two-character operator. `=` is not in `word_char`,
-so `=~` cannot appear inside a bare word. No disambiguation
-needed.
-
-`=~` is a primitive, not sugar for `match`. Both use the same
-`glob_match()` pattern engine (fnmatch semantics), but `=~`
-is a pure predicate — no scope management, no structural arm
-dispatch, no Sum decomposition. `match` is a control flow
-construct. They share the pattern function, not the evaluation
-path. rc made the same factoring with `~` (predicate) and
-`switch` (control flow).
-
-rc heritage for the glob semantics (Duff 1990, §Simple
-commands). Perl/Ruby heritage for the `=~` infix syntax.
+Patterns use fnmatch glob syntax (`*`, `?`, `[chars]`). rc
+heritage for the glob semantics [1, §Simple commands].
+Perl/Ruby heritage for the `=~` infix syntax.
 
 ### Brace-delimited variable names
 
 `${name}` explicitly delimits a variable name. The name inside
-braces uses `word_char` (the broad alphabet), not `var_char`.
-This is the escape hatch for edge cases where the narrow
-`var_char` alphabet is insufficient.
+braces uses `word_char`, not `var_char`. Escape hatch for edge
+cases where the narrow `var_char` alphabet is insufficient.
 
     ${x.get}          looks up variable named x.get
-    $x.get            accessor: project tag `.get` from `$x`
-
-`${x.get}` uses the `word_char` alphabet inside braces, so it
-looks up a variable literally named `x.get`. `$x.get` (without
-braces) parses `$x` as a variable reference, then `.get` as a
-tag accessor projecting from the Sum value. Discipline functions
-dispatch through the evaluator, not through `$`-expansion.
+    $x.get            reserved accessor syntax (future)
 
 ### Variable expansion
 
     $x                value of x (list)
     $x(n)             nth element of x (1-based)
-    $x.0              tuple projection (0-based)
     $#x               count of elements in x
     $"x               stringify: join elements with spaces
     ${name}           explicit variable name delimiting
 
-**Indexing conventions.** List indexing `$x(n)` is 1-based (rc
-heritage — lists are ordinal: first, second, third). Tuple
-projection `$pos.0` is 0-based (structural — π₀, π₁ from type
-theory: field 0, field 1). The conventions differ because lists
-are sequences with positional identity and tuples are products
-with structural identity.
-
-### Command substitution
-
-    `{program}        run program, capture stdout, split on
-                      newlines into a list
-
-**Shared capture primitive.** `` `{cmd}`` and `try { cmd }` both
-fork a child, pipe stdout, and call waitpid. They share one
-`capture_subprocess` implementation that returns `(stdout, exit_code)`.
-The two operations project different components of this product:
-
-- `` `{cmd}`` takes stdout only (π₁). Exit status discarded.
-  On failure, returns `Unit` (empty).
-- `try { cmd }` takes both. Returns `Sum("ok", val)` or
-  `Sum("err", ExitCode(n))`.
-
-They are siblings — parallel consumers of the same primitive —
-not parent-child. Neither desugars into the other.
-
-    let val = `{ cmd }              # stdout only, status discarded
-    let result = try { cmd }        # Result[T]: ok val | err ExitCode
-
-rc heritage. psh splits on newlines only — no `$ifs`. The
-captured output has its trailing newline stripped.
-
-### Process substitution
-
-    <{program}        run program, connect stdout to a pipe,
-                      evaluate to /dev/fd/N
-
-rc heritage (Duff 1990, §Pipeline branching). Enables
-non-linear pipeline topologies: `cmp <{old} <{new}`.
-
-### Line continuation and `\`
-
-Backslash has two roles, disambiguated by one character of
-lookahead:
-
-- `\` + newline → line continuation (consumed as whitespace)
-- `\` + NAME or `(` → lambda expression (see §Thunks)
-
-    echo $very_long_variable \
-         $another_variable \
-         $a_third_one
-
-    let inc = \x => expr $x + 1
-
-Backslash has no escape semantics — `\n` in a lambda is a
-parameter named `n`, not a newline character. `\` cannot
-appear in bare words (it is not in `var_char` or `word_char`).
-
-rc heritage for line continuation (rc(1): "A long command line
-may be continued on subsequent lines by typing a backslash
-followed by a newline. This sequence is treated as though it
-were a blank."). Lambda syntax is a psh extension.
-
-### Concatenation
-
-The `^` operator concatenates two words. If both operands are
-lists of equal length, concatenation is pairwise. If one is
-scalar and the other is a non-empty list, the scalar broadcasts.
-
-    a = (hello good)
-    b = (world bye)
-    echo $a^$b              # helloworld goodbye
-
-    echo pre-^$list         # pre-a pre-b pre-c
-
-Scalar broadcast over lists replaces Bourne-style brace
-expansion. The equivalences:
-
-    # bash                      psh
-    file.{c,h,o}               file.^(c h o)
-    src/{bin,lib}               src/^(bin lib)
-    file{,.bak}                 file^('' .bak)
-
-List × list is pairwise, not cross-product.
-`(a b)^(1 2)` produces `(a1 b2)`, not `(a1 a2 b1 b2)`.
-Mismatched lengths produce Unit. Cross-product is
-combinatorial explosion; broadcast covers the common case
-(Duff 1990, §Concatenation).
-
-
-## Type system
-
-psh values are typed. The type system has seven atomic types,
-three type constructors (products, coproducts, thunks), and
-sugar for common patterns.
-
-### Atoms and List
-
-    Unit        the empty value. False. Unset variables produce Unit.
-    Bool        true | false
-    Int         64-bit signed integer (i64)
-    Str         string (the universal type, rc heritage)
-    Path        filesystem path (starts with / ./ ../ ~/)
-    ExitCode    computation outcome (i32). Distinct from Int.
-    List[T]     homogeneous sequence (rc's first-class lists)
-
-**ExitCode** is not a data integer. `ExitCode(0)` is "success."
-`Int(0)` is "the number zero." ExitCode enters the value world
-only through `try` (the ↑ shift that reifies a computation
-outcome into value position). ExitCode is not constructible
-by literal — `Val::infer` never produces it. This preserves
-the computation/value sort boundary.
-
-### Products (tuples)
-
-    (A, B)      binary product. Lens decomposes.
-    (A, B, C)   sugar for (A, (B, C))
-
-Comma-separated values in parentheses. Lists use spaces:
-`(a b c)`. Tuples use commas: `(a, b, c)`. The comma
-disambiguates.
-
-    let pos : (Int, Int) = (42, 7)
-    echo $pos.0                      # 42 (projection, 0-based)
-    let (x, y) = $pos                # destructuring
-
-Access via `.0`, `.1` etc. (Lens projection, 0-based).
-Destructuring in `let` bindings: `let (x, y) = expr`.
-
-### Coproducts (tagged values)
-
-    A | B       coproduct (union). Prism decomposes.
-
-Sum values carry a string tag and a payload. The tag is the
-coproduct injection label. The payload is any Val.
-
-    let x = ok[42]                   # Sum("ok", Int(42))
-    let y = err[1]                   # Sum("err", ExitCode(1))
-    let e = KeyEvent[(97, 0)]        # Sum("KeyEvent", Tuple(..))
-
-Construction: `tag[value]` — the tag name followed by brackets
-containing the payload value. `try { body }` implicitly produces
-`ok[value]` or `err[ExitCode(n)]`.
-
-Elimination: `match` with structural arms.
-
-    match $result {
-        ok[v]  => echo $v;
-        err[e] => echo 'error: '$e
-    }
-
-The tag is an open string namespace. Any script can define new
-tags. Pane protocol enum variants map to tag strings when
-messages cross from Rust into the shell.
-
-### Thunks (first-class functions)
-
-    Thunk       suspended computation. CBPV's U(A → F(B)).
-
-A thunk is a first-class function — a computation suspended as
-a value. It carries parameter names and a body (AST), but no
-captured environment. Free variables resolve dynamically at
-force time, consistent with rc/ksh function semantics.
-
-    let greet = \name => echo hello $name
-    $greet world                    # forces the thunk: "hello world"
-
-    let inc = \x => expr $x + 1
-    let result = `{ $inc 41 }      # "42"
-
-    let multi = \x y => {
-        echo $x
-        echo $y
-    }
-
-**`\` syntax and `fn` sort split.** `\` introduces a lambda
-(thunk literal) in value position. `fn` introduces a named
-function definition in command position. They are different
-syntax for different sorts:
-
-- `fn name { body }` — command-level binding. μ̃-binder that
-  extends Γ with a named function. Only valid in command
-  position (inside blocks). Uses positional parameters (`$1`,
-  `$2`, `$*`). rc heritage.
-- `\params => body` — value-level lambda. Produces
-  `Val::Thunk`. Only valid in value position (RHS of let,
-  argument to a command). Uses named parameters.
-
-The sort boundary is visible in the syntax: `fn` is always a
-binding (left of the turnstile), `\` is always a term (right
-of the turnstile). `let f = fn { body }` is illegal — use
-`let f = \() => body`.
-
-**Lambda grammar:**
-
-    lambda        = '\' lambda_params '=>' lambda_body
-    lambda_params = NAME+ | '(' ')'
-    lambda_body   = '{' program '}' | command
-
-The `=>` is mandatory — it separates parameters from body,
-consistent with match arms where `=>` separates pattern from
-body. The body after `=>` is either a braced block or a single
-command (terminated by `;`, newline, or `}`).
-
-    \x => echo $x               # single command
-    \x => { echo $x; echo done }  # braced block
-    \x y => expr $x + $y        # multi-param
-    \() => curl -f $url          # nullary
-
-**`\` and line continuation.** `\` followed by a newline is
-line continuation (rc heritage, consumed as whitespace). `\`
-followed by a NAME or `(` is a lambda. The disambiguation is
-LL(1) — the character sets are disjoint. `\` has no other
-role; it is not an escape character.
-
-**Forcing.** `$f args` — when a command name evaluates to
-`Val::Thunk`, the evaluator forces the thunk by pushing a scope,
-binding named parameters, and running the body. This is CBPV's
-`force : U(C) → C` — the polarity crossing from value to
-computation.
-
-The thunk is positive (inert, Clone, PartialEq). The body is
-data (AST). No live resources, no continuations. Negativity
-(computation, side effects) appears only at force time. This
-is CBPV's U operator — the thunk wraps a negative computation
-in a positive envelope.
-
-**Capture-by-value for currying.** When a lambda is constructed,
-any variable that is (a) free in the body and (b) currently
-bound in scope is snapshotted into the thunk's captures. This
-enables currying:
-
-    let add = \x => \y => expr $x + $y
-    let add3 = `{ $add 3 }    # inner thunk captures x=3
-    $add3 5                     # 8
-
-At thunk construction time, the evaluator walks the body AST,
-collects free `$var` references, subtracts the thunk's own
-params, and snapshots the remaining bound values. These captures
-are `Vec<(String, Val)>` — positive, Clone, no references. At
-force time, captures are restored into the scope before the
-body runs.
-
-Thunks with no free variables (the common case) have empty
-captures. Named function definitions (`fn name { body }`) do
-not capture — they use dynamic resolution and positional params
-as before. Capture is a lambda-only feature, consistent with
-the sort split: lambdas are values (frozen snapshots), named
-functions are commands (live scope access).
-
-**Thunk representation:**
-
-```rust
-pub struct Thunk {
-    pub params: Vec<String>,
-    pub body: Vec<Command>,
-    pub captures: Vec<(String, Val)>,
-}
-```
-
-PartialEq on thunks is structural (same params + same AST +
-same captures = equal), preserving the Lens laws for Tuples
-or Lists containing thunks.
-
-**Thunk as optic leaf.** A thunk has no internal optic structure
-for the user — no `.params` or `.body` accessor. It is atomic
-from the accessor perspective, like ExitCode. A Tuple containing
-a thunk is Lens-accessible at the thunk's position, but the
-thunk itself is opaque.
-
-Display: `\(x y){...}` — diagnostic. Not round-trippable.
-Truthiness: always true (a thunk exists).
-Concat: coerces to display string.
-
-### Sugar
-
-    Result[T]   = T | ExitCode       implied tags: ok, err
-    Maybe[T]    = T | Unit          implied tags: ok, none
-
-`Result[T]` is the type of `try { body }` — either the
-computation succeeded (producing `Sum("ok", T)`) or failed
-(producing `Sum("err", ExitCode(n))`). The tag names `ok`
-and `err` are conventional — `Result[T]` is sugar for a
-coproduct with these specific tags. `Maybe[T]` uses `ok` and
-`none` analogously.
-
-### Type annotations
-
-    type_ann    = type_union ('->' type_ann)?         -- right-associative
-    type_union  = type_atom ('|' type_atom)*
-    type_atom   = 'Unit' | 'Bool' | 'Int' | 'Str' | 'Path'
-                | 'ExitCode'
-                | 'List' '[' type_ann ']'
-                | '(' type_ann ')'                     -- sugar for List[T]
-                | '(' type_ann (',' type_ann)+ ')'     -- Tuple
-                | 'Fn' '[' type_ann ',' type_ann ']'   -- canonical Fn type
-                | 'Result' '[' type_ann ']'
-                | 'Maybe' '[' type_ann ']'
-
-Precedence: `->` is lowest (right-associative), `|` is mid,
-atoms are highest. `A | B -> C` = `(A | B) -> C`.
-`Int -> Int -> Int` = `Int -> (Int -> Int)`.
-
-`Fn[A, B]` is the canonical form; `A -> B` is sugar for the
-same thing. Like `List[T]` / `(T)`.
-
-Type annotations validate via Prism check at the binding site.
-Union annotations (`A | B`) constrain which Sum variants are
-legal. Tuple annotations validate componentwise.
-
-### Val representation
-
-```rust
-pub enum Val {
-    Unit,
-    Bool(bool),
-    Int(i64),
-    Str(String),
-    Path(PathBuf),
-    ExitCode(i32),
-    List(Vec<Val>),
-    Tuple(Vec<Val>),
-    Sum(String, Box<Val>),
-    Thunk(Thunk),
-}
-
-pub struct Thunk {
-    pub params: Vec<String>,
-    pub body: Vec<Command>,
-    pub captures: Vec<(String, Val)>,
-}
-```
-
-Ten variants. Seven atoms, one product constructor (Tuple),
-one coproduct constructor (Sum), one thunk constructor (Thunk).
-Products give users Lenses. Coproducts give users Prisms.
-Thunks are optic leaves (atomic, like ExitCode). The optic
-hierarchy is fully inhabited.
-
-### Var metadata
-
-Each variable binding carries metadata alongside its value:
-
-```rust
-struct Var {
-    value: Val,
-    error: Option<String>,       // from last failed try evaluation
-    exported: bool,
-    readonly: bool,
-    mutable: bool,
-    type_ann: Option<TypeAnnotation>,
-}
-```
-
-For stored variables (tiers 1-2), `error` is always `None`.
-For computed variables (`let x = try { }`), the stored value
-holds the Sum result — `Sum("ok", T)` or `Sum("err",
-ExitCode(n))`. The `$x.err` accessor is a Prism preview into
-the err branch of that Sum result, not a separate metadata
-channel. The `error` field preserves the error *string* (the
-human-readable message from stderr) alongside the ExitCode for
-diagnostic use. Val stays inert — pure positive data, no
-embedded error signals.
-
-### Display
-
-What `echo $x` prints for each type. Display is the path to
-pipes, `execvp` argv, and `$x` in word position. Types are
-erased at this boundary — pipes carry bytes.
-
-    Unit          (empty string)
-    Bool          true | false
-    Int           42 | -5
-    Str           the string itself
-    Path          the path string
-    ExitCode      the numeric code: 0, 1, 42
-    List          space-separated elements
-    Tuple         space-separated elements (same as List)
-    Sum           payload only (tag stripped)
-    Thunk         fn(params){...} (diagnostic, not round-trippable)
-
-**Sum display is payload-only.** `echo $result` where
-result = `Sum("ok", Int(42))` prints `42`, not `ok 42`.
-The tag is control-flow metadata for `match` decomposition
-(the Prism's `match` function), not data for display. Prism
-laws hold within Val (in-process); they do not extend across
-pipe boundaries. Pipes already break type preservation by
-design (`Int(42)` → `"42"` → `Str("42")`). Sum is no
-different. For inspection, `whatis` shows tag + type + payload.
-
-### Truthiness
-
-What `is_true` returns. Determines `if`/`while`/`&&`/`||`
-behavior for values used in boolean contexts.
-
-    Unit          false
-    Bool(b)       b
-    Int(0)        false
-    Int(n)        true
-    Str("")       false
-    Str(s)        true
-    Path          true (always non-empty by construction)
-    ExitCode(0)   true  (success)
-    ExitCode(n)   false (failure)
-    List([])      false
-    List(_)       true
-    Tuple         true  (always ≥2 elements)
-    Sum           true  (always has content)
-    Thunk         true  (a suspended computation exists)
-
-**ExitCode truthiness inverts Int truthiness.** `ExitCode(0)`
-is true (success). `Int(0)` is false (zero). These are
-different sorts: ExitCode is a reified computation outcome
-(shell convention: 0 = success = true), Int is data (numeric
-convention: 0 = false). This inversion is why ExitCode→Int
-coercion is prohibited — it would reverse the meaning of
-`if $x`.
-
-**Sum is always true.** A tagged value exists — it has a
-tag and a payload. Use `match` to dispatch on the tag, not
-`if`. This prevents conflating error handling with truthiness.
-
-### Type inference
-
-Inference runs in `let` context only. Bare `x = val` always
-produces `Val::Str`. In `let x = val`, unquoted literals
-are inferred:
-
-    42            Int (positive integer, no leading zero)
-    -5            Int (negative)
-    042           Str (leading zero — not octal)
-    true          Bool
-    false         Bool
-    /tmp          Path (starts with /)
-    ./foo         Path (starts with ./)
-    ../bar        Path (starts with ../)
-    ~/path        Path (after tilde expansion)
-    '42'          Str (quoted — inference suppressed)
-    hello         Str (default)
-    (42, 7)       Tuple — inferred componentwise: (Int, Int)
-    ok[42]        Sum — tag is "ok", payload inferred: Int
-    (a b c)       List — elements inferred individually
-
-ExitCode is NEVER inferred from literals. It enters the
-value world only through `try`. Thunk is produced by the
-`fn(params) body` literal syntax, not by inference.
-
-### Coercion
-
-Widening (total, information-preserving) is allowed. Narrowing
-(partial, fails on mismatch) is attempted at reassignment to typed
-`let mut` variables.
-
-**Widening (always succeeds):**
-
-    Bool → Str        true → "true"
-    Int → Str         42 → "42"
-    Path → Str        /tmp → "/tmp"
-    ExitCode → Str    0 → "0"
-
-**Narrowing (attempted at reassignment, fails on mismatch):**
-
-    Str → Int         "42" → Int(42), "hello" → error
-    Str → Bool        "true" → Bool(true), "x" → error
-    Str → Path        always succeeds (any string is a path)
-
-**Prohibited:**
-
-    ExitCode → Int    different sorts. ExitCode(0) is true
-                      (success), Int(0) is false (zero). The
-                      coercion reverses truthiness. Use the
-                      explicit `.code` accessor instead.
-    Int → ExitCode    require explicit construction via `try`.
-
-
-## `try` in value position
-
-`try { body }` in value position (RHS of `let`, argument to a
-command) forks, captures stdout + exit status, and returns
-`Result[T]` = `Sum("ok", T) | Sum("err", ExitCode(n))`.
-This is CBV — the body evaluates immediately at binding time.
-
-    let cursor : Result[Int] = try { get /pane/editor/attrs/cursor }
-    let seconds : Result[Int] = try { date +%s }
-
-Semantics:
-- `try` forks and captures (shares `capture_subprocess` with
-  `` `{ } ``). Returns the full Result, not just stdout.
-- `$cursor.ok` — Prism preview into the ok branch. Returns
-  the captured value if the computation succeeded, Unit
-  otherwise.
-- `$cursor.err` — Prism preview into the err branch. Returns
-  the ExitCode if the computation failed, Unit otherwise.
-
-The `try` keyword carries consistent meaning across contexts:
-- `try { } else { }` — scoped ⅋ block (abort on first error)
-- `try { }` in value position — captures Result[T], CBV
-
-Both mean "this is a fallible computation." The difference is
-what happens with the result: the `else` form handles it
-inline; the value form stores it for later inspection.
-
-## Live re-evaluation via `.get` disciplines
-
-For tier-3 variables that re-query on every access
-(pane namespace, computed values), use a `.get` discipline:
-
-    let mut cursor : Int = 0
-    fn cursor.get { cursor = `{ get /pane/editor/attrs/cursor } }
-
-Every `$cursor` access fires `cursor.get` as a notification
-hook. The discipline body updates the stored value. Subsequent
-accesses see the fresh value. This is the mechanism for live
-computed variables — the variable stores the latest value, and
-the discipline refreshes it on demand.
-
-For error-tracked live variables, combine with `try`:
-
-    let mut cursor : Result[Int] = try { get /pane/editor/attrs/cursor }
-    fn cursor.get { cursor = try { get /pane/editor/attrs/cursor } }
-
-The `.get` discipline re-queries and stores a fresh `Result[T]`
-on every access. `$cursor.ok` gives the latest value.
-`$cursor.err` gives the latest error.
-
-
-## Subshell and concurrency
-
-Three constructs for concurrent and isolated execution.
-
-### Subshell
-
-    '@' body
-
-`@{ cmds }` forks with an isolated scope. The child receives
-a copy of the current context Γ; mutations in the child do not
-affect the parent. This is classical contraction — the
-continuation is duplicated, each copy evolves independently.
-
-    @{ x = local; echo $x }    # child sees local, parent doesn't
-    echo $x                     # unchanged
-
-**Divergence from rc:** rc had `@ command` (bare `@` as a
-prefix operator) and `rfork [flags]` for fine-grained fork
-control. psh replaces both with `@{ body }` — mandatory
-braces, consistent with the grammar. The fine-grained flags
-are lost, but so is the kernel dependency.
-
-### Coprocess
-
-    cmd_expr '|&'
-
-`cmd |&` starts `cmd` with stdin/stdout connected to a
-bidirectional socketpair. The shell holds one end; the child
-holds the other. `print -p` writes to the coprocess.
-`read -p` reads from it. Only one coprocess at a time.
-
-This is the ⅋ (par) connective — the negative dual of tuples.
-Both channels (read and write) exist concurrently, demand-
-driven. The pane project's session type library is named `par`
-after this connective.
-
-    cat |&
-    print -p hello
-    read -p line
-    echo $line               # hello
-
-ksh93 heritage. Plan 9 pipes were bidirectional by default
-(both ends of `pipe(2)` could read and write). psh uses
-`socketpair(AF_UNIX, SOCK_STREAM)` for the same effect.
-
-Coprocesses are byte-stream only. Typed coprocess channels
-(session-typed when the child is a pane service) are deferred
-to the pane integration phase.
-
-### Here-string
-
-    '<<<' word
-
-Feed a word to stdin without a heredoc or a fork. `cat <<<hello`
-is equivalent to `echo hello | cat` but avoids the fork.
-
-    cat <<<$var
-    cmd <<<'literal text'
-
-psh extension (ksh93 heritage). rc had no equivalent.
+rc heritage for all forms [1, §Variables, §Indexing].
 
 
 ## Redirections
 
-    redirect    = output_redir | input_redir | dup_redir
-                | close_redir | heredoc | herestring
+    redirect    = '>' WORD | '>>' WORD
+                | '<' WORD
+                | '>[' NUM '=' NUM ']'
+                | '<[' NUM '=' NUM ']'
 
-    output_redir = '>' target
-                 | '>>' target
-                 | '>[' NUM ']' target
-                 | '>>[' NUM ']' target
+Redirections are profunctor maps — transformations on the I/O
+context. See specification.md §Profunctor structure for the
+full analysis.
 
-    input_redir  = '<' target
-                 | '<>' target
-                 | '<[' NUM ']' target
+- `>file` — Output (rmap: post-compose on output continuation)
+- `<file` — Input (lmap: pre-compose on input source)
+- `>[n=m]` — Dup (contraction: two fds alias one resource)
+- `>[n=]` — Close (weakening: discard a resource)
 
-    dup_redir    = '>[' NUM '=' NUM ']'
-                 | '<[' NUM '=' NUM ']'
+Redirections are evaluated left to right. The AST wraps
+redirections as nesting (inner-to-outer = left-to-right
+evaluation). The profunctor laws hold by construction.
 
-    close_redir  = '>[' NUM '=' ']'
-                 | '<[' NUM '=' ']'
-
-    heredoc      = '<<' WORD                    -- expanding
-                 | '<<' QUOTED                  -- literal (no expansion)
-
-    herestring   = '<<<' word
-
-    target       = word
-
-Redirections are profunctor transformations wrapping inner
-expressions. Left-to-right evaluation order is structural
-(inner-to-outer nesting in the AST). The save/restore
-discipline preserves fds across redirections.
-
-rc reference: rc(1) §I/O Redirections.
-
-**`>` `>>` `<`** — standard redirections. `>` truncates,
-`>>` appends, `<` reads. Default fd is 1 for output, 0 for
-input.
-
-**`>[fd]`** — redirect a specific fd. `echo error >[2] /tmp/log`
-redirects fd 2 to a file. rc heritage.
-
-**`>[fd=fd]`** — dup. `cmd >[2=1]` dups fd 1 onto fd 2
-(stderr → stdout). Evaluation order matters:
-`cmd >file >[2=1]` redirects stdout to file, then stderr to
-the now-redirected stdout. rc heritage.
-
-**`>[fd=]`** — close. `cmd >[2=]` closes fd 2. rc heritage.
-
-**`<>` — read-write open.** `cmd <> file` opens `file` for
-both reading and writing on fd 0. Useful for lock files and
-bidirectional device access. rc heritage (Plan 9's
-`open(file, ORDWR)`).
-
-**`<<` — here-document.** Unquoted delimiter: variable
-expansion (`$var`) in the body. Quoted delimiter (`<<'EOF'`):
-no expansion, literal text. Content is everything between the
-delimiter line and the terminating delimiter.
-
-    cat <<EOF
-    hello $user
-    EOF
-
-    cat <<'EOF'
-    literal $user (not expanded)
-    EOF
-
-rc heritage. Unquoted heredocs expand `$var` references in
-the body at evaluation time. Quoted heredocs pass content
-through unchanged.
-
-**`<<<` — here-string.** See §Here-string above.
-
-### Missing rc I/O features
-
-**`|[fd]` (decorated pipes):** Omitted. psh's profunctor
-wrapping model handles this compositionally:
-`cmd >[2=1] | cmd2` pipes stderr through stdout. Decorated
-pipes are a shorthand that rc needed because it lacked the
-wrapping model.
-
-**`>{cmd}` (output process substitution):** Implemented. The
-dual of `<{cmd}`. `<{cmd}` gives a fd to read from;
-`>{cmd}` gives a fd to write to. Example:
-`tee >{grep err > errors.log}` sends stdout to both the
-terminal and the grep pipeline.
+rc heritage [1, §Advanced I/O Redirection].
 
 
-## `whatis` output format
+## Coprocess syntax
 
-`whatis` reports what a name is — variable, function,
-builtin, or external command. With the typed value model,
-`whatis` shows type information for `let`-bound variables.
+    cmd_expr    = ... | cmd_expr '|&'
 
-    whatis x           x : Int = 42
-    whatis y           y : List[Str] = (foo bar baz)
-    whatis z           z = hello        # bare assignment, no type shown
-    whatis result      result : Result[Int] = ok[42]
-    whatis cursor      cursor : try Result[Int]   # computed, no stored value
-    whatis cd          builtin cd
-    whatis ls          /usr/bin/ls
-    whatis greet       fn greet { ... }
-    whatis x.get       fn x.get { ... }
+`cmd |&` starts a bidirectional coprocess with a 9P-shaped
+protocol discipline. The shell holds both a write end and a
+read end to the child.
 
-The rule: `let`-bound variables show `: Type`. Bare
-assignments (rc heritage) show just the value — the user
-chose the untyped path. Computed variables (`let x = try {}`)
-show the type signature but do not force evaluation.
-Functions, builtins, and external commands follow rc's
-`whatis` convention.
+    cmd |&
+    print -p 'query'          # send request, get PendingReply
+    read -p reply             # consume PendingReply, get response
+    read -p -t $tag reply     # consume specific tag's response
+
+See specification.md §Coprocesses for the full protocol
+description (per-tag binary sessions, PendingReply handles,
+wire format, star topology).
 
 
-## Keywords
+## Reserved words
 
-    if else for in while match fn ref let try return mut export
+Keywords: `cmd`, `let`, `mut`, `export`, `ref`, `if`, `else`,
+`for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
+`return`.
 
-rc's keywords: `for in while if not switch fn ~ ! @`.
+Future: `type` (for type abbreviations when prenex polymorphism
+arrives).
 
-psh drops `not` (replaced by `else`), `switch` (replaced by
-`match`), `case` (arms in `match` are bare patterns, no
-sub-keyword needed), and `~` as a match keyword (replaced by
-the `=~` infix operator — see §Pattern matching). Replaces
-bare `@` with `@{`. Adds `let`, `ref`, `else`, `match`, `try`,
-`return`, `mut`, `export`.
-
-`!` and `@` are prefix operators, not keywords. `!` negates
-a command's exit status (`! cmd` succeeds if `cmd` fails).
-`@` introduces a subshell (`@{ cmds }`). rc listed both as
-keywords; psh classifies them as operators because they do not
-introduce new binding or control forms — they modify an
-existing command expression.
+Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
+`^`, `>`, `>>`, `<`, `>[`, `<[`.
 
 
 ## References
 
-1. Tom Duff. "Rc — The Plan 9 Shell." 1990.
-   `reference/plan9/papers/rc.ms`
+[1] Tom Duff. "Rc — The Plan 9 Shell." 1990.
+    `reference/plan9/papers/rc.ms`
 
-2. rc(1) man page, Plan 9 4th edition.
-   `reference/plan9/man/1/rc`
+[3] Munch-Maccagnoni. "Syntax and Models of a Non-Associative
+    Composition of Programs and Proofs." Thesis, 2013.
 
-3. psh specification. `docs/specification.md`
+[4] Levy. *Call-by-Push-Value.* Springer, 2004.
 
-4. Clarke, Elgot, Gibbons, Sherwood-Taylor, Wu. "Profunctor
-   Optics, a Categorical Update." Compositionality, 2024.
-
-5. Levy, Paul Blain. *Call-by-Push-Value.* Springer, 2004.
-
-6. Curien, Pierre-Louis and Herbelin, Hugo. "The duality of
-   computation." ICFP, 2000.
+[5] Curien, Herbelin. "The Duality of Computation." ICFP, 2000.
