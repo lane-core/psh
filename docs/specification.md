@@ -741,16 +741,21 @@ heritage). The comma is the disambiguator.
 **Accessor syntax** (product elimination — Lens projection):
 
     let pos = (10, 20)
-    echo $pos.0          # 10
-    echo $pos.1          # 20
+    echo ${pos.0}          # 10
+    echo ${pos.1}          # 20
 
     let record = ('lane', '/home/lane', 1000)
-    echo $record.0       # lane
-    echo $record.2       # 1000
+    echo ${record.0}       # lane
+    echo ${record.2}       # 1000
 
 Accessors `.0`, `.1`, `.2` etc. are Lens projections — the
 `first`, `second` etc. of the Cartesian profunctor class.
-Composition: `$nested.0.1` = `first . second` — ordinary
+Braces are required for accessor syntax, matching ksh93's
+`${x.field}` convention. Without braces, `.` is always a free
+caret boundary: `$x.c` = `$x ^ .c` (rc heritage). The brace
+is the opt-in for structured access.
+
+Composition: `${nested.0.1}` = `first . second` — ordinary
 function composition of profunctor optics.
 
 Tuples are positive (value sort), admit all structural rules
@@ -801,11 +806,11 @@ complications.
 | Sums (future) | Prism | Cocartesian |
 | Products × Coproducts (future) | AffineTraversal | Cartesian + Cocartesian |
 
-The accessor syntax `$x.N` (tuples) and `$x.tag` (sums, future)
-is stable across extensions. What changes is whether the
-accessor is a Lens (product), Prism (coproduct), or
-AffineTraversal (mixed), determined by the type at the access
-point.
+The accessor syntax `${x.N}` (tuples) and `${x.tag}` (sums,
+future) is stable across extensions. Braces are always
+required. What changes is whether the accessor is a Lens
+(product), Prism (coproduct), or AffineTraversal (mixed),
+determined by the type at the access point.
 
 
 ## References

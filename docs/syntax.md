@@ -387,15 +387,15 @@ command that consumes them runs.
     word_atom   = LITERAL | QUOTED
                 | var_ref
                 | '$#' VARNAME | '$"' VARNAME
-                | '${' NAME '}'
+                | '${' NAME accessor* '}'
+    accessor    = '.' (NUM | NAME)
                 | '`{' program '}'
                 | '<{' program '}'
                 | '~' '/' LITERAL
                 | '~'
                 | lambda
 
-    var_ref     = '$' VARNAME accessor*
-    accessor    = '.' (NUM | NAME)
+    var_ref     = '$' VARNAME
 
     value       = '(' word* ')'
                 | tuple
@@ -418,23 +418,23 @@ psh extension — rc had no tuples.
 
 ### Accessor syntax
 
-Accessors project into structured values. `.N` (numeric)
-projects from tuples (Lens). `.name` (alphabetic) is reserved
-for future sum/record access (Prism).
+Accessors project into structured values. They live inside
+`${ }` braces — ksh93's `${x.field}` convention. Without
+braces, `.` is always a free caret boundary (rc heritage).
 
-    $pos.0               # tuple projection (0-based)
-    $pos.1               # second element
-    $record.2            # third element
+    ${pos.0}             # tuple projection (0-based)
+    ${pos.1}             # second element
+    ${record.2}          # third element
 
-Accessors take priority over free carets when the token
-immediately following a `var_ref` is `.` followed by a digit
-or `NAME`. Use explicit caret (`$stem^.c`) or brace
-delimiting (`${stem}.c`) to get concatenation instead.
+    $pos.c               # free caret: $pos ^ .c (NOT accessor)
+    ${pos}.c             # explicit: value of pos, then ^ .c
 
-Accessors compose: `$nested.0.1` = projection into element 0,
-then projection into element 1 of that (Lens . Lens = Lens).
-Future: `$result.ok.0` = Prism then Lens (AffineTraversal).
-See specification.md §Tuples.
+Accessors compose: `${nested.0.1}` = projection into element
+0, then projection into element 1 of that (Lens . Lens = Lens).
+Future: `${result.ok.0}` = Prism then Lens (AffineTraversal).
+
+ksh93 heritage for the brace-delimited convention. See
+specification.md §Tuples for the typing rules.
 
 ### Free carets
 
@@ -517,12 +517,14 @@ Perl/Ruby heritage for the `=~` infix syntax.
 
 ### Brace-delimited variable names
 
-`${name}` explicitly delimits a variable name. The name inside
-braces uses `word_char`, not `var_char`. Escape hatch for edge
-cases where the narrow `var_char` alphabet is insufficient.
+`${name}` explicitly delimits a variable name and provides
+accessor syntax. The name inside braces uses `word_char`
+(including `.`), not `var_char`. Accessor `.N` or `.name`
+inside braces projects into structured values.
 
-    ${x.get}          looks up variable named x.get
-    $x.get            reserved accessor syntax (future)
+    ${x.0}            tuple projection (accessor)
+    ${x.get}          looks up variable named x.get (no accessor — .get is not a number)
+    $x.get            free caret: $x ^ .get (NOT accessor — no braces)
 
 ### Variable expansion
 
@@ -531,6 +533,8 @@ cases where the narrow `var_char` alphabet is insufficient.
     $#x               count of elements in x
     $"x               stringify: join elements with spaces
     ${name}           explicit variable name delimiting
+    ${name.N}         tuple projection (Lens)
+    ${name.tag}       sum projection (Prism, future)
 
 rc heritage for all forms [1, §Variables, §Indexing].
 
