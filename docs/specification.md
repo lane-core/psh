@@ -185,7 +185,7 @@ operators (μ); ⊕ vs ⅋ error handling are dual.
 
 **Levy** [4] defines Call-by-Push-Value, the practical
 framework for the value/computation distinction. psh's
-`cmd`/`let`+`\` split is CBPV's `U`/`F` adjunction surfaced
+`def`/`let`+`\` split is CBPV's `U`/`F` adjunction surfaced
 as syntax.
 
 
@@ -204,7 +204,7 @@ are:
 A cut is not a command definition. A cut is the *statement*
 that connects a producer to a consumer. `echo hello` is a cut:
 the producer `hello` meets the consumer (echo's I/O context —
-stdout, the continuation of the script). The `cmd` keyword
+stdout, the continuation of the script). The `def` keyword
 defines a computation; the cut happens when the computation is
 invoked with arguments.
 
@@ -274,7 +274,7 @@ stdout binding + the script continuation).
 | `match(v) { arms }` | ⟨v \| case(arm₁, ..., armₙ)⟩ | Multi-way elimination |
 
 In psh's AST, the `Binding` sort handles μ̃-binders (context
-extension: assignment, let, cmd, ref) and the `Command` sort
+extension: assignment, let, def, ref) and the `Command` sort
 handles cuts and control flow (exec, if, for, match, try, trap).
 
 ### The AST's four sorts
@@ -376,8 +376,8 @@ its rc heritage or extension rationale.
 
 Key syntactic decisions with semantic grounding:
 
-- **`cmd` instead of `fn`** for command definitions. rc's `fn`
-  was a misnomer — it defines a cut, not a function. `cmd`
+- **`def` instead of `fn`** for command definitions. rc's `fn`
+  was a misnomer — it defines a cut, not a function. `def`
   names the sort honestly. See §Two kinds of callable.
 - **`let` + `\` for functions.** Values in the value sort,
   first-class, with capture semantics. See §Two kinds of
@@ -400,12 +400,12 @@ Key syntactic decisions with semantic grounding:
 ksh93's compound variables [SPEC, §Compound variables] were its
 struct system, never named as such. `typeset -C` created
 name-value trees; `${x.field}` accessed them; disciplines
-mediated access. psh's `cmd`/lambda distinction is informed by
+mediated access. psh's `def`/lambda distinction is informed by
 this: ksh93 needed both effectful procedures (functions) and
 inert data accessors (compound variable fields), but conflated
 them in the `Namval_t` machinery.
 
-| | `cmd` | `let` + `\` (lambda) |
+| | `def` | `let` + `\` (lambda) |
 |---|---|---|
 | Sort | Command (cut template) | Value (term) |
 | Arguments | Variadic, positional ($1, $2, $*) | Fixed arity, named |
@@ -416,17 +416,19 @@ them in the `Namval_t` machinery.
 | rc analog | `fn name { body }` [1, §Functions] | (no rc analog — extension) |
 | Invocation | `name arg1 arg2` | `$f(arg1, arg2)` |
 
-The `cmd` keyword replaces rc's `fn`. Duff chose `fn`
+The `def` keyword replaces rc's `fn`. Duff chose `fn`
 deliberately, but psh renames it because psh draws a distinction
-between commands (cuts) and functions (morphisms in a category)
-that rc did not make. `cmd` names the sort.
+between named computations and first-class functions that rc
+did not make. `def` is neutral — it defines a named computation
+without claiming its role in a cut, which only happens at the
+invocation site.
 
 
 ## Discipline functions
 
 ### .get — pure notification hook
 
-`cmd x.get` is not legal. `.get` disciplines are pure — they
+`def x.get` is not legal. `.get` disciplines are pure — they
 cannot perform I/O, cannot mutate the variable they observe,
 cannot call external commands.
 
@@ -461,18 +463,18 @@ S → ΨA, which loses idempotence and breaks compositional
 soundness across the discipline system.
 
 **Live variable refresh** happens through a separate mechanism:
-an explicit `cmd` that writes to the variable's stored slot.
+an explicit `def` that writes to the variable's stored slot.
 
     let mut cursor = 0
-    cmd cursor.refresh { cursor = `{ cat /srv/window/cursor } }
+    def cursor.refresh { cursor = `{ cat /srv/window/cursor } }
 
 The refresh is a command (computation sort, effectful). The
 `.get` is pure (value sort, Getter). Clean polarity separation.
 
 ### .set — effectful mutation (Kleisli)
 
-    cmd x.set { ... }
-    cmd x.set(val) { ... }
+    def x.set { ... }
+    def x.set(val) { ... }
 
 `.set` fires on assignment to `x`, with `$1` bound to the new
 value. The body may have effects. Reentrancy guard prevents
@@ -675,8 +677,8 @@ The mapping:
 
 | Coprocess | Pane |
 |---|---|
-| `cmd name : ...` | `impl Handles<P>` |
-| `cmd \|&` (fork + socketpair) | DeclareInterest + connection |
+| `def name : ...` | `impl Handles<P>` |
+| `name \|&` (fork + socketpair) | DeclareInterest + connection |
 | `print -p` / `read -p` | ServiceHandle send/recv |
 | Coprocess exit | PaneExited / ServiceTeardown |
 | Parse failure on recv | FrameCodec deserialization error |

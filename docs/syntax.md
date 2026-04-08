@@ -63,12 +63,12 @@ Bindings extend the context Γ with a new name. They are
 μ̃-binders in the sequent calculus reading (specification.md
 §The three sorts).
 
-    binding     = assignment | let_binding | cmd_def | ref_def
+    binding     = assignment | let_binding | def_binding | ref_def
 
     assignment  = NAME '=' value
     let_binding = 'let' let_quals NAME (':' type_ann)? '=' value
     let_quals   = 'mut'? 'export'?
-    cmd_def     = 'cmd' NAME cmd_params? body
+    def_binding     = 'def' NAME def_params? body
     ref_def     = 'ref' NAME '=' NAME
 
     type_ann    -- see §Type annotations (future)
@@ -91,19 +91,19 @@ annotation validates via Prism check. psh extension.
 `let` is always CBV. The RHS is evaluated at binding time and
 the result is stored. There is no call-by-name `let` form.
 
-### cmd
+### def
 
-`cmd name { body }` defines a named computation — a cut
+`def name { body }` defines a named computation — a
 template in the command sort. This is rc's `fn` [1, §Functions], renamed. Duff chose `fn`
 deliberately, but psh draws a distinction between commands
-(cuts) and functions (morphisms) that rc did not make. `cmd`
+(cuts) and functions (morphisms) that rc did not make. `def`
 names the sort.
 
 Three forms:
 
-    cmd name { body }           # positional params: $1, $2, $*
-    cmd name() { body }         # nullary: takes no arguments
-    cmd name(a b c) { body }    # named params: $a, $b, $c
+    def name { body }           # positional params: $1, $2, $*
+    def name() { body }         # nullary: takes no arguments
+    def name(a b c) { body }    # named params: $a, $b, $c
 
 Without parentheses, the command uses rc-style positional
 parameters (`$1`, `$2`, `$*`, `$#*`). With parentheses, the
@@ -112,13 +112,13 @@ command declares its parameter interface — `()` means nullary,
 are bound in the command scope alongside positional `$1`, `$2`
 etc. for compatibility.
 
-A `cmd` is not first-class; it is not a value; it cannot be
+A `def` is not first-class; it is not a value; it cannot be
 stored in a variable or passed as an argument. It is a named
 entry in the computation context Θ.
 
-Also handles discipline `.set` functions: `cmd x.set { body }`,
-`cmd x.set(val) { body }`. ksh93 heritage. Note: `.get`
-disciplines are pure and defined as lambdas, not `cmd` — see
+Also handles discipline `.set` functions: `def x.set { body }`,
+`def x.set(val) { body }`. ksh93 heritage. Note: `.get`
+disciplines are pure and defined as lambdas, not `def` — see
 §Discipline functions.
 
 ### ref
@@ -144,12 +144,12 @@ composable.
 In CBPV terms [4], a lambda is `U(A₁ → ... → Aₙ → F(B))`
 when impure, or `U(A₁ → ... → Aₙ → B)` when pure. The `U`
 (thunk) wraps a computation as a value. The distinction between
-`cmd` and `let`+`\` is the CBPV value/computation boundary
+`def` and `let`+`\` is the CBPV value/computation boundary
 surfaced as syntax. See specification.md §Two kinds of callable.
 
 **Capture semantics.** Lambdas capture free variables at
 definition time — `Vec<(String, Val)>`, positive, Clone. This
-is the closed-term property. Named `cmd` definitions use
+is the closed-term property. Named `def` definitions use
 dynamic resolution (read current scope at call time). The
 distinction is the sort boundary: values (lambdas) are
 self-contained; computations (cmds) live in a context.
@@ -448,7 +448,7 @@ not in this set: `$home/bin` parses as `$home` followed by
 `/bin`.
 
 **`word_char`** is the bare-word alphabet. Includes `.` (for
-discipline function names: `cmd x.set { }`), `/` (for paths).
+discipline function names: `def x.set { }`), `/` (for paths).
 
 **Divergence from rc:** rc used a single word alphabet. psh
 makes the split explicit and adds `.` to `word_char` (not
@@ -554,7 +554,7 @@ wire format, star topology).
 
 ## Reserved words
 
-Keywords: `cmd`, `let`, `mut`, `export`, `ref`, `if`, `else`,
+Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
 `return`.
 
