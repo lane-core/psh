@@ -93,16 +93,6 @@ reimplementing the self-pipe. When lexical `trap` is
 implemented, the self-pipe mechanism delivers signals to the
 innermost active trap scope.
 
-### Optional (feature-gated)
-
-**pane-proto**, **pane-session** — pane integration, behind
-the `pane` feature flag. Not compiled by default. When
-enabled, provides typed communication with pane infrastructure
-through the namespace tier. These are workspace-local path
-dependencies (`../pane/crates/...`), not published crates.
-The standalone shell has zero pane dependencies.
-
-
 ## Crate budget
 
 Current: 8 required dependencies, 2 optional. Target: hold

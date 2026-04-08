@@ -13,15 +13,3 @@ libc = "0.2"
 rustix = { version = "1", features = ["pipe", "process", "stdio", "termios", "fs", "net"] }
 smallvec = { version = "1", features = ["union"] }
 signals_receipts = { version = "0.2", features = ["premade", "channel_notify_facility"] }
-
-[features]
-default = []
-pane = ["dep:pane-proto", "dep:pane-session"]
-
-[dependencies.pane-proto]
-path = "../pane/crates/pane-proto"
-optional = true
-
-[dependencies.pane-session]
-path = "../pane/crates/pane-session"
-optional = true
