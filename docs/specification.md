@@ -826,13 +826,9 @@ They are inert data — Clone, no embedded effects.
 Extensions add connectives to the μμ̃ framework, not new
 sorts. The sorts remain producers/consumers/commands.
 
-### Prenex polymorphism
+### Polymorphism
 
-Type abbreviations with parameters — named sum/product types
-that abstract over their element types. Not System F — no
-lambda over types, no impredicativity. Decidable, no inference
-complications. Syntax undecided; no square brackets or other
-novel delimiters are committed to.
+Parametric type abbreviations — syntax and semantics undecided.
 
 ### Optics activation
 
