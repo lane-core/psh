@@ -224,7 +224,7 @@ In psh's AST, terms are the `Word`/`Value` sort.
 | `` `{cmd} `` | Command substitution | Shift ↓→↑: computation forced, result returned as value |
 | `(a b c)` | List | Product of strings |
 | `$x^$y` | Concatenation | Kleisli composition of two terms |
-| `\(x) => body` | Lambda | Thunked computation as value (`U` in CBPV) |
+| `\x => body` | Lambda | Thunked computation as value (`U` in CBPV) |
 | `ok(42)` | Sum (injection) | Tagged value — coproduct introduction |
 
 ### Coterms (consumers) — Δ
@@ -435,7 +435,7 @@ cannot call external commands.
 
 A `.get` discipline is defined as a lambda:
 
-    let x.get = \() => { ... pure computation ... }
+    let x.get = \ => { ... pure computation ... }
 
 The body fires on every `$x` access as a pure notification —
 side-effect-free observation (logging, tracing). The returned

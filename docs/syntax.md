@@ -134,12 +134,12 @@ Functions are values in the value sort, created by `let`-binding
 a lambda expression. They are first-class: storable, passable,
 composable.
 
-    lambda      = '\' params '=>' (body | command)
-    params      = '(' NAME* ')' | NAME
+    lambda      = '\' NAME* '=>' (body | command)
 
-    let double = \(x) => expr $x '*' 2
-    let greet  = \(name) => { echo 'hello '$name; return 0 }
-    let add    = \(x) => \(y) => expr $x + $y    # currying
+    let double = \x => expr $x '*' 2
+    let greet  = \name => { echo 'hello '$name; return 0 }
+    let add    = \x => \y => expr $x + $y    # currying
+    let thunk  = \ => echo 'no args'         # nullary
 
 In CBPV terms [4], a lambda is `U(A₁ → ... → Aₙ → F(B))`
 when impure, or `U(A₁ → ... → Aₙ → B)` when pure. The `U`
@@ -167,7 +167,7 @@ to oblique maps. See specification.md §Two kinds of callable.
 `.get` disciplines are pure — they are Getters (specification.md
 §Discipline functions). Defined as lambdas:
 
-    let x.get = \() => { ... pure computation ... }
+    let x.get = \ => { ... pure computation ... }
 
 The body fires on every `$x` access as a notification. The
 returned value is always the stored value, not the body's
