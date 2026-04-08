@@ -570,20 +570,27 @@ rc heritage [1, §Advanced I/O Redirection].
 
 ## Coprocess syntax
 
-    cmd_expr    = ... | cmd_expr '|&'
+    cmd_expr    = ... | cmd_expr '|&' NAME?
 
-`cmd |&` starts a bidirectional coprocess with a 9P-shaped
-protocol discipline. The shell holds both a write end and a
-read end to the child.
+`cmd |& name` starts a named bidirectional coprocess with a
+9P-shaped protocol discipline. `cmd |&` without a name targets
+the default coprocess.
 
-    cmd |&
-    print -p 'query'          # send request, get PendingReply
-    read -p reply             # consume PendingReply, get response
-    read -p -t $tag reply     # consume specific tag's response
+    server |& myserver                # start named coprocess
+    print -p myserver 'query'         # send to myserver
+    read -p myserver reply            # read from myserver
+    read -p myserver -t $tag reply    # read specific tag
+
+    worker |& bg                      # second coprocess
+    print -p bg 'task'                # independent channel
+
+    cmd |&                            # anonymous (default name)
+    print -p 'query'                  # targets default
+    read -p reply                     # targets default
 
 See specification.md §Coprocesses for the full protocol
 description (per-tag binary sessions, PendingReply handles,
-wire format, star topology).
+wire format, named coprocesses).
 
 
 ## Reserved words

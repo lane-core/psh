@@ -582,8 +582,10 @@ enforced by runtime checks rather than compile-time types.
 psh extracts 9P's conversation shape (not its wire protocol):
 
 1. **Negotiate** — one round-trip confirming both sides speak
-   the same protocol. Degenerate for same-binary coprocesses
-   ("psh protocol v1"). Extensible for cross-machine (future).
+   the same protocol. For same-binary coprocesses this is a
+   trivial handshake ("psh protocol v1"). The negotiate step
+   exists so that the protocol is self-describing from the
+   first byte — no out-of-band assumptions about the peer.
 2. **Request-response pairs** — every request gets a response.
    No fire-and-forget. No ambiguity about whose turn it is.
 3. **Error at any step** — failure is always a valid response,
@@ -614,11 +616,14 @@ operate at the floor.
 
 ### PendingReply handles
 
-`print -p` returns a `PendingReply` — a `#[must_use]` handle.
-`read -p` consumes a `PendingReply` to get the response.
-Dropping a `PendingReply` without reading sends a cancel (the
-Tflush equivalent — affine gap compensation). The tag cannot
-be reused until the handle is consumed or dropped.
+`print -p name` returns a `PendingReply` — a `#[must_use]`
+handle. `read -p name` consumes a `PendingReply` to get the
+response. Dropping a `PendingReply` without reading sends a
+cancel (the Tflush equivalent — affine gap compensation). The
+tag cannot be reused until the handle is consumed or dropped.
+
+When `name` is omitted, the builtins target the default
+coprocess (see §Named coprocesses).
 
 PendingReply is affine in Rust's type system (Drop exists) but
 linear by intent (must be consumed). Drop-as-cancel is the
@@ -656,14 +661,34 @@ may contain newlines (multi-line strings, command output,
 heredocs). The tag is binary u16 for efficiency; the payload
 is text (Display/FromStr).
 
-### Star topology
+### Named coprocesses
 
-Multiple named coprocesses (future: `HashMap<String, Coproc>`
-instead of `Option<Coproc>`) each have independent tag spaces
-and independent binary sessions. The shell is the hub. No
-coprocess-to-coprocess communication — star topology. Deadlock
-freedom by asymmetric initiator/responder topology (shell
-always initiates, coprocess always responds).
+Coprocesses are named. The shell holds a `HashMap<String,
+Coproc>` — each coprocess has a name, its own socketpair, its
+own independent tag space, and its own binary sessions.
+
+    server |& myserver           # start named coprocess
+    print -p myserver 'query'    # write to myserver
+    read -p myserver reply       # read from myserver
+
+    worker |& bg                 # another coprocess
+    print -p bg 'task'           # independent channel
+
+Anonymous `cmd |&` (no name) targets a default coprocess.
+`print -p` / `read -p` without a name target the default.
+This preserves ksh93 compatibility for simple cases while
+enabling multiple simultaneous coprocesses.
+
+**Lifecycle.** Named coprocesses are reaped on scope exit
+(subshell close, function return) or explicit close. A dead
+coprocess's name becomes available again — no zombie entries.
+Rust's `Drop` on `Coproc` handles cleanup.
+
+**Topology.** The shell is the hub. No coprocess-to-coprocess
+communication — star topology. Each coprocess talks only to
+the shell. Deadlock freedom by asymmetric initiator/responder
+discipline (shell always initiates, coprocess always responds).
+N independent binary sessions, same topology class as one.
 
 ## Namespace (three tiers)
 
