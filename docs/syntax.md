@@ -599,8 +599,9 @@ Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
 `return`.
 
-Future: `type` (for type abbreviations when prenex polymorphism
-arrives).
+Reserved for future use: `type` (type aliases), `struct`
+(named product types generalizing tuples), `enum` (named
+coproduct types generalizing sums).
 
 Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
 `^`, `>`, `>>`, `<`, `>[`, `<[`.
