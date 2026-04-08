@@ -2526,18 +2526,18 @@ mod tests {
 
     #[test]
     fn match_structural_arm() {
-        // Construct a Sum value directly (tagged values not yet in parser)
+        // Construct a Sum value using the new tagged syntax
         // and verify structural pattern match decomposes it correctly.
         let mut shell = Shell::new();
-        // Inject a Sum("ok", Str("42")) directly into the environment
+        // Create a Sum value using tagged construction: ok["42"]
         let sum_val = Val::Sum("ok".into(), Box::new(Val::Str("42".into())));
         let _ = shell.env.set_value("x", sum_val);
         // Pre-declare result so the match arm's assignment walks scope
         let _ = shell.env.set_value("result", Val::Str("none".into()));
-        // match $x { ok v => result = $v; err e => result = error }
+        // match $x { ok[v] => result = $v; err[e] => result = error }
         let outcome = run_with_shell(
             &mut shell,
-            "match $x { ok v => result = $v; err e => result = error }",
+            "match $x { ok[v] => result = $v; err[e] => result = error }",
         );
         assert!(outcome.status().is_success());
         assert_eq!(
@@ -3035,5 +3035,76 @@ mod tests {
     fn take_outside_for_is_error() {
         let (_, outcome) = run("take hello");
         assert!(!outcome.status().is_success());
+    }
+
+    // ── Tagged Sum construction (Phase D3) ───────────────────
+
+    #[test]
+    fn tagged_construction_creates_sum() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = ok[42]");
+        let val = shell.env.get_value("x");
+        assert_eq!(val, Val::Sum("ok".into(), Box::new(Val::Int(42))));
+    }
+
+    #[test]
+    fn tagged_construction_with_string() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = err['not found']");
+        let val = shell.env.get_value("x");
+        assert_eq!(
+            val,
+            Val::Sum("err".into(), Box::new(Val::Str("not found".into())))
+        );
+    }
+
+    #[test]
+    fn tagged_construction_with_list() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = items[(a b c)]");
+        let val = shell.env.get_value("x");
+        match val {
+            Val::Sum(tag, payload) => {
+                assert_eq!(tag, "items");
+                match payload.as_ref() {
+                    Val::List(items) => assert_eq!(items.len(), 3),
+                    _ => panic!("expected List payload"),
+                }
+            }
+            _ => panic!("expected Sum"),
+        }
+    }
+
+    #[test]
+    fn tagged_construction_nested() {
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = outer[inner[42]]");
+        let val = shell.env.get_value("x");
+        match val {
+            Val::Sum(outer_tag, outer_payload) => {
+                assert_eq!(outer_tag, "outer");
+                match outer_payload.as_ref() {
+                    Val::Sum(inner_tag, inner_payload) => {
+                        assert_eq!(inner_tag, "inner");
+                        assert_eq!(inner_payload.as_ref(), &Val::Int(42));
+                    }
+                    _ => panic!("expected nested Sum"),
+                }
+            }
+            _ => panic!("expected Sum"),
+        }
+    }
+
+    #[test]
+    fn tagged_match_roundtrip() {
+        // Construct via tag[], deconstruct via match
+        let mut shell = Shell::new();
+        run_with_shell(&mut shell, "let x = ok[42]");
+        run_with_shell(&mut shell, "let result = none");
+        run_with_shell(
+            &mut shell,
+            "match $x { ok[v] => result = $v; err[e] => result = error }",
+        );
+        assert_eq!(shell.env.get_value("result"), Val::Int(42));
     }
 }

@@ -469,6 +469,23 @@ fn compute_value<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Va
     })
 }
 
+/// tagged_val = NAME '[' value ']'
+fn tagged_value<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
+    combine::parser(move |input: &mut I| {
+        use combine::error::Commit;
+
+        let (tag, _) = wname().parse_stream(input).into_result()?;
+        let (_, _) = trivia().parse_stream(input).into_result()?;
+        let _ = ch('[').parse_stream(input).into_result()?;
+        let (_, _) = trivia().parse_stream(input).into_result()?;
+        let (val, _) = value_().parse_stream(input).into_result()?;
+        let (_, _) = trivia().parse_stream(input).into_result()?;
+        let _ = ch(']').parse_stream(input).into_result()?;
+
+        Ok((Value::Tagged(tag, Box::new(val)), Commit::Commit(())))
+    })
+}
+
 fn value_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
     choice!(
         // List literal: ( word* )
@@ -481,6 +498,8 @@ fn value_<I: Stream<Token = char>>() -> impl CombineParser<I, Output = Value> {
         ),
         // try { body } in value position
         try_value(),
+        // Tagged Sum construction: tag[value]
+        attempt(tagged_value()),
         // Value-producing blocks: if/match/while/for/{ }
         attempt(compute_value()),
         // Lambda
@@ -1297,10 +1316,10 @@ fn to_glob_pattern(word: &str) -> Pattern {
 
 /// match_arm = glob_arm | structural_arm
 ///   glob_arm       = glob_pats '=>' lambda_body
-///   structural_arm = NAME NAME '=>' lambda_body
+///   structural_arm = NAME '[' NAME ']' '=>' lambda_body
 ///   glob_pats      = '(' NAME+ ')' | NAME
 ///
-/// Disambiguation: '(' → multi-glob, two bare words → structural,
+/// Disambiguation: '(' → multi-glob, NAME '[' → structural,
 /// one bare word → single-pattern glob.
 fn match_arm<I: Stream<Token = char>>(
 ) -> impl CombineParser<I, Output = (Vec<Pattern>, Vec<Command>)> {
@@ -1335,7 +1354,7 @@ fn match_arm<I: Stream<Token = char>>(
                 let (_, _) = trivia().parse_stream(input).into_result()?;
 
                 // Peek: if next is =>, it's a single-pattern glob.
-                // If next is another NAME then =>, it's structural.
+                // If next is '[', it's structural: tag[var] =>
                 let cp2 = input.checkpoint();
                 match attempt(string("=>")).parse_stream(input).into_result() {
                     Ok(_) => {
@@ -1344,10 +1363,14 @@ fn match_arm<I: Stream<Token = char>>(
                     }
                     Err(_) => {
                         input.reset(cp2).ok();
-                        // Try structural: NAME NAME =>
+                        // Try structural: NAME '[' NAME ']' =>
                         let cp3 = input.checkpoint();
-                        match wname().parse_stream(input).into_result() {
-                            Ok((binding, _)) => {
+                        match ch('[').parse_stream(input).into_result() {
+                            Ok(_) => {
+                                let (_, _) = trivia().parse_stream(input).into_result()?;
+                                let (binding, _) = varname().parse_stream(input).into_result()?;
+                                let (_, _) = trivia().parse_stream(input).into_result()?;
+                                let _ = ch(']').parse_stream(input).into_result()?;
                                 let (_, _) = trivia().parse_stream(input).into_result()?;
                                 // Verify => follows
                                 let cp4 = input.checkpoint();
@@ -2391,7 +2414,7 @@ mod tests {
 
     #[test]
     fn match_structural() {
-        let prog = parse("match $result { ok v => echo $v; err e => echo $e }");
+        let prog = parse("match $result { ok[v] => echo $v; err[e] => echo $e }");
         match &prog.commands[0] {
             Command::Match { arms, .. } => {
                 assert_eq!(arms.len(), 2);
@@ -2956,5 +2979,93 @@ mod tests {
     #[test]
     fn parse_err_unterminated_match() {
         parse_err("match foo {");
+    }
+
+    // ── Tagged Sum construction tests ─────────────────────────
+
+    #[test]
+    fn tagged_value_int() {
+        let prog = parse("let x = ok[42]");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                match value {
+                    Value::Tagged(tag, payload) => {
+                        assert_eq!(tag, "ok");
+                        match payload.as_ref() {
+                            Value::Word(Word::Literal(n)) => assert_eq!(n, "42"),
+                            _ => panic!("expected Word payload"),
+                        }
+                    }
+                    _ => panic!("expected Tagged value, got {:?}", value),
+                }
+            }
+            other => panic!("expected Let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tagged_value_string() {
+        let prog = parse("let x = err['not found']");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                match value {
+                    Value::Tagged(tag, payload) => {
+                        assert_eq!(tag, "err");
+                        match payload.as_ref() {
+                            Value::Word(Word::Quoted(s)) => assert_eq!(s, "not found"),
+                            _ => panic!("expected Quoted payload, got {:?}", payload),
+                        }
+                    }
+                    _ => panic!("expected Tagged value"),
+                }
+            }
+            other => panic!("expected Let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tagged_value_list() {
+        let prog = parse("let x = items[(a b c)]");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                match value {
+                    Value::Tagged(tag, payload) => {
+                        assert_eq!(tag, "items");
+                        match payload.as_ref() {
+                            Value::List(words) => assert_eq!(words.len(), 3),
+                            _ => panic!("expected List payload"),
+                        }
+                    }
+                    _ => panic!("expected Tagged value"),
+                }
+            }
+            other => panic!("expected Let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tagged_value_nested() {
+        let prog = parse("let x = result[ok[42]]");
+        match &prog.commands[0] {
+            Command::Bind(Binding::Let { value, .. }) => {
+                match value {
+                    Value::Tagged(outer_tag, outer_payload) => {
+                        assert_eq!(outer_tag, "result");
+                        match outer_payload.as_ref() {
+                            Value::Tagged(inner_tag, inner_payload) => {
+                                assert_eq!(inner_tag, "ok");
+                                match inner_payload.as_ref() {
+                                    Value::Word(Word::Literal(n)) => assert_eq!(n, "42"),
+                                    _ => panic!("expected inner Word payload"),
+                                }
+                            }
+                            _ => panic!("expected nested Tagged"),
+                        }
+                    }
+                    _ => panic!("expected Tagged value"),
+                }
+            }
+            other => panic!("expected Let binding, got {:?}", other),
+        }
     }
 }

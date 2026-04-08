@@ -1,12 +1,12 @@
 # psh syntax
 
 Formal grammar for psh. Starts from rc (Duff 1990) and names
-each extension. This grammar is the target language specification.
-Productions marked **[planned]** are not yet implemented — the
-current parser implements a subset (6 Val variants, `switch` not
-`match`, no `try`, no Sum, no Tuple, no ExitCode, no free
-carets, no two-alphabet split). Unmarked productions are
-implemented and tested.
+each extension. Productions marked **[planned]** are not yet
+implemented. Unmarked productions are implemented and tested.
+
+Implementation status: 10 Val variants exist in the runtime.
+Parser constructs all except Tuple literals `(a, b)` and Sum
+construction `tag[value]`, which remain planned.
 
 rc reference: `reference/plan9/man/1/rc` and `reference/plan9/papers/rc.ms`.
 Theoretical foundation: `docs/specification.md`.
@@ -140,16 +140,16 @@ block.
     if_cmd      = 'if' pipeline body ('else' (if_cmd | body))?
     for_cmd     = 'for' NAME 'in' value body
     while_cmd   = 'while' pipeline body
-    match_cmd   = 'match' value '{' match_arm (';' match_arm)* ';'? '}'  -- [planned]
-    try_cmd     = 'try' body ('else' NAME body)?        -- [planned]
+    match_cmd   = 'match' value '{' match_arm (';' match_arm)* ';'? '}'
+    try_cmd     = 'try' body ('else' NAME body)?
 
     match_arm   = glob_arm | structural_arm
     glob_arm    = glob_pats '=>' lambda_body
-    structural_arm = NAME NAME '=>' lambda_body
+    structural_arm = NAME '[' NAME ']' '=>' lambda_body
     glob_pats   = '(' NAME+ ')' | NAME
 
     body        = '{' program '}'
-                | '=>' command                          -- single-line [planned]
+                | '=>' command
 
 `=>` is a dependent keyword — a single-line body introducer.
 It can appear after any keyword-initiated clause: `if`, `for`,
@@ -175,8 +175,8 @@ match blocks use the same grammar:
 
 Note: `ok => { }` (single word before `=>`) is a glob match on
 the literal string "ok", not structural decomposition. Structural
-arms have two bare words: `ok v => { }` (tag + binding). The
-word count distinguishes structural from glob arms. Multi-pattern
+arms use brackets: `ok[v] => { }` (tag + binding). The presence of
+`[]` distinguishes structural from glob arms. Multi-pattern
 glob arms use list syntax: `(*.txt *.md) => { }`.
 
 **Divergence from rc:** rc wraps conditions in parentheses:
@@ -244,16 +244,15 @@ needed.
 
     # Structural matching on Sum values (psh extension)
     match $result {
-        ok v  => echo 'success: '$v;
-        err e => echo 'error: '$e
+        ok[v]  => echo 'success: '$v;
+        err[e] => echo 'error: '$e
     }
 
-Structural arms have the form `tag name =>` — two bare words
-(tag + binding), then `=>`. Glob arms use a single pattern
-(`pattern =>`) or a parenthesized list (`(pat ...) =>`). The
-word count before `=>` distinguishes: two bare words = structural,
-one word or parenthesized list = glob. No `$` in binding position
-— `$` means reference, always.
+Structural arms have the form `tag[var] =>` — the tag name,
+brackets containing the binding name, then `=>`. Glob arms use a
+single pattern (`pattern =>`) or a parenthesized list
+(`(pat ...) =>`). The presence of `[]` distinguishes structural
+from glob. No `$` in binding position — `$` means reference, always.
 
 **Value-producing blocks.** When a body appears in value
 position (RHS of `let`, etc.), it ends with `return value`
@@ -401,46 +400,47 @@ by concatenation.
                 | '~'
 
     var_ref     = '$' VARNAME accessor* ('(' word ')')?
-    accessor    = '.' (NUM | NAME)                  -- [planned]
+    accessor    = '.' (NUM | NAME)
 
     value       = '(' word* ')'
                 | tagged_val                        -- [planned]
                 | lambda
                 | word
-    tagged_val  = NAME value                        -- [planned]
+    tagged_val  = NAME '[' value ']'                -- [planned]
     lambda      = '\' (NAME+ | '(' ')') '=>' ('{' program '}' | command)
 
-**Accessors** **[planned]** project into structured values. Since
-`.` is not in `var_char`, after `$pos` the parser sees `.0` as
-the start of a new token. The `accessor` production captures this:
-`$pos.0` is tuple projection (π₀), `$result.ok` is tagged
-decomposition (Prism preview), `$e.code` is ExitCode extraction.
-The accessor chains compose: `$result.ok.name` is Prism then
-Lens (AffineTraversal). Without the accessor production, the free
-caret rule produces `$pos ^ .0` (string concatenation), not
-structural access. The accessor takes priority over free carets
-when the token immediately following a `var_ref` is `.` followed
-by a digit or `NAME`.
+**Accessors** project into structured values. Since `.` is not in
+`var_char`, after `$pos` the parser sees `.0` as the start of a new
+token. The `accessor` production captures this: `$pos.0` is tuple
+projection (π₀), `$result.ok` is tagged decomposition (Prism
+preview), `$e.code` is ExitCode extraction. Accessors chain:
+`$result.ok.name` is Prism then Lens (AffineTraversal). The
+accessor takes priority over free carets when the token immediately
+following a `var_ref` is `.` followed by a digit or `NAME`.
 
-**Sum construction** **[planned]** is context-sensitive. In
-`let` RHS, `match` arm body, and `value` position, a bare word
-followed by a value is Sum construction: `ok 42` →
-`Sum("ok", Int(42))`. In command position, it is a simple
-command: `ok 42` runs the command `ok` with argument `42`. The
-parser context determines interpretation — `value` attempts the
-`tagged_val` production before falling through to `word`.
+**Sum construction** **[planned]** uses bracket syntax: `ok[42]`,
+`err["not found"]`, `KeyEvent[(97, 0)]`. The `[]` visually
+mirrors type syntax (`Result[T]`) and is unambiguous — `NAME '['`
+commits to Sum construction, with the payload parsed as a standard
+value. This applies anywhere a value is expected: `let` RHS,
+match arm bodies, command arguments.
+
+Examples:
+```psh
+let result : Result[Int] = ok[42]
+let opt : Maybe[Path] = some[/tmp/file]
+let nested = result[ok[42]]
+```
+
+In command position, `ok[42]` is simply a command named `ok` with
+argument `[42]` — the brackets are literal characters in a word.
+Sum construction only occurs in value position.
 
 ### Two character sets
 
-**[planned]** The current implementation uses a single
-`is_word_char` predicate. The two-alphabet split described here
-is the target design and the first implementation task for the
-new grammar. The current parser includes `~` in word characters
-and excludes `@`; the target grammar reverses both.
-
 psh uses two character predicates for different parsing contexts.
-This is the key mechanism that enables free carets and discipline
-function names to coexist.
+This mechanism enables free carets and discipline function names
+to coexist.
 
     var_char    = [a-zA-Z0-9_*]
     word_char   = [a-zA-Z0-9_\-./+:,%*?\[\]@]
@@ -488,17 +488,13 @@ Examples:
     'hello'$name      →  'hello' ^ $name
     $file.$ext        →  $file ^ . ^ $ext
 
-**Interaction with accessors [planned]:** When the accessor
-production is implemented, `$pos.0` is parsed as a projection
-(accessor), not a free caret. The accessor production takes
-priority over free carets after a `var_ref`. This means
-`$stem.c` also parses as an accessor — a breaking change
-from rc's `$stem ^ .c` idiom. The resolution: rc's pattern
-uses explicit caret (`$stem^.c`) or brace delimiting
-(`${stem}.c`) when the accessor production is active. This
-tradeoff is acceptable because the accessor enables the entire
-optic composition story (Prism, Lens, AffineTraversal), which
-is more valuable than the implicit concat convenience.
+**Interaction with accessors:** The accessor production takes
+priority over free carets after a `var_ref`. `$pos.0` parses as
+tuple projection, not `$pos ^ .0`. This means `$stem.c` parses
+as tag projection from `$stem`, not `$stem ^ .c`. Use explicit
+caret (`$stem^.c`) or brace delimiting (`${stem}.c`) to obtain
+the concat behavior. This tradeoff enables the optic composition
+story (Prism, Lens, AffineTraversal).
 
 Explicit `^` remains available and allows whitespace on either
 side: `a ^ b` concatenates `a` and `b`. Free carets require
@@ -584,20 +580,19 @@ This is the escape hatch for edge cases where the narrow
 `var_char` alphabet is insufficient.
 
     ${x.get}          looks up variable named x.get
-    $x.get            accessor: project .get from $x [planned]
+    $x.get            accessor: project tag `.get` from `$x`
 
-Without the accessor production (current implementation),
-`$x.get` is a free caret: `$x` concatenated with `.get`. With
-the accessor production, `$x.get` becomes structural access.
-`${x.get}` is always an explicit variable name lookup regardless
-of the accessor rule. Discipline functions dispatch through the
-evaluator, not through `$`-expansion.
+`${x.get}` uses the `word_char` alphabet inside braces, so it
+looks up a variable literally named `x.get`. `$x.get` (without
+braces) parses `$x` as a variable reference, then `.get` as a
+tag accessor projecting from the Sum value. Discipline functions
+dispatch through the evaluator, not through `$`-expansion.
 
 ### Variable expansion
 
     $x                value of x (list)
     $x(n)             nth element of x (1-based)
-    $x.0              tuple projection (0-based) [planned]
+    $x.0              tuple projection (0-based)
     $#x               count of elements in x
     $"x               stringify: join elements with spaces
     ${name}           explicit variable name delimiting
@@ -737,19 +732,19 @@ Destructuring in `let` bindings: `let (x, y) = expr`.
 Sum values carry a string tag and a payload. The tag is the
 coproduct injection label. The payload is any Val.
 
-    let x = ok 42                    # Sum("ok", Int(42))
-    let y = err 1                    # Sum("err", ExitCode(1))
-    let e = KeyEvent (97, 0)         # Sum("KeyEvent", Tuple(..))
+    let x = ok[42]                   # Sum("ok", Int(42))
+    let y = err[1]                   # Sum("err", ExitCode(1))
+    let e = KeyEvent[(97, 0)]        # Sum("KeyEvent", Tuple(..))
 
-Construction: `tag payload` — a bare word (the tag) followed by
-a value (the payload). `try { body }` implicitly produces
-`ok val` or `err ExitCode(n)`.
+Construction: `tag[value]` — the tag name followed by brackets
+containing the payload value. `try { body }` implicitly produces
+`ok[value]` or `err[ExitCode(n)]`.
 
 Elimination: `match` with structural arms.
 
     match $result {
-        ok v  => echo $v;
-        err e => echo 'error: '$e
+        ok[v]  => echo $v;
+        err[e] => echo 'error: '$e
     }
 
 The tag is an open string namespace. Any script can define new
@@ -1041,7 +1036,7 @@ are inferred:
     '42'          Str (quoted — inference suppressed)
     hello         Str (default)
     (42, 7)       Tuple — inferred componentwise: (Int, Int)
-    ok 42         Sum — tag is "ok", payload inferred: Int
+    ok[42]        Sum — tag is "ok", payload inferred: Int
     (a b c)       List — elements inferred individually
 
 ExitCode is NEVER inferred from literals. It enters the
@@ -1285,7 +1280,7 @@ builtin, or external command. With the typed value model,
     whatis x           x : Int = 42
     whatis y           y : List[Str] = (foo bar baz)
     whatis z           z = hello        # bare assignment, no type shown
-    whatis result      result : Result[Int] = ok 42
+    whatis result      result : Result[Int] = ok[42]
     whatis cursor      cursor : try Result[Int]   # computed, no stored value
     whatis cd          builtin cd
     whatis ls          /usr/bin/ls

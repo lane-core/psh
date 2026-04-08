@@ -51,6 +51,7 @@ interactive. Live at github.com/lane-core/psh.
 | `${name}` brace-delimited variables | Complete |
 | Free carets (implicit `^` on adjacency) | Complete |
 | Two-alphabet split (var\_char / word\_char) | Complete |
+| Accessor syntax (`$x.0`, `$x.ok`, `$x.code`) | Complete |
 | `capture_subprocess` shared primitive | Complete |
 | whatis builtin | Complete |
 | Builtins: cd echo exit get set builtin . wait jobs fg bg read print true false whatis | Complete |
@@ -61,7 +62,8 @@ interactive. Live at github.com/lane-core/psh.
 
 | Feature | Spec location |
 |---------|---------------|
-| Accessor syntax ($x.0, $x.ok, $x.code) | §Words |
+| Tuple literal syntax `(a, b)` | §Products (tuples) |
+| Sum construction syntax `tag payload` | §Coproducts (tagged values) |
 | `try` in value position (returns Result[T]) | §`try` in value position |
 | Type annotation parsing (Tuple, Union, Fn, Result, Maybe, (T)) | §Type annotations |
 | Heredoc variable expansion (unquoted delimiters) | §Redirections |
