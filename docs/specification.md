@@ -828,10 +828,11 @@ sorts. The sorts remain producers/consumers/commands.
 
 ### Prenex polymorphism
 
-Type abbreviations with parameters:
-`Result[T] = ok T | err ExitCode`. Not System F — no lambda
-over types, no impredicativity. Decidable, no inference
-complications.
+Type abbreviations with parameters — named sum/product types
+that abstract over their element types. Not System F — no
+lambda over types, no impredicativity. Decidable, no inference
+complications. Syntax undecided; no square brackets or other
+novel delimiters are committed to.
 
 ### Optics activation
 
