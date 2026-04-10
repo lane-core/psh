@@ -227,20 +227,15 @@ interpretation.
   declaration, plus numeric `.0`, `.1` fallback?
 - Mutation: are struct fields mutable? How?
 
-### Signal handling: rc style vs lexical trap
+### Signal handling: rc style vs lexical trap (RESOLVED)
 
-Current spec: `trap SIGNAL { handler } { body }` — lexically scoped
-μ-binder. Principled but departs from rc.
-
-rc uses `fn sigint { ... }` — a named function that fires on the
-signal. Global, dynamic.
-
-**Options:**
-- Keep lexical `trap` (current)
-- Restore rc's `def sigint { ... }` — global, dynamic, rc-familiar
-- Both
-
-**Lane has not weighed in yet.**
+Resolved by the unified `trap` decision in the "Signal handling and
+coprocess/VDC harmonization: resolved decisions" section below.
+Grammar: `trap_cmd = 'trap' SIGNAL (body body?)?`. Three forms
+distinguished by block count: lexical (two blocks), global (one
+block), deletion (no blocks). Precedence: innermost lexical > outer
+lexical > global > OS default. See the resolved-decisions section
+for full details.
 
 
 ## Pending (not yet discussed in depth)
@@ -287,30 +282,50 @@ copattern direction, this becomes `$list .0`, `$list .1`, etc.
 AffineTraversal (partial — list might be shorter than the index).
 Returns `option` sums per the partial access rule.
 
-### Generalized destructor notation
+### Generalized destructor notation (direction noted)
 
-The `$#x` / `$"x` sigil notation needs to unify with the postfix
-accessor direction. Questions:
+Direction confirmed by the VDC copattern accessor framework. The
+canonical form is the accessor: `$x .length` and `$x .join` are
+the per-type namespace destructors on the List type. `$#x` and
+`$"x` are rc heritage sugar — specific prefix-sigil forms for two
+particular List destructors.
 
-- Are `$#x` and `$"x` kept as special sigils, or replaced by
-  `$x .length` and `$x .join` accessors?
-- If kept, are they exceptions or part of a general prefix-sigil
-  convention?
+**Resolution:** keep `$#x` and `$"x` as sugar aliases for
+`$x .length` and `$x .join` respectively. The accessor form is
+canonical; the sigil form is rc-faithful ergonomic shorthand.
+When the restructured spec documents the List type's accessor
+namespace, it should note the sigil aliases as equivalent shorter
+forms. No other prefix-sigil destructors are added — `$#` and
+`$"` are the only two inherited from rc.
 
 ### Practical concerns from verification round
 
-Flagged by the roundtable verification pass, not yet addressed:
+Flagged by the roundtable verification pass. Status below:
 
-- **Coprocess tag reuse after drop** — when `PendingReply` is dropped
-  with a response in-flight, the drop path needs to drain-and-discard
-  or send a cancel frame to prevent stale responses.
+- **Coprocess tag reuse after drop** — **RESOLVED** by the
+  drop-sends-cancel-frame (Tflush equivalent) decision in the
+  coprocess protocol section. The shell's internal tracking
+  handles stale responses by cancelling on drop.
 
-- **Pipe deadlock on stderr** — a pipeline stage writing to both
-  stdout and stderr can deadlock if the consumer blocks on one while
-  the buffer on the other fills. Real Unix hazard, not addressed.
+- **Malformed coprocess frame** — needs a `MAX_FRAME_SIZE`
+  constant in the spec. Any frame whose length prefix exceeds
+  this bound is treated as a protocol violation: the coprocess
+  channel is torn down, outstanding tags fail with error status,
+  and the coprocess process is killed. Proposed constant: 16 MiB
+  (large enough for any legitimate structured data, small enough
+  to bound memory). **Open for Lane's confirmation of the
+  constant.**
 
-- **Malformed coprocess frame** — length-prefixed frames with wrong
-  length could hang the reader. Need timeout or max-frame-size guard.
+- **Pipe deadlock on stderr** — genuine Unix hazard with no clean
+  shell-level solution. A pipeline stage writing to both stdout
+  and stderr can deadlock if the downstream consumer blocks on one
+  while the buffer on the other fills. **Resolution: document as
+  a known limitation.** psh does not attempt to auto-merge stderr
+  into stdout or provide implicit buffering; the user is expected
+  to manage this explicitly with `>[2=1]` or similar redirections
+  when needed. This matches the behavior of every other Unix
+  shell and is an inheritance of the Unix pipe model, not a psh
+  design flaw.
 
 
 ## Resolved share items
@@ -440,10 +455,20 @@ that produces a value. The `let` becomes a μ̃-binder on the
 computation's result, blurring the sort boundary between pure
 values and thunked computations.
 
-**Deferred to the VDC reframing session.** The command
-substitution form works today; the value-returning-builtin form
-is a simplification that needs explicit scoping. Note in the
-restructured spec that both forms are under consideration.
+**Resolve actively during the VDC reframing.** Not just
+"deferred" — this question is squarely about whether `let` is
+purely a μ̃-binder on values or can also bind the result of an
+effectful computation (CBPV's `let x = M` where `M : F(A)`).
+Levy's original CBPV has the latter semantics; psh's current
+spec has the former. Every user will want the direct form
+eventually — the command substitution workaround is clunky
+enough that it is a design smell, not an acceptable final
+answer. The VDC reframing is the right moment to commit because
+the restructured spec will be making other decisions about how
+`let` and `def` fit into the sort hierarchy. Resolving this
+then is a small syntactic change (drop the backtick-braces) but
+a real commitment in the sort system. Do not leave it half-open
+past the reframing.
 
 **Shell-internal PendingReply.** The shell tracks a `Vec<u16>` of
 outstanding tags per coprocess. `read -p name` (no `-t`) reads
