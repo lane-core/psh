@@ -239,25 +239,22 @@ interpretation.
 
 **Resolved:**
 
-- **Named construction deferred.** `Pos(10 20)` (positional) is
-  sufficient for now and consistent with sum construction
-  (`ok(42)`). Named construction (`Pos(x: 10, y: 20)`) introduces
-  comma-separated `name: value` pairs, a new syntactic form that
-  does not appear elsewhere in psh. Add when structs are complex
-  enough that positional construction becomes unreadable (more
-  than ~4 fields).
+- **Positional construction is the only form.** `Pos(10 20)` is
+  the only struct constructor syntax — now and permanently.
+  There is no named construction form planned (no
+  `Pos(x: 10, y: 20)` ever). This is consistent with sum
+  construction (`ok(42)`) and with the uniform tagged-
+  construction rule `NAME(args)` where args is a space-delimited
+  word list.
 
-  **Future-proofing note:** when named construction arrives, its
-  syntax should be `Pos(x: 10, y: 20)` — comma-delimited, not
-  space-delimited. This parallels the existing rule that commas
-  inside `(...)` switch the mode from "list of positional args"
-  to a product form. `Pos(10 20)` is a list fed positionally
-  into the constructor; `Pos(x: 10, y: 20)` is a set of named
-  bindings fed into the constructor. The comma is what
-  distinguishes the two modes, consistent with how `(a b c)`
-  (list) vs `(a, b, c)` (tuple) works today. The reframing
-  session should not commit to this syntax — just avoid
-  painting into a corner that would preclude it.
+  Fields are ordered by declaration: `struct Pos { x: Int; y:
+  Int }` fixes `x` at position 0 and `y` at position 1.
+  Construction binds by declaration order. Arity mismatch is a
+  binding-time error. The asymmetry between construction
+  (positional only) and access (named `.x`/`.y` and numeric
+  `.0`/`.1`) is intentional: construction is a single
+  structural act, access is a repeated operation where names
+  earn their keep.
 
 - **Field access: auto-generate both named and numeric
   accessors** from the declaration. `struct Pos { x: Int; y: Int
