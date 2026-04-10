@@ -36,14 +36,26 @@ cannot be a shell pipe. See commit e0ecaf5.
 `\n` is literal `n`, not a C-style newline escape. See §Backslash
 escapes in syntax.md and commit c1512db.
 
-### `.get` discipline as `def`, not pure lambda (APPLIED)
+### `.get` discipline: codata model (SUPERSEDED → APPLIED)
 
-`.get` is now a `def` (effectful) with constraints:
-1. Body's return value is discarded.
-2. Body cannot modify the variable it's attached to.
-3. Side effects permitted (logging, tracing, etc.).
+**Initial applied version** (commit 6fbac31): `.get` as a `def`
+with "return discarded, x free in body, side effects for
+logging only" constraints. This was the conservative model.
 
-Dropped the invented `cursor.refresh` workaround. See commit 6fbac31.
+**Superseded by the codata model** (commit 7afc97d): `.get` is
+now the codata observer — the body computes the value seen by
+the accessor, not just a hook whose output is discarded. `.set`
+is the codata constructor. Both are `def` cells in Kl(Ψ). CBV
+focusing is the reentrancy semantics: within one expression,
+`.get` fires once per variable and the produced value is reused.
+The polarity frame discipline prevents reentrant self-invocation
+during the shift.
+
+The `cursor.refresh` workaround is gone either way — it was
+unnecessary once `.get` could compute values directly.
+
+Live spec: `specification.md` §Discipline functions. Live
+grammar: `syntax.md` §Discipline functions.
 
 ### `$#x` and `$"x` as parameter expansion destructors (APPLIED)
 

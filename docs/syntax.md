@@ -63,33 +63,64 @@ Bindings extend the context Γ with a new name. They are
 μ̃-binders in the sequent calculus reading (specification.md
 §The three sorts).
 
-    binding     = assignment | let_binding | def_binding | ref_def
+    binding     = assignment | let_binding | def_binding
+                | struct_decl | ref_def
 
-    assignment  = NAME '=' value
-    let_binding = 'let' let_quals NAME (':' type_ann)? '=' value
+    assignment  = NAME '=' rhs
+    let_binding = 'let' let_quals NAME (':' type_ann)? '=' rhs
     let_quals   = 'mut'? 'export'?
-    def_binding     = 'def' NAME def_params? body
+    def_binding = 'def' NAME def_params? body
+    struct_decl = 'struct' NAME '{' field_decl (';' field_decl)* ';'? '}'
+    field_decl  = NAME ':' type_ann
     ref_def     = 'ref' NAME '=' NAME
 
-    type_ann    -- see §Type annotations (future)
+    rhs         = pipeline | value
+    type_ann    = NAME       -- element type of the list-valued binding
+
+`rhs` is either a computation (a pipeline, which includes
+simple commands and builtin invocations) or a pure value. Both
+forms are handled uniformly by the binding — see §let below
+for the CBPV framing.
 
 ### Assignment
 
 `x = val` walks the scope chain and updates the first matching
 variable. If no variable exists, creates one in the current
-scope. Always produces `Val::Str` — no type inference. rc
-heritage [1, §Variables and Assignment].
+scope. The RHS may be a value or a computation, just as with
+`let`. rc heritage [1, §Variables and Assignment] extended to
+admit computation RHS.
 
 ### let
 
-`let x = val` always creates in the current scope. Immutable
-by default. Runs type inference: `42` → Int, `true` → Bool,
-`/tmp` → Path, `hello` → Str. Quoted values (`'42'`) stay Str.
-Leading-zero integers (`042`) stay Str. Optional type
-annotation validates via Prism check. psh extension.
+`let` is CBPV's μ̃-binder: `let x = M` where `M` is a
+computation that produces a value (in CBPV notation, `M : F(A)`).
+The RHS may be a pure value, an effectful builtin call, a
+pipeline, or a command substitution — all go through the same
+binding mechanism. The computation is evaluated, the resulting
+value is bound to `x`, execution continues.
 
-`let` is always CBV. The RHS is evaluated at binding time and
-the result is stored. There is no call-by-name `let` form.
+    let x = 42                          # pure value (trivial computation)
+    let files = ls *.txt                # builtin returning a list
+    let tag = print -p myserver 'query' # effectful builtin returning an Int
+    let count = wc -l < file            # pipeline returning an Int
+    let out = `{ grep pattern $file }   # command substitution (forked subprocess)
+
+Pure values are a special case: they are trivially thunkable
+computations whose RHS is just the value itself. The "let is
+always CBV" framing still holds — `let` evaluates the RHS
+before binding — but CBV means "evaluate the computation to a
+value first," not "RHS must be a pure term."
+
+`let x = val` always creates in the current scope. Immutable
+by default. Runs type inference from the computed value: `42`
+→ Int, `true` → Bool, `/tmp` → Path, `hello` → Str. Optional
+type annotation constrains the element type of the list.
+
+Under the "every variable is a list" model (see
+specification.md §Foundational commitment), a scalar binding
+like `let x = 42` is sugar for `let x = (42)` — a list of one
+Int. Type annotations refer to the element type, not the list
+length.
 
 ### def
 
@@ -116,10 +147,18 @@ A `def` is not first-class; it is not a value; it cannot be
 stored in a variable or passed as an argument. It is a named
 entry in the computation context Θ.
 
-Also handles discipline `.set` functions: `def x.set { body }`,
-`def x.set(val) { body }`. ksh93 heritage. Note: `.get`
-disciplines are pure and defined as lambdas, not `def` — see
-§Discipline functions.
+Also handles discipline functions: `def x.get { body }` and
+`def x.set { body }`. Both are `def` cells — `.get` is the
+codata observer, `.set` is the codata constructor. ksh93
+heritage for the dotted-name convention; the codata model is
+psh's formalization. See specification.md §Discipline functions
+for the full semantics.
+
+Type name vs variable name in `def` is disambiguated by
+**capitalization**: `def x.set { }` (lowercase `x`) is a
+discipline function on variable `x`; `def List.length { }`
+(uppercase `List`) is a method on the `List` type. Parser
+inspects the first character before the dot.
 
 ### ref
 
@@ -169,26 +208,35 @@ classified pure. Pure lambdas are thunkable/central in the
 duploid [9, Table 1]. Impure lambdas work but degrade
 to oblique maps. See specification.md §Two kinds of callable.
 
-### Discipline .get functions
+### Discipline functions
 
-`.get` disciplines are defined as `def` — they are effectful
-notification hooks that fire on every `$x` access:
+A variable with `.get` and `.set` disciplines is **codata**:
+its behavior under observation and mutation is defined by the
+discipline cells, not by a naive stored slot.
 
     def x.get {
-        # body runs on every access to $x
-        # effects are permitted (logging, tracing, metrics)
+        # body computes the value seen on each $x access
     }
 
-Constraints on `.get` bodies:
+    def x.set {
+        # body mediates assignment; $1 is the incoming value
+    }
 
-- The body's return value is discarded; `$x` always evaluates
-  to the stored value.
-- The body cannot modify the variable it is attached to (`x`
-  is free in the body of `x.get`).
-- Side effects are permitted.
+`.get` is the codata observer — it fires on every `$x` access
+and computes the value. `.set` is the codata constructor — it
+fires on every assignment to `x`. Both are `def` cells with
+full effect capabilities (logging, coprocess queries,
+filesystem reads).
+
+Within a single expression's evaluation, `.get` fires at most
+once per variable (CBV focusing). Reentrancy is prevented by
+the polarity frame discipline — inside `x.get`, a reference to
+`$x` reads the stored slot directly rather than re-invoking
+the discipline.
 
 See specification.md §Discipline functions for the full
-rationale and the caveats around cross-variable consistency.
+semantics, the MonadicLens structure, and the caveats around
+cross-expression consistency with mutable external state.
 
 
 ## Control flow
@@ -205,12 +253,19 @@ a braced block or `=>` single-line form.
     while_cmd   = 'while' '(' pipeline ')' body
     match_cmd   = 'match' '(' value ')' '{' match_arm (';' match_arm)* ';'? '}'
     try_cmd     = 'try' body 'catch' NAME body
-    trap_cmd    = 'trap' SIGNAL body body
+    trap_cmd    = 'trap' SIGNAL (body body?)?
 
-    match_arm   = glob_arm | structural_arm
-    glob_arm    = glob_pats '=>' lambda_body
-    structural_arm = NAME '(' NAME ')' '=>' lambda_body
-    glob_pats   = '(' NAME+ ')' | NAME
+    match_arm   = pattern ('|' pattern)* '=>' lambda_body
+    pattern     = glob_pat | structural_pat | literal_pat | wildcard_pat
+
+    glob_pat    = GLOB              -- e.g. *.txt, [a-z]*
+    literal_pat = NUM | QUOTED
+    wildcard_pat = '_'
+    structural_pat = tagged_pat | tuple_pat | list_pat
+    tagged_pat  = NAME '(' pattern* ')'           -- sum or struct destructure
+    tuple_pat   = '(' pattern (',' pattern)+ ','? ')'
+    list_pat    = '(' ')'                          -- nil
+                | '(' pattern pattern ')'          -- cons (head, tail)
 
     body        = '{' program '}'
                 | '=>' command
@@ -406,21 +461,27 @@ command that consumes them runs.
     word_atom   = LITERAL | QUOTED
                 | var_ref
                 | '$#' VARNAME | '$"' VARNAME
-                | '${' NAME accessor* '}'
-    accessor    = '.' (NUM | NAME)
+                | '${' NAME '}'
                 | '`{' program '}'
                 | '<{' program '}'
                 | '$((' arith_expr '))'
                 | '~' '/' LITERAL
                 | '~'
                 | lambda
+                | tagged_val
+                | tuple
+
+    tagged_val  = NAME '(' word* ')'
+    tuple       = '(' word (',' word)+ ','? ')'
 
     arith_expr  = arith_term (arith_op arith_term)*
     arith_term  = NUM | VARNAME | '(' arith_expr ')'
     arith_op    = '+' | '-' | '*' | '/' | '%'
                 | '>' | '<' | '>=' | '<=' | '==' | '!='
 
-    var_ref     = '$' VARNAME
+    var_ref     = '$' VARNAME (ws accessor)*
+    accessor    = '.' (NUM | NAME)
+    ws          = (' ' | '\t')+
 
     value       = '(' word* ')'
                 | tuple
@@ -445,23 +506,52 @@ psh extension — rc had no tuples.
 
 ### Accessor syntax
 
-Accessors project into structured values. They live inside
-`${ }` braces — ksh93's `${x.field}` convention. Without
-braces, `.` is always a free caret boundary (rc heritage).
+Accessors project into structured values via **postfix dot
+notation with a required leading space**. The space is the
+disambiguator from free caret concatenation.
 
-    ${pos.0}             # tuple projection (0-based)
-    ${pos.1}             # second element
-    ${record.2}          # third element
+    accessed_word = var_ref (ws accessor)*
+    accessor      = '.' (NUM | NAME)
+    ws            = (' ' | '\t')+
 
-    $pos.c               # free caret: $pos ^ .c (NOT accessor)
-    ${pos}.c             # explicit: value of pos, then ^ .c
+Examples:
 
-Accessors compose: `${nested.0.1}` = projection into element
-0, then projection into element 1 of that (Lens . Lens = Lens).
-`${result.ok.0}` = Prism then Lens (AffineTraversal).
+    $pos .0              # tuple projection (0-based)
+    $pos .1              # second element
+    $record .0           # first field
+    $name .upper         # string method
+    $items .length       # list length
+    $result .ok          # sum preview (Prism)
 
-ksh93 heritage for the brace-delimited convention. See
-specification.md §Tuples for the typing rules.
+Parsing rule:
+
+- `$x .0` (with whitespace before the dot) is an accessor.
+- `$x.0` (no whitespace before the dot) is a free caret
+  concatenation: `$x ^ .0`. rc heritage.
+
+The space is load-bearing. It makes the parser unambiguous
+without type-level disambiguation — the rule is purely
+syntactic. Users who want concatenation write `$x.c` or
+`$x^.c` (explicit caret); users who want accessor access write
+`$x .field` (with space).
+
+Accessors chain: `$nested .0 .1` is "projection into element
+0, then projection into element 1 of that" (Lens ∘ Lens =
+Lens). `$result .ok .0` is Prism then Lens (AffineTraversal).
+
+Partial accessors (list indexing beyond length, sum preview on
+wrong tag) return option sums: `some(val)` or `none()`. Users
+pattern-match on the option.
+
+The accessor namespace is per-type. `def Type.name { }`
+registers a new accessor on a type. Capitalization
+disambiguates type methods (`def List.length { }`) from
+discipline functions (`def x.set { }`).
+
+See specification.md §Constructors and destructors and the
+"Three roles of `()`" section in deliberations.md for the full
+typing rules and the list/tuple/tagged-construction
+distinction.
 
 ### Arithmetic (`$((...))`)
 
@@ -605,40 +695,54 @@ Perl/Ruby heritage for the `=~` infix syntax.
 
 ### Brace-delimited variable names
 
-`${name}` explicitly delimits a variable name and provides
-accessor syntax. The name inside braces uses `word_char`
-(including `.`), not `var_char`. Accessor `.N` or `.name`
-inside braces projects into structured values.
+`${name}` explicitly delimits a variable name. The name inside
+braces uses `word_char` (including `.`), not `var_char`. This
+is the escape hatch for variable names containing characters
+that would otherwise terminate a bare `$name` reference.
 
-    ${x.0}            tuple projection (accessor)
-    ${x.get}          looks up variable named x.get (no accessor — .get is not a number)
-    $x.get            free caret: $x ^ .get (NOT accessor — no braces)
+    ${x.get}          looks up variable named literally "x.get"
+    $x.get            free caret: $x ^ .get (rc heritage)
+    $x .get           accessor: call the .get method on $x
+
+Braces are NOT the accessor form. Accessors are postfix dot
+with required space (see §Accessor syntax above).
 
 ### Variable expansion
 
     $x                value of x (list)
-    $x(n)             nth element of x (1-based)
     $#x               count of elements in x — list length destructor
     $"x               stringify: join elements with spaces — list join destructor
-    ${name}           explicit variable name delimiting
-    ${name.N}         tuple projection (Lens)
-    ${name.tag}       sum projection (Prism)
+    ${name}           explicit variable name delimiting (escape hatch only)
 
-rc heritage for `$x`, `$x(n)`, `$#x`, `$"x`, and `${name}` [1,
-§Variables, §Indexing].
+    $x .0             first element (tuple projection, Lens)
+    $x .name          named accessor (struct field or type method)
+    $x .ok            sum preview (Prism)
 
-**Parameter expansion as destructors.** `$#x` and `$"x` are
-prefix-sigil parameter expansion operators in the ksh93/Bourne
-sense — they are eliminators for the List type:
+rc heritage for `$x`, `$#x`, `$"x`, and `${name}` [1,
+§Variables, §Indexing]. Postfix-dot accessor is psh's addition,
+modeled on Agda copatterns. rc's `$x(n)` 1-based list indexing
+is replaced by `$x .0` (0-based), consistent with tuple
+accessors.
+
+**Parameter expansion sigils are sugar aliases.** `$#x` and
+`$"x` are prefix-sigil parameter expansion operators inherited
+from rc:
 
     $#x : List → Int         -- length destructor
     $"x : List → Str         -- join destructor
 
-psh uses a prefix-sigil convention (inherited from rc) rather
-than ksh93's suffix operators (`${var#pat}`, `${var%pat}`). The
-operators available are exactly those rc provides. Additional
-type-specific operations are expressed as named cells in the
-per-type namespace rather than as new sigils or suffix forms.
+Under the per-type accessor namespace model, these are sugar
+aliases for the canonical postfix forms:
+
+    $#x  ≡  $x .length
+    $"x  ≡  $x .join
+
+The canonical form is the accessor; the sigil form is rc-faithful
+ergonomic shorthand. These are the only two inherited from rc
+— no new prefix-sigil destructors are added. Additional
+type-specific operations (`.upper`, `.split`, `.replace`, etc.)
+are expressed as accessor methods in the per-type namespace, not
+as new sigils.
 
 
 ## Redirections
@@ -685,7 +789,7 @@ the default coprocess.
     read -p reply                     # targets default
 
 See specification.md §Coprocesses for the full protocol
-description (per-tag binary sessions, PendingReply handles,
+description (per-tag binary sessions, Int tag interface,
 wire format, named coprocesses).
 
 

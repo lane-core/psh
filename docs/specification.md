@@ -526,15 +526,38 @@ once per variable. Subsequent occurrences of the same variable
 in the same expression use the already-produced value.
 
 This is not memoization as an optimization. It is the correct
-focusing behavior of the focused sequent calculus: in CBV, a
-producer is evaluated (focused) to a value once, and the
-resulting value is used at each consumption site. The `.get`
-discipline is a shift from computation to value (↓→↑); once the
-shift lands, the result is a value, and values in CBV are used
-without re-evaluation.
+focusing behavior of the focused sequent calculus, realized at
+the polarity boundary. Two pieces fit together:
+
+**From the VDC framework** (`docs/vdc-framework.md` §6.2):
+static focusing is the discipline that argument expansion
+uses — before a command runs, all its arguments are focused
+(evaluated to values). Downen et al.'s static focusing applies
+to the shell's CBV evaluation of argument lists.
+
+**From the integration appendix** (`docs/appendix-integrating-
+rc-and-ksh93.md` §A.3.3 and §A.6.3): a discipline variable is a
+horizontal arrow of negative type (codata). Accessing it is a
+↓→↑ polarity shift, which fires inside a polarity frame. The
+frame saves the expansion context, runs the discipline, and
+restores the context on exit. The polarity frame mechanism is
+inherited from ksh93's SPEC (`sh_polarity_enter` /
+`sh_polarity_leave`) and is the operational discipline that
+preserves horizontal arrow types across mode boundaries.
+
+**Putting them together:** the `.get` discipline produces a
+positive value via the ↓→↑ shift. Once the shift lands — once
+the polarity frame exits with a value in hand — the result is
+a positive value in W, and CBV focusing applies: the value is
+used at each consumption site within the enclosing expression
+without re-evaluation. The shell's argument expansion pipeline
+treats the shifted value just like any other positive term.
+The polarity frame prevents reentrancy during the shift; CBV
+focusing prevents re-invocation after the shift lands.
 
 Concretely: in the expression `echo $cursor $cursor`, the
-discipline fires on the first `$cursor`, produces a value, and
+discipline fires on the first `$cursor`, the polarity frame
+wraps the discipline body, a positive value is produced, and
 the second `$cursor` uses that same value. The expression sees
 one consistent reading.
 
@@ -941,22 +964,24 @@ heritage). The comma is the disambiguator.
 **Accessor syntax** (product elimination — Lens projection):
 
     let pos = (10, 20)
-    echo ${pos.0}          # 10
-    echo ${pos.1}          # 20
+    echo $pos .0           # 10
+    echo $pos .1           # 20
 
     let record = ('lane', '/home/lane', 1000)
-    echo ${record.0}       # lane
-    echo ${record.2}       # 1000
+    echo $record .0        # lane
+    echo $record .2        # 1000
 
 Accessors `.0`, `.1`, `.2` etc. are Lens projections — the
 `first`, `second` etc. of the Cartesian profunctor class.
-Braces are required for accessor syntax, matching ksh93's
-`${x.field}` convention. Without braces, `.` is always a free
-caret boundary: `$x.c` = `$x ^ .c` (rc heritage). The brace
-is the opt-in for structured access.
+**Accessor syntax is postfix dot with a required leading
+space.** `$pos .0` is an accessor; `$pos.0` (no space) is a
+free caret concatenation `$pos ^ .0` (rc heritage). The space
+is the disambiguator; it makes the parser unambiguous without
+type-level lookup.
 
-Composition: `${nested.0.1}` = `first . second` — ordinary
-function composition of profunctor optics.
+Composition: `$nested .0 .1` = `first . second` — ordinary
+function composition of profunctor optics, chained
+left-to-right.
 
 Tuples are positive (value sort), admit all structural rules
 (weakening, contraction, exchange). They are inert data —
@@ -965,9 +990,11 @@ Clone, no embedded effects.
 **ksh93 lineage.** ksh93's compound variables (`typeset -C`)
 were its struct system. `${x.field}` accessed named fields;
 disciplines mediated access. psh's tuples with positional
-accessors are the typed version — same functionality, explicit
-in the type system rather than implicit in the `Namval_t`
-machinery.
+accessors (and structs with named+numeric accessors) are the
+typed version — same functionality, explicit in the type system
+rather than implicit in the `Namval_t` machinery. The syntactic
+form differs: ksh93 required braces (`${x.field}`), psh uses
+postfix dot with a space (`$x .field`).
 
 
 ## Sums (coproducts, +)
@@ -1007,14 +1034,16 @@ body. The variable does not escape the arm.
 
 **Accessor syntax** (coproduct elimination — Prism preview):
 
-    echo ${result.ok}       # Prism preview: 42 (or empty if err)
-    echo ${result.err}      # Prism preview: 'not found' (or empty if ok)
+    echo $result .ok        # Prism preview: some(42) or none()
+    echo $result .err       # Prism preview: none() or some('not found')
 
-`${x.tag}` is a Prism preview — partial projection that
-succeeds if the tag matches, fails (returns empty) otherwise.
+`$x .tag` is a Prism preview — partial projection that returns
+`some(payload)` if the tag matches, `none()` otherwise.
 Profunctor constraint: Cocartesian. Composition across products
 and coproducts yields AffineTraversal (Cartesian +
-Cocartesian): `${result.ok.0}` = Prism then Lens.
+Cocartesian): `$result .ok .0` is Prism then Lens, returning
+`some(v)` or `none()` depending on whether the outer tag
+matches. Users pattern-match on the option.
 
 Sums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.
@@ -1040,9 +1069,10 @@ Parametric type abbreviations — syntax and semantics undecided.
 | fd table (save/restore) | Lens | Cartesian |
 | Redirections | Adapter | Profunctor |
 
-The accessor syntax `${x.N}` (tuples) and `${x.tag}` (sums)
-is stable. Braces are always required. What changes is whether
-the accessor is a Lens (product), Prism (coproduct), or
+The accessor syntax `$x .N` (tuples/lists) and `$x .tag`
+(sums/struct fields) is stable. The postfix-dot-with-space form
+works for any type with registered accessors. What changes is
+whether the accessor is a Lens (product), Prism (coproduct), or
 AffineTraversal (mixed), determined by the type at the access
 point.
 
