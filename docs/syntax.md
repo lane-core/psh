@@ -171,16 +171,24 @@ to oblique maps. See specification.md §Two kinds of callable.
 
 ### Discipline .get functions
 
-`.get` disciplines are pure — they are Getters (specification.md
-§Discipline functions). Defined as lambdas:
+`.get` disciplines are defined as `def` — they are effectful
+notification hooks that fire on every `$x` access:
 
-    let x.get = | | => { ... pure computation ... }
+    def x.get {
+        # body runs on every access to $x
+        # effects are permitted (logging, tracing, metrics)
+    }
 
-The body fires on every `$x` access as a notification. The
-returned value is always the stored value, not the body's
-output. `.get` bodies cannot perform I/O, cannot mutate the
-variable they observe, cannot call external commands. See
-specification.md §Discipline functions for the full rationale.
+Constraints on `.get` bodies:
+
+- The body's return value is discarded; `$x` always evaluates
+  to the stored value.
+- The body cannot modify the variable it is attached to (`x`
+  is free in the body of `x.get`).
+- Side effects are permitted.
+
+See specification.md §Discipline functions for the full
+rationale and the caveats around cross-variable consistency.
 
 
 ## Control flow

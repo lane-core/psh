@@ -437,50 +437,63 @@ invocation site.
 
 ## Discipline functions
 
-### .get — pure notification hook
+### .get — notification hook (effectful, constrained)
 
-`def x.get` is not legal. `.get` disciplines are pure — they
-cannot perform I/O, cannot mutate the variable they observe,
-cannot call external commands.
+`.get` disciplines are defined as `def` — they are cells
+(effectful computations) with constraints:
 
-A `.get` discipline is defined as a lambda:
+    def x.get { ... body runs on every $x access ... }
 
-    let x.get = | | => { ... pure computation ... }
+The constraints:
 
-The body fires on every `$x` access as a pure notification —
-side-effect-free observation (logging, tracing). The returned
-value is always the stored value, not the body's output. The
-body's return value is discarded.
+1. **The body's return value is discarded.** `$x` always
+   evaluates to the stored value of the variable, not to
+   whatever the `.get` body returns. The body is a hook, not
+   a transformer.
+2. **The body cannot modify the variable it is attached to.**
+   `x` is free in the body of `x.get` — no self-recursion.
+   The discipline cannot `x = ...` or otherwise write to the
+   stored slot. This prevents infinite-recursion hazards and
+   keeps the variable read idempotent within a single access.
+3. **Side effects are permitted.** The body may log to stderr,
+   call external commands, emit metrics, query other resources,
+   etc. These are observation effects.
 
-Because `.get` does not compute the value (it merely observes
-access), the variable read itself is the Getter: `view(s) = s`,
-identity on the stored slot. `.get` is a hook attached to
-the Getter, not the Getter itself. The purity constraint
-ensures the hook cannot disturb the Getter's idempotence.
+Because the body's return value is discarded, the variable read
+itself remains a Getter on the stored slot: `view(s) = s`.
+`.get` is a hook attached to the read, not a transformation of
+the read. The constraint that `x` is free in the body keeps the
+hook from perturbing its own observation.
 
-**Why pure .get is enforced.** An impure `.get` that queries
-external resources creates the Dccache bug class at the
-discipline level [SFIO-7]: if `.get` on variable X queries
-coprocess C1, whose handler queries C2, which modifies state
-that X's next `.get` sees, two reads of `$x` in a single
-expression yield different values. Enforcing purity on `.get`
-eliminates this by construction — the polarity boundary prevents
-circular dependencies from forming.
+**Known caveat: cross-variable consistency.** An impure `.get`
+that queries external mutable state can produce inconsistent
+reads across a single expression. For example, if `.get` on X
+queries a coprocess whose response depends on state modified by
+a concurrent process, two reads of `$x` in one expression may
+yield different underlying stored values (because the
+intervening queries modified the state). The shell does not
+guarantee read consistency across discipline-triggering accesses
+in a single expression. Documented caveat, not a prohibition.
 
-The optics argument: the variable read is a Getter (S → A,
-idempotent, composable, cacheable) in the base category W. An
-impure `.get` hook would degrade the read to a Kleisli arrow
-S → ΨA, which loses idempotence and breaks compositional
-soundness across the discipline system.
-
-**Live variable refresh** happens through a separate mechanism:
-an explicit `def` that writes to the variable's stored slot.
+**Live variable refresh** is a common pattern, now expressible
+directly as a `.get` discipline that reads external state:
 
     let mut cursor = 0
-    def cursor.refresh { cursor = `{ cat /srv/window/cursor } }
+    def cursor.get {
+        cursor = `{ cat /srv/window/cursor }
+    }
 
-The refresh is a command (computation sort, effectful). The
-`.get` is pure (value sort, Getter). Clean polarity separation.
+Wait — this would violate constraint (2) above (can't write to
+`x` in `x.get`). The correct pattern is an external refresh
+command that updates the stored slot, with `.get` limited to
+logging/tracing:
+
+    let mut cursor = 0
+    def cursor_refresh { cursor = `{ cat /srv/window/cursor } }
+
+The refresh is a command the user calls explicitly (or wires
+into a trigger). `.get`, if defined, is restricted to
+observation effects only.
 
 ### .set — effectful mutation (Kleisli)
 
