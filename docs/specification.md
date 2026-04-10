@@ -28,6 +28,36 @@ and highlighting. The theory earns its keep by making psh a
 better shell, not by enabling a specific platform.
 
 
+## Foundational commitment: every variable is a list
+
+Every psh variable holds a list. There is no separate "scalar"
+type distinct from "list of length 1." This is the uniform
+abstraction inherited from rc and reinforced by the virtual
+double category framework (see `docs/vdc-framework.md`), in
+which sequences are the primitive structure on cell boundaries.
+
+Concrete consequences:
+
+- `let count : Int = 0` is shorthand for `let count : Int = (0)`.
+  Both denote a list of one int. `$#count` is 1.
+- Type annotations refer to **element types**. `: Int` means
+  "list whose elements are Int." Length is runtime data, not
+  part of the type.
+- Substitution always splices a list. A "scalar" binding splices
+  one element; a list binding splices its elements. rc's
+  structural substitution discipline, unchanged.
+- Tuples, sums, and structs are distinct types at the **element**
+  level — they can appear inside the list. `let pos : Tuple = (10,
+  20)` holds a list of one tuple. `$#pos` is 1. `${pos .0}` is
+  `10`.
+- No scalar/list distinction means no `"$var"` quoting ceremony
+  is ever needed. Variables always splice structurally.
+
+This is Duff's principle extended across the type system: the
+list structure is carried as data, never destroyed and
+reconstructed.
+
+
 ## rc's execution model as sequent calculus
 
 Duff's rc [1] departed from the Bourne shell for structural

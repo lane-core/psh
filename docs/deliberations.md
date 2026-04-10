@@ -102,12 +102,22 @@ selected which parts to adopt:
   supposed to prevent the bug class that made us conservative. The
   session's constrained-def model is **superseded by the codata
   model** pending verification in the restructured spec.
-- **Type annotations** (§A.3.1): appendix uses `count : int = (0)`.
-  Lane wants to commit to the annotation syntax now. **Open
-  clarification: does this also commit to the "every variable holds
-  a list" model (i.e., a scalar is a list of length 1)? The appendix
-  is explicit that `$#count` is 1. Pending Lane's confirmation on
-  this architectural question.**
+- **Type annotations AND the everything-is-a-list model** (§A.3.1):
+  appendix uses `count : int = (0)`. Lane committed to both the
+  annotation syntax and the underlying model: **every variable holds
+  a list. A "scalar" is a list of length 1.** `$#count` for `count
+  = (0)` is 1. Type annotations refer to element types — `: Int`
+  means "list whose elements are Int." Length is a runtime property,
+  not part of the type. `let x : Int = 42` is sugar for `let x : Int
+  = (42)`. Substitution always splices a list (rc's exact model).
+  Tuples, sums, and structs remain distinct types at the element
+  level — they can appear inside the list. `let pos : Tuple = (10,
+  20)` is a list containing one tuple, `$#pos` is 1.
+
+  **Lane also noted: the current implementation is not sacred. We
+  can scrap and rebuild from the parser up.** This frees the spec
+  from compatibility constraints when applying the architectural
+  decisions.
 - **`eval` as escape hatch** (§A.3.6, §A.6.5): appendix retains
   `eval` as the explicit "force the Segal condition" escape hatch.
   Lane: **include it for now**. Easy to remove later if unused.
