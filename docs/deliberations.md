@@ -523,34 +523,55 @@ at the same signal-checking point.
 Ints identifying outstanding requests, not opaque handles. They
 fit psh's "every variable is a list" model as a list of one Int.
 
-**How `print -p` returns the tag is a deferred question.** The
-current path: command substitution form `let tag = `{ print -p
-name 'request' }`. This is sort-correct (command substitution is
-the ↓→↑ shift from computation to value), slightly clunky.
+**`let` binds effectful computations — decided.** `let` is
+CBPV's μ̃-binder on `F(A)`, not just on `A`. The RHS of a `let`
+binding may be any computation that produces a value, including
+builtin calls and effectful expressions. No command substitution
+ceremony needed.
 
-The simpler alternative — builtins as value-producing expressions
-in binding position (`let tag = print -p name 'request'`) — is a
-real extension that requires committing to how `let` interacts
-with effectful RHS expressions. In Levy's CBPV terms, this is
-letting `let x = M` accept `M : F(A)` as an effectful computation
-that produces a value. The `let` becomes a μ̃-binder on the
-computation's result, blurring the sort boundary between pure
-values and thunked computations.
+    let tag = print -p name 'request'    # direct — print -p returns a value
+    let reply = read -p name              # direct — read -p returns a value
+    let files = ls *.txt                  # direct — builtin returns a list
 
-**Resolve actively during the VDC reframing.** Not just
-"deferred" — this question is squarely about whether `let` is
-purely a μ̃-binder on values or can also bind the result of an
-effectful computation (CBPV's `let x = M` where `M : F(A)`).
-Levy's original CBPV has the latter semantics; psh's current
-spec has the former. Every user will want the direct form
-eventually — the command substitution workaround is clunky
-enough that it is a design smell, not an acceptable final
-answer. The VDC reframing is the right moment to commit because
-the restructured spec will be making other decisions about how
-`let` and `def` fit into the sort hierarchy. Resolving this
-then is a small syntactic change (drop the backtick-braces) but
-a real commitment in the sort system. Do not leave it half-open
-past the reframing.
+This is Levy's original CBPV semantics: `let x = M` where
+`M : F(A)` is standard monadic bind. `M` is evaluated (its
+effects happen), the resulting value is bound to `x`, execution
+continues. psh's earlier command-substitution workaround
+(`let tag = `{ print -p name 'request' }`) was a symptom of
+not having committed to this sort-system choice. Committing
+removes the workaround.
+
+**The sort system implications.** `let` no longer distinguishes
+between pure value bindings and effectful computation bindings.
+Both go through the same μ̃-binder. The RHS can be:
+
+- A pure value: `let x = 42` (list of one Int, no effects)
+- An effectful computation: `let tag = print -p name 'query'`
+  (computation runs, returned value is bound)
+- A command substitution: `let files = `{ ls }` (subprocess
+  forked, stdout captured, bound — remains available as a
+  mechanism for forking, but not required for binding a
+  builtin's return value)
+
+The distinction between pure and effectful RHS is carried in
+the type system (CBPV's `F(A)` vs `A`), not in the surface
+syntax. A `let` binding always extends Γ with a value; how
+that value is produced is the RHS's business.
+
+**For builtins:** `print -p`, `read -p`, and similar
+value-returning builtins directly return values that can be
+bound with `let`. The return type is part of the builtin's
+signature. The previous "returns an Int tag as output on
+stdout" framing is obsolete — there is no stdout involvement.
+`print -p name 'query'` returns an Int (wrapped in a list per
+the uniform model), and `let tag = print -p name 'query'`
+captures it.
+
+**For the spec:** the restructured specification.md should
+present `let` in CBPV terms from the start: "`let` binds the
+result of a computation." Pure values are a special case
+(trivially thunkable computations). This is the cleanest
+framing and matches the theory directly.
 
 **Shell-internal PendingReply.** The shell tracks a `Vec<u16>` of
 outstanding tags per coprocess. `read -p name` (no `-t`) reads
