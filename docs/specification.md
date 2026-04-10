@@ -467,89 +467,173 @@ invocation site.
 
 ## Discipline functions
 
-### .get — notification hook (effectful, constrained)
+A variable with `.get` and `.set` disciplines is **codata** in
+the sense of the sequent calculus: its behavior under observation
+(reading) and mutation (assignment) is defined by destructor and
+constructor cells, not by a naive stored slot. The discipline
+cells *are* the variable's semantics.
 
-`.get` disciplines are defined as `def` — they are cells
-(effectful computations) with constraints:
+### The codata model
 
-    def x.get { ... body runs on every $x access ... }
+In the sequent calculus, data types are defined by constructors
+(how to build a value) and eliminated by pattern matching. Codata
+types are defined by destructors (how to observe or transform a
+value) and eliminated by copattern matching — the producer must
+respond to each destructor invocation.
 
-The constraints:
+A variable with discipline functions is codata:
 
-1. **The body's return value is discarded.** `$x` always
-   evaluates to the stored value of the variable, not to
-   whatever the `.get` body returns. The body is a hook, not
-   a transformer.
-2. **The body cannot modify the variable it is attached to.**
-   `x` is free in the body of `x.get` — no self-recursion.
-   The discipline cannot `x = ...` or otherwise write to the
-   stored slot. This prevents infinite-recursion hazards and
-   keeps the variable read idempotent within a single access.
-3. **Side effects are permitted.** The body may log to stderr,
-   call external commands, emit metrics, query other resources,
-   etc. These are observation effects.
+- **`.get`** is the destructor that fires on observation. Reading
+  the variable invokes `.get`, which computes the value seen by
+  the accessor.
+- **`.set`** is the constructor that fires on mutation. Assigning
+  to the variable invokes `.set`, which mediates how the new
+  value is stored (or rejected, transformed, or propagated).
 
-Because the body's return value is discarded, the variable read
-itself remains a Getter on the stored slot: `view(s) = s`.
-`.get` is a hook attached to the read, not a transformation of
-the read. The constraint that `x` is free in the body keeps the
-hook from perturbing its own observation.
+A variable without discipline functions is ordinary data: the
+stored value is what you read, assignment replaces the stored
+value. Adding disciplines moves the variable into the codata
+world where its semantics become whatever the disciplines
+compute.
 
-**Known caveat: cross-variable consistency.** An impure `.get`
-that queries external mutable state can produce inconsistent
-reads across a single expression. For example, if `.get` on X
-queries a coprocess whose response depends on state modified by
-a concurrent process, two reads of `$x` in one expression may
-yield different underlying stored values (because the
-intervening queries modified the state). The shell does not
-guarantee read consistency across discipline-triggering accesses
-in a single expression. Documented caveat, not a prohibition.
+### .get — the codata observer
 
-**Live variable refresh** is a common pattern, now expressible
-directly as a `.get` discipline that reads external state:
+`.get` disciplines are defined as `def` cells. The body computes
+the value seen by the accessor:
 
     let mut cursor = 0
     def cursor.get {
-        cursor = `{ cat /srv/window/cursor }
+        cursor = `{ cat /srv/input/cursor }
     }
 
-Wait — this would violate constraint (2) above (can't write to
-`x` in `x.get`). The correct pattern is an external refresh
-command that updates the stored slot, with `.get` limited to
-logging/tracing:
+Every `$cursor` access fires the discipline, which refreshes the
+stored slot from an external source. The access then returns the
+refreshed value. This is the "live variable" pattern: the
+variable's value is computed on demand.
 
-    let mut cursor = 0
-    def cursor_refresh { cursor = `{ cat /srv/window/cursor } }
+The body may have arbitrary effects: logging, tracing, metrics,
+coprocess queries, filesystem reads. The polarity frame
+discipline (see §Polarity discipline) protects the surrounding
+expansion context from the computation-mode intrusion. A `.get`
+body may issue coprocess queries; the shift structure is the
+same ↓→↑ pattern as command substitution, and the polarity frame
+is sufficient to make this safe.
 
-The refresh is a command the user calls explicitly (or wires
-into a trigger). `.get`, if defined, is restricted to
-observation effects only.
+### CBV focusing as the reentrancy semantics
 
-### .set — effectful mutation (Kleisli)
+Within a single expression's evaluation, `.get` fires at most
+once per variable. Subsequent occurrences of the same variable
+in the same expression use the already-produced value.
 
-    def x.set { ... }
-    def x.set(val) { ... }
+This is not memoization as an optimization. It is the correct
+focusing behavior of the focused sequent calculus: in CBV, a
+producer is evaluated (focused) to a value once, and the
+resulting value is used at each consumption site. The `.get`
+discipline is a shift from computation to value (↓→↑); once the
+shift lands, the result is a value, and values in CBV are used
+without re-evaluation.
 
-`.set` fires on assignment to `x`, with `$1` bound to the new
-value. The body may have effects. Reentrancy guard prevents
-infinite recursion. ksh93 heritage [SPEC, §Discipline functions].
+Concretely: in the expression `echo $cursor $cursor`, the
+discipline fires on the first `$cursor`, produces a value, and
+the second `$cursor` uses that same value. The expression sees
+one consistent reading.
+
+Across expressions, the discipline fires again. A second `echo
+$cursor` on a new line will run `.get` fresh and may see
+different state. Cross-expression consistency is not guaranteed
+— the backing state can change, and that is the expected
+behavior of codata backed by external resources.
+
+### .set — the codata constructor
+
+`.set` disciplines are defined as `def` cells. The body receives
+the incoming value as `$1` and mediates the assignment:
+
+    def x.set {
+        # $1 is the new value being assigned
+        # the body may validate, transform, reject, or propagate
+    }
+
+`.set` fires on every assignment to `x`. Typical patterns:
+
+- **Validation.** Reject assignments that don't meet a
+  constraint, by calling `return` with a nonzero status.
+- **Transformation.** Normalize or clamp the value before storing
+  (e.g., clamp a percentage to 0-100).
+- **Propagation.** Write the value to an external resource
+  (coprocess, filesystem) as a side effect of the assignment.
+- **Notification.** Log the change, emit metrics, trigger
+  dependent updates.
+
+CBV focusing applies symmetrically: within one assignment
+expression, `.set` fires once. The incoming value is focused to
+a positive form, the discipline runs, the assignment completes.
+
+### Reentrancy and the polarity frame
+
+Because discipline bodies can issue the same operation they are
+mediating (a `.get` that reads other variables, a `.set` that
+triggers further assignments), reentrancy is a real concern.
+Each discipline invocation runs inside a polarity frame that
+prevents the discipline from firing recursively on the variable
+it is attached to. Within the body of `x.get`, a reference to
+`$x` returns the current stored value directly, bypassing the
+discipline. Similarly, within `x.set`, an assignment to `x`
+writes to the stored slot directly.
+
+This is the same polarity frame mechanism that protects the
+surrounding expansion context from computation-mode intrusions.
+The frame saves context, runs the discipline, restores context
+on exit. Reentrancy within the frame is resolved by a flag on
+the variable's discipline state.
 
 ### MonadicLens structure
 
 A variable with `.get` and `.set` disciplines is a MonadicLens
 [Clarke, def:monadiclens]:
 
-    MndLens_Ψ((A,B),(S,T)) = W(S,A) × W(S×B, ΨT)
+    MndLens_Ψ((A,B),(S,T)) = W(S, ΨA) × W(S × B, ΨT)
 
-The view (`.get`) is a morphism in the base category W — pure.
-The update (`.set`) lives in Kl(Ψ) — effectful. This is a
-mixed optic: Optic_{×, ⋊} where the right action ⋊ threads
-through the shell's effect monad.
+Under the codata model, both view and update live in Kl(Ψ) —
+the shell's effect monad. The view is the `.get` computation
+(which may have effects); the update is the `.set` computation
+(same). This is a proper monadic lens, not a mixed optic.
 
-MonadicLens laws hold for tiers 1-2 (local variables,
-environment) where the store is process-local and stable. For
-remote resources accessed through namespace paths, PutGet
-degrades — the lens laws become an affine contract.
+The MonadicLens laws hold modulo the effects:
+
+- **PutGet:** assigning a value and then reading it returns the
+  assigned value, *if* `.set` stores it faithfully and `.get`
+  reads the stored slot. A `.set` that transforms or a `.get`
+  that recomputes may break PutGet — this is the price of
+  codata.
+- **GetPut:** reading and then assigning back is a no-op, *if*
+  the disciplines are inverse to each other.
+- **PutPut:** the second assignment overrides the first, *if*
+  `.set` is idempotent under repeated assignment.
+
+For ordinary variables without discipline functions, the view is
+identity in W (trivially pure) and the laws hold unconditionally.
+Adding disciplines moves the variable into Kl(Ψ), where the laws
+become contracts the user must maintain, not automatic
+consequences.
+
+### Known caveat: cross-variable consistency
+
+A `.get` discipline that queries mutable external state may
+produce inconsistent reads across expressions. If `.get` on X
+queries a coprocess whose response depends on state modified by
+a concurrent process, two expressions involving `$x` may see
+different underlying stored values. Within one expression, CBV
+focusing gives consistency (the value is computed once and
+reused). Across expressions, the discipline fires fresh each
+time, and the state it observes may have changed.
+
+This is documented behavior, not a bug. The codata model makes
+the value's computation explicit — if that computation depends
+on mutable external state, its results depend on when it runs.
+Users who need strict cross-expression consistency should either
+avoid discipline-backed variables for the relevant reads or cache
+values into discipline-free variables.
 
 
 ## Profunctor structure
@@ -607,13 +691,16 @@ composition [SPEC, §"The monadic side"]. psh's `eval_word` has
 a simpler pipeline:
 
 1. **Literal** → identity (pure, no effects)
-2. **Var** → discipline-checked lookup (fire `.get`, read value)
+2. **Var** → codata access: if the variable has a `.get`
+   discipline, invoke it (polarity shift, runs in a polarity
+   frame, result memoized within the expression by CBV
+   focusing); otherwise read the stored value directly
 3. **Count** → lookup then measure
 4. **CommandSub** → polarity shift (↓→↑: fork, capture, return)
 5. **Concat** → rc's `^` (pairwise or broadcast join)
 
 Each stage is a function `Word → Val` with possible effects.
-They compose by structural recursion over the `Word` enum.
+They compose by structural recursion over the `Word` AST.
 
 
 ## Coprocesses (9P-shaped discipline)
@@ -667,24 +754,58 @@ from backpressure (socketpair buffer full = sender blocks),
 not from an artificial constant. Design for the ceiling,
 operate at the floor.
 
-### PendingReply handles
+### The user-visible protocol
 
-`print -p name` returns a `PendingReply` — a `#[must_use]`
-handle. `read -p name` consumes a `PendingReply` to get the
-response. Dropping a `PendingReply` without reading sends a
-cancel (the Tflush equivalent — affine gap compensation). The
-tag cannot be reused until the handle is consumed or dropped.
+`print -p name 'request'` sends a request to the named coprocess
+and returns an `Int` tag identifying the outstanding request.
+`let` binds the tag directly, per the CBPV rule that `let`
+accepts effectful computations:
 
-When `name` is omitted, the builtins target the default
-coprocess (see §Named coprocesses).
+    let tag = print -p myserver 'query'
+    # tag is an Int — a list of one element, $#tag is 1
 
-PendingReply is affine in Rust's type system (Drop exists) but
-linear by intent (must be consumed). Drop-as-cancel is the
-compensation that bridges the gap. This is session type
-discipline materialized as a Rust value. The user never sees
-session types, protocol annotations, or state machines. They
-see `print -p` returning something they must eventually
-`read -p`.
+`read -p name reply` reads the oldest outstanding response
+(FIFO order) into `reply`. `read -p name -t $tag reply` reads
+the response for a specific tag. The user holds plain Int tags
+— there is no linear handle type at the shell level.
+
+Simple FIFO pattern (no tag capture):
+
+    print -p myserver 'query1'
+    print -p myserver 'query2'
+    read -p myserver reply1     # response to query1
+    read -p myserver reply2     # response to query2
+
+Pipelined pattern with out-of-order reads:
+
+    let t1 = print -p db 'slow_query'
+    let t2 = print -p db 'fast_query'
+    read -p db -t $t2 fast      # read fast response first
+    read -p db -t $t1 slow      # then the slow one
+
+Error responses (the coprocess returns an error frame) produce
+a nonzero status on `read -p`, with the error message bound to
+the reply variable. Standard ⊕ error handling applies: check
+status, use `try`/`catch`, etc.
+
+### Shell-internal tracking
+
+The shell maintains, per coprocess, a set of outstanding tags
+(tags that have been sent but not yet read). `print -p`
+allocates the lowest available tag, records it as outstanding,
+and returns it. `read -p` (without `-t`) pops the oldest
+outstanding tag when its response arrives. `read -p -t N`
+removes tag N specifically when its response is read. Stale or
+invalid tags produce a nonzero status with a descriptive error.
+
+Internally, the shell tracks each outstanding tag with an
+affine obligation handle. When a handle is dropped without
+being consumed (the tag's response is never read), the shell
+sends a cancel frame (Tflush equivalent) on the channel,
+telling the coprocess to discard any pending work for that
+tag. This prevents stale responses from being delivered after
+the tag has been reused. The handle discipline is implementation
+detail — users see only the tag integers.
 
 ### Implementation
 

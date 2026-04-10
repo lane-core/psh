@@ -247,6 +247,18 @@ interpretation.
   enough that positional construction becomes unreadable (more
   than ~4 fields).
 
+  **Future-proofing note:** when named construction arrives, its
+  syntax should be `Pos(x: 10, y: 20)` — comma-delimited, not
+  space-delimited. This parallels the existing rule that commas
+  inside `(...)` switch the mode from "list of positional args"
+  to a product form. `Pos(10 20)` is a list fed positionally
+  into the constructor; `Pos(x: 10, y: 20)` is a set of named
+  bindings fed into the constructor. The comma is what
+  distinguishes the two modes, consistent with how `(a b c)`
+  (list) vs `(a, b, c)` (tuple) works today. The reframing
+  session should not commit to this syntax — just avoid
+  painting into a corner that would preclude it.
+
 - **Field access: auto-generate both named and numeric
   accessors** from the declaration. `struct Pos { x: Int; y: Int
   }` registers `.x`, `.y`, `.0`, and `.1` on the Pos type
@@ -272,6 +284,18 @@ interpretation.
   the "quick pair" case; named structs handle the "real record"
   case. No middle ground. See the "Tagged construction: the
   uniform rule" section below for the full clarification.
+
+- **`enum` (user-defined sum types) is deferred.** The `enum`
+  keyword is reserved (alongside `type` and `struct`) but not
+  implemented in v1. Built-in sum tags (`ok`, `err`, `some`,
+  `none`) cover the common error-handling and optionality
+  cases. User-defined sum types via `enum Color { red | green
+  | blue }` or similar syntax are a future extension. For v1,
+  users can emulate enums with convention-based string tags
+  (`let color = 'red'`) and glob match arms, or with the
+  built-in sum tags where appropriate. The reserved keyword
+  prevents name collisions so the feature can be added later
+  without breaking existing code.
 
 ### Signal handling: rc style vs lexical trap (RESOLVED)
 
@@ -314,10 +338,22 @@ adequate but ergonomically hostile (linear scan on lookup,
 painful update syntax). Maps give O(1) lookup and natural
 set/get methods.
 
-    let mut env : Map = ()                            # empty map
-    env = (('HOME' '/home/lane') ('PATH' '/bin'))     # literal
+**Literal syntax uses tagged construction**, consistent with
+`Pos(10 20)` and `ok(42)`:
+
+    let mut env : Map = Map()                         # empty map
+    env = Map(('HOME' '/home/lane') ('PATH' '/bin'))  # literal
     echo $env .get 'HOME'                             # some('/home/lane') or none()
     env .set 'EDITOR' 'vim'                           # requires mut
+
+`Map(...)` takes a list of pairs as arguments. Each pair is
+itself a list of two elements (key and value). This falls out
+of the uniform tagged construction rule — `Map` is a tag,
+`Map(args)` commits to tagged construction, and the args are
+space-delimited list-style. List splicing works uniformly:
+
+    let entries = (('HOME' '/home/lane') ('PATH' '/bin'))
+    let env = Map($entries)   # splices — Map receives 2 pair-args
 
 Optic: AffineTraversal (partial — key might not exist).
 `.get` returns an option sum, consistent with other partial
@@ -328,11 +364,9 @@ In the "every variable is a list" model, a Map value is a single
 list element. `$#env` is `1` — the variable holds one map. A list
 of maps is possible but unusual.
 
-**Open sub-question:** literal syntax. Current proposal
-`(('HOME' '/home/lane') ...)` is lists of pairs, rc-ish but
-verbose. Alternative `(HOME='/home/lane' PATH='/bin')` uses `=`
-inside parens but collides with assignment syntax. **Medium
-confidence — revisit during VDC reframing with fresh eyes.**
+The "medium confidence" flag from earlier deliberations is
+removed — the answer fell out of the tagged-construction
+decision.
 
 ### Job control builtins
 
@@ -389,14 +423,17 @@ Flagged by the roundtable verification pass. Status below:
   coprocess protocol section. The shell's internal tracking
   handles stale responses by cancelling on drop.
 
-- **Malformed coprocess frame** — needs a `MAX_FRAME_SIZE`
-  constant in the spec. Any frame whose length prefix exceeds
-  this bound is treated as a protocol violation: the coprocess
-  channel is torn down, outstanding tags fail with error status,
-  and the coprocess process is killed. Proposed constant: 16 MiB
-  (large enough for any legitimate structured data, small enough
-  to bound memory). **Open for Lane's confirmation of the
-  constant.**
+- **Malformed coprocess frame** — **RESOLVED.** `MAX_FRAME_SIZE`
+  is 16 MiB. Any frame whose length prefix exceeds this bound
+  is treated as a protocol violation: the coprocess channel is
+  torn down, outstanding tags fail with error status, and the
+  coprocess process is killed. This is a defensive constant to
+  bound memory use against buggy or hostile peers; it is not a
+  semantic limit on legitimate payloads. 16 MiB is large enough
+  for any structured data a coprocess would reasonably
+  exchange, small enough that a malformed frame claiming
+  gigabytes of length is detected as a protocol violation
+  rather than allocated.
 
 - **Pipe deadlock on stderr** — genuine Unix hazard with no clean
   shell-level solution. A pipeline stage writing to both stdout
