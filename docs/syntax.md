@@ -526,13 +526,47 @@ makes the split explicit and adds `.` to `word_char` (not
 
 ### Quoting
 
-Single quotes only. Inside quotes, `''` produces a literal
-single quote. No double quotes. No backslash escaping inside
-quotes. rc heritage [1, §Quotation].
+Single quotes only. No double quotes. rc heritage [1,
+§Quotation] for the single-quote convention. psh adds limited
+backslash escape support (see §Backslash escapes).
 
     'hello world'      literal string with space
-    'it''s'            produces: it's
+    'it''s'            produces: it's (rc-compatible doubling)
+    'it\'s'            produces: it's (psh extension)
     '$x'               literal $x, no expansion
+
+### Backslash escapes
+
+psh allows backslash escapes in limited form, both inside and
+outside single-quoted strings.
+
+    \<non-whitespace>    literal escape — produces the character
+    \<newline>           line continuation (rc heritage)
+    \<space>, \<tab>     trivia (the whitespace character, backslash stripped)
+
+Specifically:
+
+- `\\` produces a literal backslash.
+- `\'` inside a single-quoted string produces a literal single
+  quote. This is in addition to rc's `''` convention, which also
+  works.
+- `\$`, `\#`, `\"`, etc. outside quotes produce the literal
+  character, bypassing any interpretation.
+- `\<newline>` at the end of a line continues the line without
+  a terminator. Standard line continuation.
+- `\<space>` and `\<tab>` collapse to the whitespace character
+  alone — the backslash is stripped. This is trivia and has no
+  semantic effect, but is not an error.
+
+psh does NOT do C-style escape sequences. `\n` is literal `n`
+(the character), not a newline. `\t` is literal `t`. If you need
+a real newline in a string, use a multi-line quoted string.
+
+**Divergence from rc:** rc had no backslash escaping. psh adds
+it as a cleaner alternative to `''` for literal quotes inside
+strings, and for escaping shell syntax characters in general.
+The additions are strict — only the explicit cases above are
+recognized; everything else is a parse error.
 
 ### Tilde expansion
 
