@@ -11,7 +11,7 @@ This report develops a precise interpretation of shell semantics grounded in the
 
 The intended audience is someone comfortable with the basics of sequent calculus (cuts, identity, structural rules) but less familiar with virtual double categories. We proceed by explicit analogy with rc code throughout, using actual rc idioms rather than invented syntax, and pointing out the conceptual structure already present in Duff's design.
 
-The arc is: §1 states Duff's principle precisely. §2 develops rc's data model as the motivating mathematical structure. §3 introduces the sequent calculus reading of shell commands. §4 presents virtual double categories as the framework that makes this reading compositional. §5 works out the detailed mapping between rc constructs and the categorical/logical apparatus. §6 draws implications for future shell design.
+The arc is: §1 states Duff's principle precisely. §2 develops rc's data model as the motivating mathematical structure. §3 introduces the sequent calculus reading of shell commands. §4 presents virtual double categories as the framework that makes this reading compositional. §5 works out the detailed mapping between rc constructs and the categorical/logical apparatus. §6 assembles the framework and draws implications for shell design. §7 tabulates the correspondences. §8 presents the composition laws (three duploid patterns and their non-associativity failure) with a decision procedure for new features. §9 gives engineering principles derived from the framework. §10 concludes.
 
 
 ---
@@ -768,7 +768,256 @@ The virtual double category provides the scaffold for all of this: objects are t
 ---
 
 
-## 8. Concluding Remarks
+## 8. Composition Laws
+
+The SPEC (ksh26 Theoretical Foundation) identifies three
+composition patterns in shell execution, corresponding to three
+duploid equations. These patterns carry over to any shell built on
+the VDC framework and serve as a decision procedure for new
+features.
+
+### 8.1 Pipeline composition (•, Kleisli/monadic)
+
+Two cells composed through a positive intermediary — a pipe
+carrying data.
+
+```
+ls | sort | uniq -c
+```
+
+Each `|` is a positive-intermediary composition: the left cell
+produces data, the right cell consumes it. Associativity holds:
+`(ls | sort) | uniq -c` and `ls | (sort | uniq -c)` produce the
+same result, because the intermediary is a value (data on a pipe)
+and value composition is associative.
+
+In duploid terms, this is (•) — Kleisli composition. The pipe fd
+is the positive intermediary. Data flows left to right.
+
+### 8.2 Sequential composition (○, co-Kleisli/comonadic)
+
+Two cells composed through a negative intermediary — the execution
+context.
+
+```
+cd /sys/man || { echo 'No manual!' >[1=2]; exit 1 }
+```
+
+The `||` is a negative-intermediary composition: the left cell runs
+in the current execution context, produces an exit status, and the
+right cell runs in the same context only if the status is nonzero.
+The intermediary is the execution context (negative, comonadic), not
+a data value.
+
+Associativity holds: nested `||` and `&&` compose correctly because
+they all operate within the same execution context. The comonadic
+extract (observe exit status) and extend (set up conditional)
+compose associatively.
+
+In duploid terms, this is (○) — co-Kleisli composition. Exit status
+is carried in the execution context.
+
+### 8.3 Cut (⟨t|e⟩, fundamental interaction)
+
+A producer meets a consumer directly — no intermediary.
+
+```
+for(i in $list) {
+    process $i
+}
+```
+
+The `for` loop is a cut: the list `$list` (producer) is cut against
+the loop body (consumer). Each iteration binds one element of the
+list to `$i` and runs the body. There is no intermediary — the
+producer's elements are consumed directly.
+
+### 8.4 The non-associativity failure
+
+Mixing (•) and (○) — a positive intermediary inside a negative
+context — is the one composition that fails to associate. In
+duploid terms, the (+,−) equation does not hold:
+
+```
+(h ○ g) • f  ≠  h ○ (g • f)
+```
+
+The left bracketing evaluates f first (producing a value), then
+composes g and h in computation mode — the positive state is
+contained within the computation frame. The right bracketing
+composes g and f through the positive intermediary first, then h
+fires around the result — the positive state is exposed to h.
+
+This is the structural condition underlying the sh.prefix bugs
+documented in SPEC.md: a computation (a DEBUG trap) intruding into
+a value context (compound assignment), with two possible reduction
+orders yielding different results. The critical pair is not a
+theoretical curiosity — it is the root cause of real interpreter
+corruption bugs.
+
+The VDC framework resolves this by making the boundary explicit.
+Polarity frames (save/restore at the computation boundary) enforce
+the left bracketing — the one that contains the positive state.
+This is the operational analog of Curien and Munch-Maccagnoni's
+focused calculus, which eliminates the critical pair syntactically.
+The shell eliminates it operationally, by the same structural means.
+
+### 8.5 Decision procedure for new features
+
+When adding a new feature to a shell built on this framework, the
+implementer should classify the feature by its composition pattern:
+
+**Purely value-level?** (e.g., new expansion syntax, new string
+operation, new type annotation) → Monadic. Thread through the
+expansion context. No polarity frame needed. The feature composes
+with other value-level operations via (•).
+
+**Purely computation-level?** (e.g., new control flow construct,
+new job control feature) → Comonadic. Save/restore the execution
+context. Use the standard polarity frame discipline. The feature
+composes with other computation-level operations via (○).
+
+**Crosses the boundary?** (e.g., discipline functions that query
+external state, command substitution within expansion, coprocess
+queries inside a `.get` discipline) → Polarity shift. Push a
+polarity frame at the boundary. The shift is explicit in the code
+(a frame enter/leave pair) and in the type theory (a shift
+connective ↓ or ↑). The frame enforces the left bracketing of the
+(+,−) composition, preventing the non-associativity failure.
+
+This three-way classification — monadic, comonadic, or
+boundary-crossing — is the operational content of the duploid
+structure. It replaces ad hoc reasoning about "when to save and
+restore state" with a structural criterion derived from the
+composition laws.
+
+
+---
+
+
+## 9. Engineering Principles
+
+### 9.1 Duff's Principle Generalized
+
+The original principle: **input is never scanned more than once.**
+
+Generalized for a shell built on the VDC framework: **structure is
+never destroyed and reconstructed.** This includes:
+
+- **List boundaries** (Duff's original case). A variable holding
+  three strings always splices three strings. No IFS, no rescanning.
+- **Type information.** A typed value is never flattened to a string
+  and re-parsed to recover its type. The type is carried with the
+  value.
+- **Polarity.** A value-mode context is never silently entered from
+  computation mode. The shift is explicit (a polarity frame), not
+  implicit (a hidden re-scan or ad hoc save/restore).
+- **Session protocols.** A channel's protocol state is never lost
+  and re-inferred. The session type is established at creation time
+  and tracked throughout the channel's lifetime.
+- **Frame boundaries.** A length-prefixed message's boundaries are
+  carried in the framing (the length prefix), not recovered by
+  scanning for delimiters. This is Duff's principle applied at the
+  byte level.
+
+### 9.2 The Horizontal Arrow Discipline
+
+Every channel (pipe, fd, variable, argument) is a horizontal arrow
+with a type. The type is assigned at creation time and does not
+change. Operations on the channel must be compatible with the type.
+The type is carried in the data structure, not recovered from the
+content.
+
+In implementation terms: every variable carries a type descriptor
+alongside its value. Every coprocess channel carries a session type
+descriptor. The descriptors are set at creation and checked at use.
+This is the VDC framework's horizontal arrow discipline made
+concrete.
+
+### 9.3 The Polarity Frame Discipline
+
+Every boundary crossing between value mode and computation mode goes
+through a polarity frame. The frame saves positive-mode state, clears
+it, runs the computation, and restores the state. No exceptions.
+
+The polarity frame is the C/Rust implementation of the shift
+connective from the focused sequent calculus. The VDC framework says:
+this is the mechanism that preserves horizontal arrow types across
+mode boundaries. Without the frame, a computation-mode operation can
+corrupt value-mode state — which means a horizontal arrow's type can
+be silently changed, violating the horizontal arrow discipline.
+
+Discipline functions (`.get` bodies that query external state,
+`.set` bodies that propagate assignments) are the most common site
+for polarity frames in user-facing code. The frame wraps the
+discipline body, protecting the surrounding expansion context from
+the computation-mode intrusion. CBV focusing (the value is computed
+once per expression and reused at each consumption site) prevents
+re-invocation after the frame exits.
+
+### 9.4 The Segal Condition as Optimization Guide
+
+Pipeline fusion — replacing a multi-cell pipeline with a single
+cell — is an optimization, not a requirement. The VDC framework
+makes this precise: fusion is possible when the Segal condition
+holds (an opcartesian cell exists for the sequence of horizontal
+arrows).
+
+The implementer should:
+
+- **Not** assume fusion is always possible.
+- **Check** whether a proposed fusion preserves the types of the
+  intermediate channels.
+- **Document** which pipeline patterns are fusible and which are
+  not.
+
+Example: `cat file | grep pattern` is fusible because `grep` can
+accept a file argument directly. The two-cell pipeline has a
+composite: a single cell (`grep pattern file`) that produces the
+same result. The opcartesian cell is the equivalence witness.
+
+`sort | uniq` is not fusible because `sort` buffers its entire
+input before producing output. The pipeline exists as a sequence
+— two cells — and the sequence does not have a composite.
+
+This is the advantage of the virtual setting. The framework reasons
+about pipelines as sequences of cells without requiring fusion. The
+Segal condition tells you when fusion is available as an
+optimization, but the uncomposed sequence is the primary structure.
+
+### 9.5 Named Cells over Eval
+
+Whenever a construct would traditionally require `eval` (indirection,
+computed variable names, dynamic command construction), the designer
+should ask: can this be expressed as a named cell, a name reference,
+or a discipline function instead?
+
+- **Variable indirection?** → Name reference (a vertical arrow in
+  the VDC — an interface transformation, not a re-parse).
+- **Dynamic command dispatch?** → A function table (a collection
+  of named cells), not `eval`.
+- **Computed field access?** → Accessor notation with a variable
+  key, not `eval`.
+
+`eval` is the "force the Segal condition" escape hatch — it takes a
+sequence of horizontal arrows (the argument list), forces them into
+a single composite arrow (the concatenated string), and re-parses
+the composite to recover structure. This is exactly the Segal
+condition applied destructively: force the composite to exist, even
+when it doesn't naturally.
+
+The fact that `eval` must be explicitly invoked — that it is a
+command, not an implicit behavior — is the design expression of the
+virtual principle. Composition is not the default. You must ask for
+it. Every use of `eval` in an existing shell script is a design
+smell: it indicates a case where the shell's type system should have
+provided a structural solution but didn't.
+
+
+---
+
+
+## 10. Concluding Remarks
 
 The thread that runs through this report is: **Duff's "not a macro processor" principle is a theorem about the preservation of algebraic structure under substitution, and the appropriate algebraic structure is a virtual double category.**
 
