@@ -720,3 +720,116 @@ the sequent calculus, unified in a single type declaration. The
 `struct` keyword is the syntactic form that batches the two views
 together — registering the constructor (positive introduction)
 and the projections (negative destructors) at once.
+
+
+## The three roles of `()`: list vs tuple vs tagged construction
+
+Inside parentheses, psh has three distinct interpretations
+depending on what is outside the parens and what delimiter
+appears inside:
+
+| Form | Delimiter | Interpretation |
+|---|---|---|
+| `(a b c)` | space | List — free monoid, splicable sequence |
+| `(a, b, c)` | comma | Tuple — single structured product value, fixed arity |
+| `NAME(a b c)` | space (after tag) | Tagged construction — args consumed as a word list |
+
+The rule is local: commas switch the mode. `(a b c)` is a list.
+Adding commas makes `(a, b, c)` a tuple. Prefixing a tag makes
+`NAME(a b c)` a constructor call that receives a list and
+consumes it positionally against the tag's declared arity.
+
+### Lists and tuples serve different purposes
+
+A list is a **sequence of values** meant to be spliced, iterated,
+or passed as arguments. A tuple is a **single structured value**
+meant to be kept bundled and accessed by position. The comma
+inside the parentheses is the mode switch between these two
+readings.
+
+Under the "every variable is a list" model, both store as lists
+at the outer level, but the element types differ:
+
+- `let xy = (10 20)` stores `[Int, Int]` — a list of two ints.
+  `$#xy` is 2.
+- `let xy2 = (10, 20)` stores `[Tuple(Int, Int)]` — a list of one
+  tuple value. `$#xy2` is 1.
+
+This is not an accident. It is the correct reading: a tuple is
+one structured value, not two values grouped. The user who writes
+the comma is telling the shell "keep this bundled."
+
+### The practical consequence: lists splice, tuples do not
+
+Tuples cannot be spliced into tagged construction. The asymmetry
+is visible when constructing a struct from a tuple vs from a list:
+
+    let xy = (10 20)          # list — two values
+    let p1 = Pos($xy)          # works — list splices, Pos receives 2 args
+
+    let xy2 = (10, 20)        # tuple — one bundled value
+    let p2 = Pos($xy2)         # does NOT work — Pos receives 1 tuple, arity mismatch
+    let p2 = Pos($xy2 .0 $xy2 .1)   # explicit destructure required
+
+Users will hit this. A user who reaches for the tuple form because
+the commas signal "this is a pair of things, not just two
+arguments" then discovers that the structured form is the harder
+one to use for construction. This is an ergonomic cost Lane has
+accepted as the price of a clean type-theoretic distinction.
+
+### Why the friction is kept
+
+The friction reflects a real semantic difference between
+sequences-of-values and single-structured-values. Lists are for
+argument sequences — things that will be spliced, iterated, or
+consumed positionally by a command or constructor. Tuples are for
+structured values — things that will be kept bundled and accessed
+by position. Tagged constructions take a sequence of arguments
+and a tag.
+
+Alternative designs considered and rejected:
+
+- **Allow tuples to splice in tagged construction.** Define
+  `Pos($tuple)` to desugar to `Pos($tuple .0 $tuple .1)` when the
+  arity matches. Rejected because it requires context-sensitive
+  parsing (the shell would need to know the type of `$tuple` at
+  parse time to decide whether to splice), violating Duff's
+  single-pass principle.
+
+- **Drop tuples entirely, use lists for anonymous heterogeneous
+  grouping.** Rejected because it loses a useful primitive for
+  anonymous structured values — you'd have to declare a struct
+  for every paired return or use weakly-typed lists.
+
+Lane's position: accept the asymmetry, document it clearly, and
+teach users that tuples are for bundling while lists are for
+splicing. The workaround (explicit destructure when passing a
+tuple to a constructor) is honest about the distinction.
+
+### Spec presentation
+
+When the restructured spec documents tuples and lists, it should
+include an explicit example of the splicing behavior difference,
+with the framing that lists are for sequences and tuples are for
+bundled values. Something like:
+
+> Tuples and lists look similar but serve different purposes. A
+> list `(a b c)` is a sequence of values meant to be spliced,
+> iterated, or passed as arguments. A tuple `(a, b, c)` is a
+> single structured value meant to be kept bundled and accessed
+> by position. The comma inside the parentheses is the mode
+> switch.
+>
+> The practical consequence: lists splice into tagged
+> construction, tuples do not.
+>
+>     let xy = (10 20)          # list, spliceable
+>     let p1 = Pos($xy)          # works — list splices to 2 args
+>
+>     let xy2 = (10, 20)        # tuple, bundled
+>     let p2 = Pos($xy2)         # does not work — tuple is 1 arg
+>     let p2 = Pos($xy2 .0 $xy2 .1)   # explicit destructure
+>
+> Use a list when you want to pass components as arguments. Use
+> a tuple when you want to keep components bundled as a single
+> value.
