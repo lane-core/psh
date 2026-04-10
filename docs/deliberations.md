@@ -325,3 +325,192 @@ sessions. Both have now been shared:
 - **A larger report** — the VDC report itself (saved as
   `docs/vdc-framework.md`) plus the integration appendix that
   Lane reviewed in this session.
+
+
+## Signal handling and coprocess/VDC harmonization: resolved decisions
+
+From two rounds of research memos and Lane's review. These decisions
+are ready to fold into the restructured spec alongside the VDC
+reframing. Core recommendations from the researcher's v2 memo, with
+refinements and resolutions by Lane.
+
+### Unified `trap` syntax
+
+Grammar:
+
+    trap_cmd = 'trap' SIGNAL (body body?)?
+
+Three forms distinguished by presence/count of blocks:
+
+- `trap SIGNAL { handler } { body }` — lexical (μ-binder scoped to
+  the body). Inner traps shadow outer for the same signal. Handler
+  may `return N` to abort the body with status N.
+- `trap SIGNAL { handler }` — global (cell registered at the
+  top-level object's signal interface). Persists until overridden.
+- `trap SIGNAL` (with no block) — delete a global handler.
+
+Parser disambiguation is LL(1) via peek after SIGNAL: `\n`/`;`/`}`
+after SIGNAL means deletion; `{` means a block follows. This is the
+same strategy rc uses for `fn name` (no body = delete). No `-d`
+flag — flag form is ksh93 heritage, doesn't fit psh's
+keyword-before-braces convention.
+
+Signal masking uses an empty handler: `trap SIGINT { } { body }`
+for lexical, `trap SIGINT { }` for global.
+
+Precedence at signal delivery: innermost lexical > outer lexical >
+global > OS default.
+
+`EXIT` is an rc-derived artificial signal synthesized when the
+shell is about to exit. Attributed to Duff's rc paper §22, not
+Plan 9.
+
+### Signal delivery model
+
+Signals fire at **interpreter step boundaries**, which include:
+
+1. Between-command points (between `;`-separated statements in a
+   block).
+2. Wake-from-block points during child waits.
+
+The second case is load-bearing. The shell's main loop uses
+`poll(2)` on both the child-status fd and the self-pipe. When a
+signal arrives during a child wait, the self-pipe wakes the poll
+loop. The shell handles the signal *before* resuming the wait. For
+SIGINT specifically, the shell forwards the signal to the child's
+process group (`kill(-pgid, SIGINT)`), giving the child a chance to
+terminate, then resumes waiting.
+
+The "between commands" model in the researcher's v2 memo is an
+idealization that doesn't cover blocking waits. The corrected model:
+signals are checked whenever the shell is about to block or resume
+from a block.
+
+### EINTR policy
+
+Builtins retry on EINTR by default. External commands handle
+EINTR themselves. If an external command exits nonzero due to
+interruption, the status flows through `try` normally. This
+matches POSIX convention for shell builtins and avoids spurious
+`catch` triggers from transient EINTR returns.
+
+### Signal interaction with try blocks
+
+Four cases, all with precise operational behavior:
+
+**Case 1: Signal between commands inside try.**
+
+- (1a) Handler calls `return N`: try body terminates, status N
+  propagates to catch.
+- (1b) Handler does not return: execution resumes at next command,
+  handler side effects have occurred, try continues normally.
+- (1c) Handler calls `exit`: shell (or subshell) exits, EXIT
+  handler fires during shutdown.
+
+**Case 2: Signal interrupts a blocking builtin.** Builtin retries
+on EINTR. Signal flag is still set. Handler fires at next
+signal-checking point after the builtin completes.
+
+**Case 3: Lexical trap inside try.** Trap handler fires first
+(μ-binder, ⅋); if it returns a status, try inspects it (ErrorT, ⊕).
+Clean composition because trap and try operate on different sorts.
+
+**Case 4: Outer trap, inner try.** Outer trap fires at
+signal-checking point. If it doesn't return, try continues and
+inspects status normally. Handler and try-check fire in sequence
+at the same signal-checking point.
+
+### Coprocess protocol
+
+**`print -p name 'request'` returns an Int tag.** Tags are plain
+Ints identifying outstanding requests, not opaque handles. They
+fit psh's "every variable is a list" model as a list of one Int.
+
+**How `print -p` returns the tag is a deferred question.** The
+current path: command substitution form `let tag = `{ print -p
+name 'request' }`. This is sort-correct (command substitution is
+the ↓→↑ shift from computation to value), slightly clunky.
+
+The simpler alternative — builtins as value-producing expressions
+in binding position (`let tag = print -p name 'request'`) — is a
+real extension that requires committing to how `let` interacts
+with effectful RHS expressions. In Levy's CBPV terms, this is
+letting `let x = M` accept `M : F(A)` as an effectful computation
+that produces a value. The `let` becomes a μ̃-binder on the
+computation's result, blurring the sort boundary between pure
+values and thunked computations.
+
+**Deferred to the VDC reframing session.** The command
+substitution form works today; the value-returning-builtin form
+is a simplification that needs explicit scoping. Note in the
+restructured spec that both forms are under consideration.
+
+**Shell-internal PendingReply.** The shell tracks a `Vec<u16>` of
+outstanding tags per coprocess. `read -p name` (no `-t`) reads
+the oldest outstanding response (FIFO). `read -p name -t $tag`
+reads a specific tag. Invalid or stale tags produce nonzero
+status with a descriptive error. No user-visible linear handle.
+
+**Negotiate validates protocol version only.** Tag 0 is reserved
+for the negotiate exchange. Both sides send a version string
+(`"psh/1"`). Mismatch kills the coprocess and returns nonzero
+status. No fallback to untyped mode. Application-level type
+mismatches surface as runtime errors on malformed responses.
+
+**Wire format.** Length-prefixed binary frames:
+`[4-byte LE u32 length][2-byte LE u16 tag][payload]`. This is
+Duff's principle applied at the byte level — frame boundaries are
+structural (length prefix), not content-scanned (no newline
+delimiters). The same role that list boundaries play for argument
+sequences.
+
+### Discipline functions with coprocess queries (codata model)
+
+`.get` disciplines may issue coprocess queries. The `.get` body
+runs inside a polarity frame (§A.6.3 of the appendix). A `print
+-p` / `read -p` pair inside the body is a ↓→↑ shift — same
+pattern as command substitution, with the additional property
+that the coprocess is stateful.
+
+**Failure propagation:** if the discipline body fails (dead
+coprocess, command error), the variable access itself fails
+— producing empty value and nonzero status, same as failed
+command substitution.
+
+**Reentrancy guard as CBV focusing (not memoization).** Within
+a single expression's evaluation, `$x` fires `.get` the first
+time and produces a value; subsequent occurrences of `$x` in the
+same expression use the already-produced value.
+
+This is not memoization-as-optimization. It is the correct
+focusing behavior of the focused sequent calculus: in CBV with
+positive types, a producer is evaluated (focused) once and the
+resulting value is used at each consumption site. The `.get`
+discipline is a ↓→↑ shift from computation to value; once the
+shift lands, the result is a value, and values in CBV are used
+without re-evaluation.
+
+Cross-variable consistency across a single expression follows
+for free: each discipline-backed variable is computed at most
+once per expression. Inconsistency between expressions remains
+possible (the backing state can change), and is documented
+behavior, not a bug.
+
+### EXIT handlers in subshells
+
+Each process has its own EXIT handler. `@{ ... }` is classical
+contraction — the continuation is duplicated, each copy evolves
+independently. The subshell is an independent cell with its own
+signal interface.
+
+**Inherited handlers are copies.** If the subshell inherits a
+global `trap EXIT { handler }` from the parent, the subshell gets
+a copy of that handler. Modifications to the handler inside the
+subshell do not affect the parent's copy. This is the Plan 9
+`rfork` model: the child gets a copy of the parent's namespace
+(including signal handlers), and the two copies evolve
+independently.
+
+`exit` from a subshell terminates the subshell and fires the
+subshell's EXIT handler. The parent's EXIT fires when the parent
+terminates.
