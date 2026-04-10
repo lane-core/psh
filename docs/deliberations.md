@@ -59,6 +59,70 @@ spec restructure around the Virtual Double Category framework (see
 `docs/vdc-framework.md`). The direction is confirmed; the final
 presentation will happen as part of the VDC reframing.
 
+### Integration of the VDC appendix
+
+Lane also provided an appendix to the VDC report, "Integrating Rc and
+Ksh93 in the Virtual Double Category Framework" (not yet saved as a
+doc). The appendix extends the VDC framework with concrete guidance on
+integrating features from both shells. Lane has reviewed it and
+selected which parts to adopt:
+
+**Adopt wholesale (framework-level):**
+- The generalized Duff principle (§A.6.1): "structure is never
+  destroyed and reconstructed" — covers lists, types, polarity,
+  session protocols.
+- The horizontal arrow discipline (§A.6.2).
+- The polarity frame discipline (§A.6.3).
+- The Segal condition as optimization guide (§A.6.4).
+- Named cells over eval (§A.6.5).
+- The decision procedure for new features (§A.5.4): value-level →
+  monadic threading, computation-level → save/restore, boundary-
+  crossing → polarity frame.
+- The duploid composition laws table (§A.5).
+- The correspondence table (§A.7) — cleaner than what we currently
+  have in specification.md.
+
+**Reconcile with existing decisions:**
+- **Accessor notation** (§A.3.4): appendix uses `$config.db.host`
+  (no space, no braces). Lane's decision stands — space required
+  before postfix dot. Rewrite appendix examples to use our form.
+- **Records / compound variables** (§A.3.2): appendix proposes
+  records as "a new kind of scalar — a single list element with
+  internal structure," with `(x 3 y 4)` as the literal syntax. Lane
+  finds this **interesting and wants to spend time on it**. The
+  conceptual framing (a struct value occupies one element of a
+  containing list) is compatible with our tuple/struct design, but
+  the literal syntax differs. **Open — for further deliberation.**
+- **Discipline function semantics** (§A.3.3): appendix treats
+  disciplined variables as codata — `.get` computes the value seen
+  by the accessor. Our session decision was more conservative: `.get`
+  is a def whose return is discarded. Lane is **willing to see what
+  happens with the codata model now that we have the VDC framework
+  as theoretical scaffolding**. The polarity frame discipline is
+  supposed to prevent the bug class that made us conservative. The
+  session's constrained-def model is **superseded by the codata
+  model** pending verification in the restructured spec.
+- **Type annotations** (§A.3.1): appendix uses `count : int = (0)`.
+  Lane wants to commit to the annotation syntax now. **Open
+  clarification: does this also commit to the "every variable holds
+  a list" model (i.e., a scalar is a list of length 1)? The appendix
+  is explicit that `$#count` is 1. Pending Lane's confirmation on
+  this architectural question.**
+- **`eval` as escape hatch** (§A.3.6, §A.6.5): appendix retains
+  `eval` as the explicit "force the Segal condition" escape hatch.
+  Lane: **include it for now**. Easy to remove later if unused.
+- **Name references**: appendix proposes `ref = *target` with no
+  stated reasoning. Lane's decision: **stick with our `ref name =
+  target` keyword form**.
+- **Coprocess harmonization**: appendix treats coprocesses as
+  "bidirectional horizontal arrows carrying session types" at the
+  framework level. Our session-specific design (9P-shaped, tagged,
+  PendingReply) is compatible but more detailed. **Need to harmonize
+  our design with the VDC framework view. See research memo.**
+- **Signal handling**: appendix implicitly endorses rc-style `fn
+  sigint { ... }`. Our current spec has lexical `trap SIGNAL { }
+  { }`. **Open — see research memo.**
+
 
 ## Open
 
@@ -239,10 +303,15 @@ Flagged by the roundtable verification pass, not yet addressed:
   length could hang the reader. Need timeout or max-frame-size guard.
 
 
-## Items Lane needs to share
+## Resolved share items
 
-- **Lists as recursive structs** — Lane has "something to show" that
-  may unify several treatments. Blocks finalization of the accessor
-  notation and struct system.
+Items that were flagged as "Lane has something to share" in earlier
+sessions. Both have now been shared:
 
-- **A larger report** that may change how we proceed.
+- **Lists as recursive structs** — Lane presented the VDC report
+  which reframed lists as primitive sequence structure on cell
+  boundaries, not recursive data types. See `docs/vdc-framework.md`.
+
+- **A larger report** — the VDC report itself (saved as
+  `docs/vdc-framework.md`) plus the integration appendix that
+  Lane reviewed in this session.
