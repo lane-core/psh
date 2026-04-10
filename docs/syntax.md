@@ -618,13 +618,27 @@ inside braces projects into structured values.
 
     $x                value of x (list)
     $x(n)             nth element of x (1-based)
-    $#x               count of elements in x
-    $"x               stringify: join elements with spaces
+    $#x               count of elements in x — list length destructor
+    $"x               stringify: join elements with spaces — list join destructor
     ${name}           explicit variable name delimiting
     ${name.N}         tuple projection (Lens)
     ${name.tag}       sum projection (Prism)
 
-rc heritage for all forms [1, §Variables, §Indexing].
+rc heritage for `$x`, `$x(n)`, `$#x`, `$"x`, and `${name}` [1,
+§Variables, §Indexing].
+
+**Parameter expansion as destructors.** `$#x` and `$"x` are
+prefix-sigil parameter expansion operators in the ksh93/Bourne
+sense — they are eliminators for the List type:
+
+    $#x : List → Int         -- length destructor
+    $"x : List → Str         -- join destructor
+
+psh uses a prefix-sigil convention (inherited from rc) rather
+than ksh93's suffix operators (`${var#pat}`, `${var%pat}`). The
+operators available are exactly those rc provides. Additional
+type-specific operations are expressed as named cells in the
+per-type namespace rather than as new sigils or suffix forms.
 
 
 ## Redirections
