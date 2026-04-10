@@ -1,79 +1,63 @@
 # psh: Active Deliberations
 
-**Status:** Working document. Captures in-progress design decisions from
-ongoing sessions that have not yet been applied to `specification.md`
-or `syntax.md`. Items here are drafts — they may change, be rejected,
-or be refined further before landing in the live docs.
+**Status:** Working document. Captures in-progress design decisions.
+Items marked **applied** are now in `specification.md` or `syntax.md`;
+items marked **open** or **pending** are staged for later work.
 
 Organized by status:
-- **Decided (not yet applied)** — tentatively agreed, awaiting the
-  moment we update the live specs
-- **Open** — under active discussion, some sub-decisions made
-- **Pending** — identified but not yet discussed in depth
+- **Applied** — landed in the live specs; kept here as a changelog until
+  we archive them.
+- **Open (pending VDC reframing)** — direction confirmed but presentation
+  is waiting on the broader spec restructure.
+- **Pending** — identified but not yet discussed in depth.
 
 
-## Decided (not yet applied)
+## Applied
 
-### Lambda syntax: `|x| { body }` / `|x| => expr`
+The following items from a previous deliberation session have been
+applied to the live specs.
 
-Replaces `\x => body`. Frees `\` for line continuation and other
-escape uses. Rust-familiar.
+### Lambda syntax: `|x| { body }` / `|x| => expr` (APPLIED)
 
-    |x| => $((x * 2))                      # single expression form
-    |x| { echo $x; return $x }             # block form
-    |x y| => $((x + y))                    # multiple params
-    | | => echo 'nullary'                  # no params
+Replaced `\x => body` with Rust-style `|x|` delimiters. Frees `\` for
+line continuation. Both forms available:
 
-Both forms (`=>` for single expression, `{...}` for block) are
-available. The pipe character inside a lambda parameter list is
-unambiguous — `|` in value position cannot be a shell pipe.
+- `|x| => expr` — single expression
+- `|x| { block }` — block body
+- `| | => expr` — nullary
 
-### Backslash escape rules
+The pipe character inside a lambda parameter list is unambiguous
+because lambdas only appear in value position, where a leading `|`
+cannot be a shell pipe. See commit e0ecaf5.
+
+### Backslash escape rules (APPLIED)
 
 `\<non-whitespace>` is a literal escape. `\<whitespace>` is trivia.
+`\n` is literal `n`, not a C-style newline escape. See §Backslash
+escapes in syntax.md and commit c1512db.
 
-- `\<newline>` — line continuation (standard rc)
-- `\<space>`, `\<tab>` — trivia (equivalent to the whitespace char)
-- `\'` inside single quotes — literal single quote (nicer than rc's
-  `''` convention)
-- `\\` — literal backslash
-- `\n`, `\t`, etc. — literal characters (NOT C-style escape sequences;
-  `\n` is literal `n`, not newline)
+### `.get` discipline as `def`, not pure lambda (APPLIED)
 
-If you need a real newline in a string, use a multi-line quoted string.
+`.get` is now a `def` (effectful) with constraints:
+1. Body's return value is discarded.
+2. Body cannot modify the variable it's attached to.
+3. Side effects permitted (logging, tracing, etc.).
 
-### `.get` discipline as `def`, not pure lambda
+Dropped the invented `cursor.refresh` workaround. See commit 6fbac31.
 
-Previous spec claimed `.get` bodies are pure lambdas. This was
-inconsistent — examples showed logging/tracing, which are effects.
+### `$#x` and `$"x` as parameter expansion destructors (APPLIED)
 
-`.get` bodies should be defined as `def`, allowing side effects
-(logging, tracing, metrics), with constraints:
+Documented that `$#x` and `$"x` are type-specific eliminators for the
+List type — length and join destructors. psh uses the prefix-sigil
+convention from rc, not ksh93's suffix form. See commit 30f5f6c.
 
-1. The body's return value is discarded. `$x` always evaluates to
-   the stored value.
-2. The body cannot modify the variable it's attached to (`x` is free
-   in the body of `x.get` — no self-recursion).
-3. Effects are limited to "observation effects" that don't change
-   what subsequent shell expressions observe.
 
-The roundtable's cross-coprocess discipline chain concern still
-applies — impure `.get` that queries external mutable state can
-create inconsistent reads across a single expression. This is a
-documented caveat, not a prohibition.
+## Open (pending VDC reframing)
 
-Remove `cursor.refresh` from the spec — it was an invented workaround
-for enforced purity, unnecessary now.
-
-### `$#x` and `$"x` are parameter expansion destructors
-
-Acknowledge in the spec that psh does have parameter expansion
-operators — just in prefix sigil form rather than ksh93's suffix
-form. `$#list : List → Int` (length), `$"list : List → Str` (join).
-These are eliminators for the List type.
-
-The existence of these affects how we think about the general
-destructor notation problem.
+These items reached tentative agreement but are waiting on the broader
+spec restructure around the Virtual Double Category framework (see
+`docs/vdc-framework.md`). The direction is confirmed; the final
+presentation will happen as part of the VDC reframing.
 
 
 ## Open
