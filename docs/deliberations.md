@@ -86,13 +86,13 @@ selected which parts to adopt:
 - **Accessor notation** (§A.3.4): appendix uses `$config.db.host`
   (no space, no braces). Lane's decision stands — space required
   before postfix dot. Rewrite appendix examples to use our form.
-- **Records / compound variables** (§A.3.2): appendix proposes
-  records as "a new kind of scalar — a single list element with
-  internal structure," with `(x 3 y 4)` as the literal syntax. Lane
-  finds this **interesting and wants to spend time on it**. The
-  conceptual framing (a struct value occupies one element of a
-  containing list) is compatible with our tuple/struct design, but
-  the literal syntax differs. **Open — for further deliberation.**
+- **Records / compound variables** (§A.3.2): **resolved.** Lane
+  decided: no anonymous records, every record type requires a
+  `struct` declaration. The conceptual framing (a struct value
+  occupies one element of a containing list) is adopted; the
+  literal syntax question is avoided entirely. Tuples `(10, 20)`
+  for "quick pair," named structs `Pos(10 20)` for "real record."
+  No middle ground.
 - **Discipline function semantics** (§A.3.3): appendix treats
   disciplined variables as codata — `.get` computes the value seen
   by the accessor. Our session decision was more conservative: `.get`
@@ -171,19 +171,28 @@ namespace of accessors; users can extend it with `def Type.ident`.
 
   0-argument methods return the value directly (no lambda wrapper).
 
-**Open sub-items:**
+**Resolved sub-items:**
 
-- **Type name vs variable name in `def`.** `def x.set { }` is a
-  discipline function on variable `x`. `def List.length { }` is a
-  method on type `List`. How does the parser distinguish? Options:
-  capitalization convention, explicit keyword, context-sensitive
-  lookup. **On hold — Lane thinking.**
+- **Type name vs variable name in `def`** — **capitalization
+  convention.** Type names start with an uppercase letter
+  (`List`, `Str`, `Tuple`, `Pos`). Variable names start with a
+  lowercase letter. The parser distinguishes by inspecting the
+  first character before the dot:
+  - `def x.set { }` — lowercase `x`, discipline function
+  - `def List.length { }` — uppercase `List`, type method
+  
+  No keyword needed, no context-sensitive lookup. The convention
+  is already implicit in the spec (the primitive types are
+  capitalized, user variables are lowercase). Make it explicit.
 
-- **Lists as recursive structs.** The proposal treats lists as
-  recursive structs with auto-generated numeric accessors. This
-  gives both a pattern-matching view (cons/nil) and an accessor
-  view (`.0`, `.1`, ...). **Lane has something to share before we
-  finalize this.**
+- **Lists as recursive structs** — **resolved by the VDC
+  reframing.** Lists are not recursive structs; they are the
+  primitive sequence structure on cell boundaries. See the VDC
+  framework (`docs/vdc-framework.md`) and the "Foundational
+  commitment: every variable is a list" section in
+  specification.md. Accessor notation `$list .0`, `$list .1`
+  operates on the primitive sequence structure, not on a
+  recursive cons/nil decomposition.
 
 ### Pattern matching as principled constructor syntax
 
@@ -199,13 +208,20 @@ h." Multi-pattern alternation needs separate syntax.
         _        => echo 'other'
     }
 
-**Open:** Pattern alternation syntax.
+**Resolved:** Pattern alternation is `|` in pattern position —
+option (b), ML/Rust convention. `ok(v) | some(v) => handle $v`.
+The pipe character is unambiguous inside `match` arms because
+patterns appear before `=>`, syntactically distinct from pipeline
+position. The parser is inside a match block reading patterns;
+no pipeline can form there.
 
-- **(a)** No alternation — separate arms with same body
-- **(b)** `|` in pattern position: `c | h => body` (ML/Rust convention)
-- **(c)** `or` keyword: `c or h => body`
-
-**Open:** Guards (predicates attached to arms) — include now or defer.
+**Resolved:** Guards are deferred. Guards introduce a polarity
+boundary inside pattern dispatch (the pattern is positive and
+structural, the guard is negative and computational), adding
+real implementation complexity. The workaround is `if` inside
+the arm body, which is verbose but correct. When guards are
+added later, the syntax will be `pattern if(cond) => body` — `if`
+after the pattern, before `=>`, in parens per rc convention.
 
 ### Struct definitions
 
@@ -221,11 +237,43 @@ a programmable sequence. `Pos(10 20)` and `Pos($vals)` where
 `$vals = (10 20)` behave uniformly. The tag determines the
 interpretation.
 
-**Open:**
-- Named construction (`Pos(x: 10, y: 20)`) — add now or defer?
-- Field access: auto-generates `.x`, `.y` accessors from the
-  declaration, plus numeric `.0`, `.1` fallback?
-- Mutation: are struct fields mutable? How?
+**Resolved:**
+
+- **Named construction deferred.** `Pos(10 20)` (positional) is
+  sufficient for now and consistent with sum construction
+  (`ok(42)`). Named construction (`Pos(x: 10, y: 20)`) introduces
+  comma-separated `name: value` pairs, a new syntactic form that
+  does not appear elsewhere in psh. Add when structs are complex
+  enough that positional construction becomes unreadable (more
+  than ~4 fields).
+
+- **Field access: auto-generate both named and numeric
+  accessors** from the declaration. `struct Pos { x: Int; y: Int
+  }` registers `.x`, `.y`, `.0`, and `.1` on the Pos type
+  namespace. Named accessors are the primary form; numeric
+  accessors are for generic programming (iterating over fields
+  by index). Both are Lens projections in the optic hierarchy.
+
+- **Struct fields are immutable by default. Mutation requires
+  `mut`** and takes the form of whole-struct replacement:
+
+        let mut p = Pos(10 20)
+        p = Pos(30 $p .1)          # rebind with new value
+
+  No field-level mutation syntax (`p.x = 30`) initially.
+  Whole-struct replacement is consistent with the value model —
+  structs are positive (inert data, Clone), and mutation means
+  rebinding the variable. Field-level mutation sugar can come
+  later as `p .x = 30` desugaring to whole-struct replacement —
+  this is the Lens `set` operation.
+
+- **Anonymous records are NOT added.** Every record type requires
+  a `struct` declaration. `(10, 20)` (tuple, anonymous) handles
+  the "quick pair" case; named structs handle the "real record"
+  case. No middle ground. This avoids the `(x 3 y 4)` literal
+  syntax question from the appendix entirely and keeps the type
+  system nominal (every compound has a declared type, consistent
+  with how sums require a tag).
 
 ### Signal handling: rc style vs lexical trap (RESOLVED)
 
@@ -238,49 +286,85 @@ lexical > global > OS default. See the resolved-decisions section
 for full details.
 
 
-## Pending (not yet discussed in depth)
+## Resolved from Pending
 
-### String manipulation builtins
+### String manipulation as Str type methods
 
-ksh93 had `${var#pattern}`, `${var%pattern}`, etc. psh should have
-fork-free string operations. With the copattern accessor direction,
-these become methods on `Str`:
+Resolved via the accessor direction. All string operations are
+`def Str.name { }` methods — type-level methods on `Str`,
+distinguished from discipline functions by the capitalization
+convention (uppercase `Str` = type, lowercase variable = discipline).
 
     $name .length          # Int
     $name .upper           # Str
+    $name .lower           # Str
     $name .split ':'       # List
-    $name .strip_prefix '/tmp/'   # some(...) or none()
+    $name .strip_prefix '/tmp/'   # some(rest) or none()
+    $name .strip_suffix '.txt'    # some(rest) or none()
     $name .replace 'old' 'new'    # Str
 
-Details TBD.
+Partial operations (strip_prefix, strip_suffix) return option
+sums. Total operations (upper, lower, replace, length) return
+plain values. `.contains` is a predicate that returns a status
+(usable in `if` position), not an option sum — users care about
+the boolean, not a payload.
 
-### Associative arrays / maps
+### Map type (associative arrays)
 
-ksh93's `typeset -A` was heavily used. psh has no equivalent. Options:
-- Add a `Map` type now
-- Use lists of tuples `((k1 v1) (k2 v2))` with methods
-- Reserved `struct` is close but not the same (structs have fixed
-  fields; maps have dynamic keys)
+Add a `Map` type — resolved. Lists of tuples are structurally
+adequate but ergonomically hostile (linear scan on lookup,
+painful update syntax). Maps give O(1) lookup and natural
+set/get methods.
 
-Optic: AffineTraversal (partial lookup).
+    let mut env : Map = ()                            # empty map
+    env = (('HOME' '/home/lane') ('PATH' '/bin'))     # literal
+    echo $env .get 'HOME'                             # some('/home/lane') or none()
+    env .set 'EDITOR' 'vim'                           # requires mut
+
+Optic: AffineTraversal (partial — key might not exist).
+`.get` returns an option sum, consistent with other partial
+accessors. `.set` takes a key-value pair and updates. `.keys`
+and `.values` return lists.
+
+In the "every variable is a list" model, a Map value is a single
+list element. `$#env` is `1` — the variable holds one map. A list
+of maps is possible but unusual.
+
+**Open sub-question:** literal syntax. Current proposal
+`(('HOME' '/home/lane') ...)` is lists of pairs, rc-ish but
+verbose. Alternative `(HOME='/home/lane' PATH='/bin')` uses `=`
+inside parens but collides with assignment syntax. **Medium
+confidence — revisit during VDC reframing with fresh eyes.**
 
 ### Job control builtins
 
-`fg`, `bg`, `jobs`, `wait` (with `-n` for any-child), `kill %N`.
-Table stakes for interactive use. Need to spec the builtins and
-their interaction with the job table.
+`fg`, `bg`, `jobs`, `wait` (with `-n` for any-child), `kill`.
+These are implementation work, not design questions. The only
+design decision: job IDs (`%1`, `%2`) are a new word form,
+analogous to `$x` for variables. `%N` expands to the PID of
+job N. This keeps builtins simple — `kill %1` is `kill` with
+argument `%1`, which expands to a PID before the builtin runs.
 
 ### Here-string `<<<`
 
-Trivial convenience: `cmd <<< 'input'` is `echo 'input' | cmd`.
-Maps to `lmap` with constant input source. Add?
+**Add it.** Trivial desugaring: `cmd <<< 'input'` is equivalent
+to `echo 'input' | cmd`, more precisely a cell with an embedded
+constant horizontal arrow on stdin (the same structure as a here
+document, inline). No fork for echo — the shell writes directly
+to the pipe.
 
 ### List indexing via accessor
 
-We agreed to move from rc's `$x(n)` to accessor notation. With the
-copattern direction, this becomes `$list .0`, `$list .1`, etc.
-AffineTraversal (partial — list might be shorter than the index).
-Returns `option` sums per the partial access rule.
+Confirmed: `$list .0`, `$list .1`, etc. AffineTraversal — returns
+`some(value)` or `none()` if the index is out of bounds. Replaces
+rc's `$list(1)` (which was 1-indexed). psh uses 0-indexed to
+match the tuple accessor convention.
+
+**Multi-index sub-lists** (rc's `$list(2 1 2)` returning a
+sub-list of elements at indices 2, 1, 2) are NOT provided as a
+primitive. Use a `for` loop or a `.at` method returning a list of
+selected elements if genuinely needed. The multi-index case is
+uncommon enough that a loop suffices for v1.
 
 ### Generalized destructor notation (direction noted)
 
