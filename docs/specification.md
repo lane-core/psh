@@ -418,11 +418,16 @@ its rc heritage or extension rationale.
 Key syntactic decisions with semantic grounding:
 
 - **`def` instead of `fn`** for command definitions. rc's `fn`
-  was a misnomer — it defines a cut, not a function. `def`
-  names the sort honestly. See §Two kinds of callable.
+  was a misnomer — it defines a cut template, not a function.
+  `def` names the sort honestly. Type/variable disambiguation
+  in dotted names (`def List.length { }` vs `def x.set { }`) is
+  by capitalization. See §Two kinds of callable.
 - **`let` + lambda for functions.** Values in the value sort,
   first-class, with capture semantics. Lambdas use `|x| => expr`
-  or `|x| { block }`. See §Two kinds of callable.
+  or `|x| { block }`; nullary is `| | => expr`. `let` is CBPV's
+  μ̃-binder: it accepts any computation producing a value
+  (pure, builtin call, pipeline, command substitution). See
+  §Two kinds of callable.
 - **rc parentheses** around conditions: `if(cond)`,
   `while(cond)`, `for(x in list)`, `match(expr)`.
 - **`else` instead of `if not`.** Duff acknowledged rc's
@@ -430,10 +435,39 @@ Key syntactic decisions with semantic grounding:
 - **`match`/`=>` instead of `switch`/`case`.** rc's `case` arms
   are top-level commands in a list; psh's `match` uses structured
   `=>` arms with `;` separators. The operation is genuinely
-  different. `match` names the operation honestly.
-- **`try`/`catch`** — scoped ErrorT. See §Error model.
-- **`trap SIGNAL { handler } { body }`** — lexical μ-binder.
-  See §Error model.
+  different. Patterns are constructor-shaped (`(h t)` for cons,
+  `(a, b, c)` for tuple, `ok(v)` for sum, `Pos(x y)` for struct
+  destructuring). Pattern alternation uses `|` between patterns
+  (ML/Rust convention, unambiguous inside match arms).
+- **Postfix dot accessors with required leading space.** `$pos .0`
+  is tuple projection, `$x .upper` is a type method, `$result .ok`
+  is a sum preview. The space disambiguates from rc's free caret
+  (`$stem.c` = `$stem ^ .c`). Partial accessors return option
+  sums. See §Constructors and destructors.
+- **Uniform tagged construction.** `NAME(args)` with `NAME`
+  immediately followed by `(` (no space) commits the parser to
+  tagged construction. Args are space-delimited (list-style).
+  Covers sums (`ok(42)`), structs (`Pos(10 20)`), and maps
+  (`Map(('k' 'v') ...)`) uniformly.
+- **`try`/`catch`** — scoped ErrorT. Changes the sequencing
+  combinator inside `try` from unconditional `;` to monadic `;ₜ`
+  that checks status after each command; on nonzero status,
+  aborts to the handler. See §Error model.
+- **`trap` — unified signal handling.** Grammar `trap SIGNAL
+  (body body?)?` gives three forms: lexical (`trap SIGNAL { h }
+  { body }`, scoped μ-binder), global (`trap SIGNAL { h }`,
+  registration at top-level), and deletion (`trap SIGNAL`,
+  removes a global handler). Precedence: innermost lexical >
+  outer lexical > global > OS default. See §Error model for the
+  full operational model.
+- **`$((...))` arithmetic** — in-process pure computation
+  returning an `Int`. Bare names inside refer to their integer
+  values (no `$` needed). Polarity shift ↓→↑ without fork.
+- **Single quotes only for string literals**, with `\`-escapes
+  for literal characters (`\'`, `\$`, `\n` is literal `n`, etc.)
+  and `\<whitespace>` forms as trivia (including line
+  continuation via `\<newline>`). See syntax.md §Backslash
+  escapes.
 
 
 ## Two kinds of callable
