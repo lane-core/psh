@@ -399,15 +399,47 @@ analysis.
 
 ### trap
 
+`trap` has three forms, distinguished by the number of block
+bodies:
+
+**Lexical** (two blocks): `trap SIGNAL { handler } { body }`
+
     trap SIGINT { echo 'interrupted'; return 1 } {
         long_running_command
         another_command
     }
 
-Lexically-scoped signal handler — the μ-binder of the sequent
-calculus [5, §2.1]. The handler is installed for the duration
-of the body. When the body exits, the handler is uninstalled.
-Inner traps shadow outer traps for the same signal.
+Installs the handler for the duration of the body. When the
+body exits, the handler is uninstalled. This is the μ-binder
+of the sequent calculus [5, §2.1] — the handler captures a
+signal continuation, scoped to the body. Inner lexical traps
+shadow outer ones for the same signal. The handler may `return
+N` to abort the body with status N.
+
+**Global** (one block): `trap SIGNAL { handler }`
+
+    trap SIGINT { echo 'interrupted'; return 1 }
+    long_running_command
+    another_command
+
+Registers the handler at the top-level object's signal
+interface. The handler persists until overridden by another
+`trap` for the same signal, or removed (see deletion form
+below).
+
+**Deletion** (no block): `trap SIGNAL`
+
+    trap SIGINT    # removes any global handler for SIGINT
+
+Removes a previously-installed global handler. This is the
+`fn name` (no body) convention from rc applied to traps.
+
+**Precedence:** at signal delivery, innermost lexical > outer
+lexical > global > OS default.
+
+**Signal masking:** an empty handler `trap SIGNAL { } { body }`
+(lexical) or `trap SIGNAL { }` (global) silently discards the
+signal for the relevant scope.
 
 `try` and `trap` are distinct constructs:
 - `try` = synchronous, checked at each `;`, status-only
@@ -415,8 +447,10 @@ Inner traps shadow outer traps for the same signal.
 
 They compose freely: `try` inside `trap`, `trap` inside `try`.
 
-See specification.md §Error model for the design rationale
-(lexical vs dynamic scoping, sequent calculus faithfulness).
+See specification.md §Error model for the full operational
+model, including signal delivery at interpreter step
+boundaries (wake-from-block during child waits) and the four
+cases of signal interaction with try blocks.
 
 
 ## Expressions
@@ -429,7 +463,7 @@ redirections, pipelines, and operators.
     and_expr    = match_expr ('&&' match_expr)*
     match_expr  = pipeline ('=~' value)?
     pipeline    = cmd_expr ('|' cmd_expr)*
-                | cmd_expr '|&'
+                | cmd_expr '|&' NAME?
     cmd_expr    = '!' cmd_expr
                 | body
                 | '@' body
@@ -797,11 +831,11 @@ wire format, named coprocesses).
 
 Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
-`return`.
+`return`, `struct`.
 
-Reserved for future use: `type` (type aliases), `struct`
-(named product types generalizing tuples), `enum` (named
-coproduct types generalizing sums).
+Reserved for future use: `type` (type aliases), `enum` (named
+coproduct types generalizing sums — built-in sum tags like
+`ok`/`err`/`some`/`none` suffice for v1).
 
 Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
 `^`, `>`, `>>`, `<`, `>[`, `<[`.

@@ -48,7 +48,7 @@ Concrete consequences:
   structural substitution discipline, unchanged.
 - Tuples, sums, and structs are distinct types at the **element**
   level — they can appear inside the list. `let pos : Tuple = (10,
-  20)` holds a list of one tuple. `$#pos` is 1. `${pos .0}` is
+  20)` holds a list of one tuple. `$#pos` is 1. `$pos .0` is
   `10`.
 - No scalar/list distinction means no `"$var"` quoting ceremony
   is ever needed. Variables always splice structurally.
@@ -932,13 +932,82 @@ Equivalent to lexically-scoped `set -e` without POSIX `set -e`'s
 composability defects. Boolean contexts (if/while conditions,
 &&/|| LHS, `!` commands) are exempt.
 
-### trap — lexical μ-binder (⅋ discipline)
+### trap — unified signal handling (⅋ discipline)
 
-`trap SIGNAL { handler } { body }` installs a signal handler
-for the duration of the body. The handler is the μ-binder of
-Curien-Herbelin [5, §2.1] — it captures the continuation and
-names it. Lexically scoped: inner shadows outer, uninstalled
-on body exit.
+Grammar: `trap SIGNAL (body body?)?`. Three forms distinguished
+by block count:
+
+**Lexical** (two blocks): `trap SIGNAL { handler } { body }`
+— installs the handler for the duration of the body, the
+μ-binder of Curien-Herbelin [5, §2.1]. The handler captures a
+signal continuation scoped to the body. Inner lexical traps
+shadow outer for the same signal. The handler may `return N`
+to abort the body with status N.
+
+**Global** (one block): `trap SIGNAL { handler }` — registers
+the handler at the top-level object's signal interface.
+Persists until overridden or removed. This is the vertical
+arrow form: it modifies the ambient signal-channel interface.
+
+**Deletion** (no block): `trap SIGNAL` — removes a
+previously-installed global handler.
+
+Precedence at signal delivery: innermost lexical > outer
+lexical > global > OS default. Signal masking via empty
+handler (`trap SIGNAL { }` in either scope).
+
+### Signal delivery model
+
+Signals fire at **interpreter step boundaries**, which include
+(1) between-command points in a block and (2) wake-from-block
+points during child waits. The shell's main loop uses `poll(2)`
+on both the child-status fd and a self-pipe. When a signal
+arrives during a child wait, the self-pipe wakes the poll loop;
+the shell handles the signal before resuming the wait. For
+SIGINT specifically, the shell forwards the signal to the
+child's process group (`kill(-pgid, SIGINT)`) so that
+long-running children can be interrupted.
+
+**EINTR policy:** builtins retry on EINTR by default. External
+commands handle EINTR themselves — if an external command exits
+nonzero due to interruption, that status flows through `try`
+normally. This avoids spurious `catch` triggers from transient
+EINTR returns in builtins.
+
+**EXIT handler:** `EXIT` is an artificial signal synthesized by
+the shell when the process is about to exit (rc heritage —
+Duff's `sigexit`). It fires on normal exit and on `exit` called
+from within a signal handler. Each process (including
+subshells created via `@{ }`) has its own EXIT handler
+registration; inherited handlers are copies that evolve
+independently in the child (Plan 9 `rfork` model).
+
+### Signal interaction with try blocks
+
+When a signal arrives during a `try { body } catch e { }`:
+
+1. **Between commands, handler returns.** The signal fires at
+   the next step boundary. If the handler calls `return N`,
+   the try body terminates with status N. The catch clause
+   fires if N is nonzero.
+
+2. **Between commands, handler does not return.** The handler
+   runs its side effects, execution resumes at the next
+   command, and try's status check proceeds normally.
+
+3. **Handler calls `exit`.** The shell (or subshell) exits.
+   Neither the remaining try body nor the catch clause runs.
+   EXIT handlers fire during shutdown.
+
+4. **Builtin interrupted by signal (EINTR).** The builtin
+   retries on EINTR. The signal flag is still set. The handler
+   fires at the next step boundary after the builtin completes.
+
+`trap` and `try` compose orthogonally because they operate on
+different sorts: `trap` on signal continuations (⅋), `try` on
+command status (⊕). A lexical `trap` inside a `try` body fires
+first when a signal arrives; if the trap returns a status, try
+inspects it through its normal status-check mechanism.
 
 
 ## Tuples (products, ×)
@@ -997,6 +1066,106 @@ form differs: ksh93 required braces (`${x.field}`), psh uses
 postfix dot with a space (`$x .field`).
 
 
+## Structs (named products, ×)
+
+Structs are named product types — tagged tuples with declared
+field types and named accessors. A struct declaration does two
+things: registers a constructor for tagged construction, and
+auto-generates named and positional accessors on the declared
+type.
+
+**Declaration:**
+
+    struct Pos {
+        x: Int
+        y: Int
+    }
+
+    struct Rgb {
+        r: Int
+        g: Int
+        b: Int
+    }
+
+**Construction** uses the uniform tagged-construction rule —
+`NAME(args)` with args as a space-delimited word list:
+
+    let p = Pos(10 20)
+    let red = Rgb(255 0 0)
+
+Construction is **positional only**, bound by declaration
+order. `Pos(10 20)` binds `x=10`, `y=20` because `x` is
+declared first. Arity mismatch is a binding-time error. There
+is no named construction form (`Pos(x: 10, y: 20)`) — now or
+in the future. The uniform tagged-construction rule is the
+only constructor syntax.
+
+List splicing works uniformly because `NAME(args)` is a word
+list:
+
+    let xy = (10 20)
+    let p = Pos($xy)         # splices — Pos receives 2 args
+
+**Accessors** are auto-generated. A `struct Pos { x: Int; y:
+Int }` declaration registers:
+
+- `.x` and `.y` — named accessors (Lens projections on the
+  `Pos` type)
+- `.0` and `.1` — positional accessors (indexed by declaration
+  order)
+
+Both forms work on struct values:
+
+    let p = Pos(10 20)
+    echo $p .x               # 10 — named
+    echo $p .0               # 10 — positional (same field)
+    echo $p .y               # 20
+    echo $p .1               # 20
+
+Named accessors are the primary form; positional accessors are
+for generic programming that iterates over fields by index.
+The struct declaration is a batch registration in the per-type
+accessor namespace, equivalent to writing `def Pos.x { }` and
+`def Pos.y { }` (plus the numeric fallbacks) by hand.
+
+**Mutation** requires `let mut`. Struct fields are immutable by
+default; mutation takes the form of whole-struct replacement:
+
+    let mut p = Pos(10 20)
+    p = Pos(30 $p .1)        # rebind with new value
+
+No field-level mutation syntax (`p .x = 30`) in v1. Whole-struct
+replacement is consistent with the value model: structs are
+positive data, Clone, and mutation means rebinding the
+variable. Field-level mutation sugar can come later as the Lens
+`set` operation.
+
+**No anonymous records.** Every record type requires a `struct`
+declaration. `(10, 20)` (tuple, anonymous) handles the "quick
+pair" case; named structs handle the "real record" case. No
+middle ground — the appendix's proposed `(x 3 y 4)` anonymous
+record syntax is not adopted.
+
+**Typing rule** (named product introduction):
+
+    Γ ⊢ t₁ : A₁ | Δ    ...    Γ ⊢ tₙ : Aₙ | Δ
+    ────────────────────────────────────────────
+    Γ ⊢ Pos(t₁ ... tₙ) : Pos | Δ
+
+where `struct Pos { f₁: A₁; ... ; fₙ: Aₙ }` is in scope.
+
+**In VDC terms:** a struct declaration specifies a cell with a
+fixed multi-source signature. `Pos : Int, Int → Pos` says the
+constructor cell has two `Int` horizontal arrows on top and
+one `Pos` horizontal arrow on the bottom. The named accessors
+are destructor invocations — the codata view of the struct,
+dual to the constructor's data view. The `struct` keyword is
+the syntactic form that batches the two views together:
+registering the constructor (positive introduction) and the
+projections (negative destructors) at once, unifying the
+data/codata duality in a single declaration.
+
+
 ## Sums (coproducts, +)
 
 Sums are coproducts — tagged values representing alternatives.
@@ -1051,12 +1220,61 @@ They are inert data — Clone, no embedded effects.
 
 ## Extension path
 
-Extensions add connectives to the μμ̃ framework, not new
-sorts. The sorts remain producers/consumers/commands.
+The type system is extensible along several axes. Some
+extensions are planned and will land in the base shell (v1);
+others are genuinely future work. The framework is designed so
+that extensions compose without reshaping the foundation.
 
-### Polymorphism
+### Planned for v1 (designed, not yet fully documented)
 
-Parametric type abbreviations — syntax and semantics undecided.
+These types and features are resolved in the deliberations
+docs and will appear in the base shell. The restructured spec
+should add dedicated sections for each.
+
+- **`Map` type** — associative arrays with O(1) lookup.
+  Constructor: `Map(('k1' 'v1') ('k2' 'v2'))` using the uniform
+  tagged construction rule. Accessors: `.get` (returns
+  `some(v)` or `none()`), `.set`, `.keys`, `.values`. Optic:
+  AffineTraversal. See deliberations.md §Map type.
+
+- **String methods on `Str`** — fork-free string operations
+  registered as `def Str.name { }` accessor methods. `.length`,
+  `.upper`, `.lower`, `.split`, `.strip_prefix`, `.strip_suffix`,
+  `.replace`, `.contains`. Partial operations return option
+  sums; predicates return status. Replaces ksh93's
+  `${var#pat}`/`${var%pat}` parameter expansion.
+
+- **Job control builtins** — `fg`, `bg`, `jobs`, `wait` (with
+  `-n` for any-child), `kill`. Job IDs as a new word form:
+  `%N` expands to the PID of job N.
+
+- **Here-string `<<<`** — `cmd <<< 'input'` creates a pipe with
+  the string as content, avoiding the fork for `echo`. A cell
+  with an embedded constant horizontal arrow on stdin.
+
+- **`$((...))` arithmetic** — already documented; in-process
+  pure expression evaluation returning an `Int`.
+
+### Future (deferred)
+
+- **Polymorphism.** Parametric type abbreviations — syntax and
+  semantics undecided. The reserved `type` keyword is held for
+  this.
+
+- **User-defined sum types (`enum`).** The `enum` keyword is
+  reserved but not implemented in v1. Built-in sum tags (`ok`,
+  `err`, `some`, `none`) cover the common cases. User-defined
+  enums with named variants are a future extension.
+
+- **Typed session channels on pipes.** A pipe carrying
+  structured messages with a compile-time session type is a
+  natural extension — the VDC framework accommodates it
+  directly. Today's pipes are byte streams.
+
+- **Pipeline fusion (Segal condition).** When a sequence of
+  pipeline stages has a composite, the shell can fuse them
+  into a single cell. This is an optimization opportunity the
+  VDC framework makes precise; not a correctness requirement.
 
 ### Optics activation
 
@@ -1064,8 +1282,10 @@ Parametric type abbreviations — syntax and semantics undecided.
 |---|---|---|
 | Lists (rc base) | Traversal (iteration) | Monoidal |
 | Tuples (products) | Lens (projection) | Cartesian |
+| Structs (named products) | Lens (named and positional) | Cartesian |
 | Sums (coproducts) | Prism (preview) | Cocartesian |
 | Products × Coproducts | AffineTraversal | Cartesian + Cocartesian |
+| Map (associative) | AffineTraversal (partial lookup) | Cartesian + Cocartesian |
 | fd table (save/restore) | Lens | Cartesian |
 | Redirections | Adapter | Profunctor |
 
@@ -1130,3 +1350,20 @@ point.
 
 [SFIO-7] sfio Disciplines.
     `~/src/ksh/ksh/notes/sfio-analysis/07-disciplines.md`
+
+[VDC] psh VDC Framework Report. `docs/vdc-framework.md`
+
+[CS] Cruttwell, Shulman. "A unified framework for generalized
+    multicategories." Theory and Applications of Categories
+    24(21), 2010, pp. 580–655. Introduces virtual double
+    categories under their current name.
+
+[Lei] Leinster. *Higher Operads, Higher Categories.* London
+    Mathematical Society Lecture Note Series 298, Cambridge
+    University Press, 2004. Introduces fc-multicategories
+    (= virtual double categories).
+
+[Bur] Burroni. "T-catégories (catégories dans un triple)."
+    Cahiers de Topologie et Géométrie Différentielle
+    Catégoriques 12(3), 1971, pp. 215–321. Original source
+    (as "multicatégorie").

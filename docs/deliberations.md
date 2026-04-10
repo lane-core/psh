@@ -146,7 +146,12 @@ selected which parts to adopt:
   { }`. **Open — see research memo.**
 
 
-## Open
+## Resolved design areas (pending propagation to live specs)
+
+These areas had open sub-questions in earlier sessions. All
+sub-questions are now resolved. The decisions below are ready
+to fold into the restructured specification.md — some have been
+partially propagated, others await the restructure.
 
 ### Accessor notation: copattern-style postfix dot
 
