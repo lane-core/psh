@@ -195,8 +195,8 @@ operators (μ); ⊕ vs ⅋ error handling are dual.
 
 **Levy** [4] defines Call-by-Push-Value, the practical
 framework for the value/computation distinction. psh's
-`def`/`let`+`\` split is CBPV's `U`/`F` adjunction surfaced
-as syntax.
+`def`/`let` + lambda split is CBPV's `U`/`F` adjunction
+surfaced as syntax.
 
 
 ## The three sorts, made explicit
@@ -234,7 +234,7 @@ In psh's AST, terms are the `Word`/`Value` sort.
 | `` `{cmd} `` | Command substitution | Shift ↓→↑: computation forced, result returned as value |
 | `(a b c)` | List | Product of strings |
 | `$x^$y` | Concatenation | Kleisli composition of two terms |
-| `\x => body` | Lambda | Thunked computation as value (`U` in CBPV) |
+| `|x| => body` | Lambda | Thunked computation as value (`U` in CBPV) |
 | `ok(42)` | Sum (injection) | Tagged value — coproduct introduction |
 
 ### Coterms (consumers) — Δ
@@ -390,9 +390,9 @@ Key syntactic decisions with semantic grounding:
 - **`def` instead of `fn`** for command definitions. rc's `fn`
   was a misnomer — it defines a cut, not a function. `def`
   names the sort honestly. See §Two kinds of callable.
-- **`let` + `\` for functions.** Values in the value sort,
-  first-class, with capture semantics. See §Two kinds of
-  callable.
+- **`let` + lambda for functions.** Values in the value sort,
+  first-class, with capture semantics. Lambdas use `|x| => expr`
+  or `|x| { block }`. See §Two kinds of callable.
 - **rc parentheses** around conditions: `if(cond)`,
   `while(cond)`, `for(x in list)`, `match(expr)`.
 - **`else` instead of `if not`.** Duff acknowledged rc's
@@ -416,7 +416,7 @@ this: ksh93 needed both effectful procedures (functions) and
 inert data accessors (compound variable fields), but conflated
 them in the `Namval_t` machinery.
 
-| | `def` | `let` + `\` (lambda) |
+| | `def` | `let` + lambda (`|x|`) |
 |---|---|---|
 | Sort | Command (cut template) | Value (term) |
 | Arguments | Variadic, positional ($1, $2, $*) | Fixed arity, named |
@@ -425,7 +425,7 @@ them in the `Namval_t` machinery.
 | Effects | May have effects (oblique map) | Purity inferred (thunkable when pure) |
 | CBPV type | `F(Status)` | `U(A → B)` or `U(A → F(B))` |
 | rc analog | `fn name { body }` [1, §Functions] | (no rc analog — extension) |
-| Invocation | `name arg1 arg2` | `$f(arg1, arg2)` |
+| Invocation | `name arg1 arg2` | `name arg1 arg2` (bare word forces the lambda) |
 
 The `def` keyword replaces rc's `fn`. Duff chose `fn`
 deliberately, but psh renames it because psh draws a distinction
@@ -445,7 +445,7 @@ cannot call external commands.
 
 A `.get` discipline is defined as a lambda:
 
-    let x.get = \ => { ... pure computation ... }
+    let x.get = | | => { ... pure computation ... }
 
 The body fires on every `$x` access as a pure notification —
 side-effect-free observation (logging, tracing). The returned

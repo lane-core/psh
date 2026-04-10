@@ -134,25 +134,32 @@ Functions are values in the value sort, created by `let`-binding
 a lambda expression. They are first-class: storable, passable,
 composable.
 
-    lambda      = '\' NAME* '=>' (body | command)
+    lambda      = '|' NAME* '|' lambda_body
+    lambda_body = '=>' command      -- single-expression form
+                | '{' program '}'   -- block form
 
-    let double = \x => expr $x '*' 2
-    let greet  = \name => { echo 'hello '$name; return 0 }
-    let add    = \x => \y => expr $x + $y    # currying
-    let thunk  = \ => echo 'no args'         # nullary
+    let double = |x| => $((x * 2))
+    let greet  = |name| { echo 'hello '$name; return 0 }
+    let add    = |x| => |y| => $((x + y))    # currying
+    let thunk  = | | => echo 'no args'       # nullary
 
 In CBPV terms [4], a lambda is `U(A₁ → ... → Aₙ → F(B))`
 when impure, or `U(A₁ → ... → Aₙ → B)` when pure. The `U`
 (thunk) wraps a computation as a value. The distinction between
-`def` and `let`+`\` is the CBPV value/computation boundary
+`def` and `let` + lambda is the CBPV value/computation boundary
 surfaced as syntax. See specification.md §Two kinds of callable.
+
+The `|...|` parameter delimiter is unambiguous in value position:
+`|` in command position is a shell pipe, but a lambda only appears
+where a value is expected (RHS of `let`, inside a word, etc.),
+and in those positions a leading `|` always opens a lambda.
 
 **Capture semantics.** Lambdas capture free variables at
 definition time — `Vec<(String, Val)>`, positive, Clone. This
 is the closed-term property. Named `def` definitions use
 dynamic resolution (read current scope at call time). The
 distinction is the sort boundary: values (lambdas) are
-self-contained; computations (cmds) live in a context.
+self-contained; named computations (defs) live in a context.
 
 **Purity inference.** The shell infers purity by conservative
 AST analysis: if the body contains no assignments to variables
@@ -167,7 +174,7 @@ to oblique maps. See specification.md §Two kinds of callable.
 `.get` disciplines are pure — they are Getters (specification.md
 §Discipline functions). Defined as lambdas:
 
-    let x.get = \ => { ... pure computation ... }
+    let x.get = | | => { ... pure computation ... }
 
 The body fires on every `$x` access as a notification. The
 returned value is always the stored value, not the body's
