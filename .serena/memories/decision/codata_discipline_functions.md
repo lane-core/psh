@@ -2,11 +2,11 @@
 type: decision
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [codata, discipline, get, set, observer, constructor, cbv-focusing, monadic-lens, kleisli, reentrancy, polarity-frame]
 agents: [psh-optics-theorist, psh-sequent-calculus, vdc-theory, plan9-systems-engineer, psh-architect]
-related: [decision/def_vs_lambda, decision/postfix_dot_accessors]
+related: [decision/def_vs_lambda, decision/postfix_dot_accessors, analysis/polarity/cbv_focusing, analysis/polarity/frames, analysis/monadic_lens, analysis/polarity/_hub, analysis/data_vs_codata]
 supersedes: [pre-7afc97d conservative model where .get was "return discarded, side effects only"]
 verified_against: [git-log@7afc97d, git-log@6fbac31]
 ---

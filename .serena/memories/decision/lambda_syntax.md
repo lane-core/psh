@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: normal
 keywords: [lambda, syntax, pipe-delimited, rust-style, line-continuation, nullary]
 agents: [psh-architect, psh-sequent-calculus]
-related: [decision/def_vs_lambda, decision/backslash_escape_rules]
+related: [decision/def_vs_lambda, decision/backslash_escape_rules, analysis/cbpv_f_u_separation]
 verified_against: [docs/deliberations.md@HEAD §"Lambda syntax", git-log@e0ecaf5]
 ---
 

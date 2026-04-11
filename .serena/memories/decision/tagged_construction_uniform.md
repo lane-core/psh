@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [tagged-construction, sum, struct, map, NAME-paren, uniform-rule, positional, list-splicing]
 agents: [psh-architect, psh-sequent-calculus, psh-optics-theorist, vdc-theory]
-related: [decision/three_roles_of_parens, decision/struct_positional_only_forever, decision/postfix_dot_accessors]
+related: [decision/three_roles_of_parens, decision/struct_positional_only_forever, decision/postfix_dot_accessors, analysis/data_vs_codata]
 ---
 
 # Decision: uniform tagged construction — `NAME(args)` with NAME immediately followed by `(`

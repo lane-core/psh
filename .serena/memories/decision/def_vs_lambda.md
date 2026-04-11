@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [def, lambda, callable, cut-template, computation, value, cbpv, f-u-adjunction, ksh93-compound-variables]
 agents: [psh-sequent-calculus, vdc-theory, psh-architect]
-related: [decision/let_is_mu_tilde_binder_cbpv, decision/lambda_syntax]
+related: [decision/let_is_mu_tilde_binder_cbpv, decision/lambda_syntax, analysis/cbpv_f_u_separation, analysis/three_sorts, analysis/cut_as_execution]
 ---
 
 # Decision: `def` for command-level bindings, `let` + lambda for value-level

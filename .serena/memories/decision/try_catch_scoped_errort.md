@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [try, catch, errort, monad-transformer, sequencing, oplus, status-check, scoped, set-e]
 agents: [psh-sequent-calculus, psh-architect, vdc-theory]
-related: [decision/unified_trap_three_forms, decision/catch_binding_parenthesized]
+related: [decision/unified_trap_three_forms, decision/catch_binding_parenthesized, analysis/error_duality_oplus_par, analysis/cut_as_execution, analysis/cbpv_f_u_separation]
 ---
 
 # Decision: `try { body } catch (e) { handler }` as scoped ErrorT

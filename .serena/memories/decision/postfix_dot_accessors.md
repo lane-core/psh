@@ -2,11 +2,11 @@
 type: decision
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [postfix-dot, accessor, copattern, space-disambiguation, per-type-namespace, capitalization, lens, prism]
 agents: [psh-architect, psh-optics-theorist, psh-sequent-calculus]
-related: [decision/tagged_construction_uniform, decision/codata_discipline_functions]
+related: [decision/tagged_construction_uniform, decision/codata_discipline_functions, analysis/monadic_lens, analysis/data_vs_codata]
 ---
 
 # Decision: postfix dot accessors with required leading space, per-type namespace

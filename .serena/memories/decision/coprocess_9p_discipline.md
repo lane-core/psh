@@ -2,11 +2,11 @@
 type: decision
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [coprocess, 9p, session, per-tag, binary-session, star-topology, forwarder, deadlock-freedom, pending-reply, wire-format, socketpair]
 agents: [psh-session-type-agent, psh-architect, vdc-theory, plan9-systems-engineer]
-related: [decision/unified_trap_three_forms, decision/every_variable_is_a_list]
+related: [decision/unified_trap_three_forms, decision/every_variable_is_a_list, analysis/wire_format_horizontal_arrow, analysis/forwarders_as_cut, analysis/nine_p_discipline]
 ---
 
 # Decision: coprocess protocol is 9P-shaped with per-tag binary sessions and star topology

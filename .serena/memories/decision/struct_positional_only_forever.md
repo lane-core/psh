@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [struct, positional, named-construction, rejected, permanent, ksh93-compound-variables, arity]
 agents: [psh-architect, psh-sequent-calculus, psh-optics-theorist]
-related: [decision/tagged_construction_uniform]
+related: [decision/tagged_construction_uniform, analysis/data_vs_codata]
 verified_against: [git-log@ad4dd61]
 ---
 

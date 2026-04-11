@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [trap, signal, lexical, global, deletion, mu-binder, classical-control, signal-continuation, ksh93-sigjmp]
 agents: [psh-sequent-calculus, plan9-systems-engineer, psh-architect, vdc-theory]
-related: [decision/try_catch_scoped_errort, decision/let_is_mu_tilde_binder_cbpv]
+related: [decision/try_catch_scoped_errort, decision/let_is_mu_tilde_binder_cbpv, analysis/error_duality_oplus_par, analysis/cut_as_execution, analysis/data_vs_codata]
 ---
 
 # Decision: unified `trap` — three forms by block count

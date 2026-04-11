@@ -2,11 +2,11 @@
 type: decision
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [let, mu-tilde, cbpv, f-a, binder, effectful, call-by-push-value, levy, curien-herbelin, monadic-bind]
 agents: [psh-sequent-calculus, vdc-theory, psh-architect]
-related: [decision/def_vs_lambda, decision/every_variable_is_a_list]
+related: [decision/def_vs_lambda, decision/every_variable_is_a_list, analysis/three_sorts, analysis/cbpv_f_u_separation, analysis/cut_as_execution]
 verified_against: [git-log@bdf0ca5]
 ---
 

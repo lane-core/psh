@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: normal
 keywords: [catch, try, parenthesized, binding, grammar, consistency, rc-parens]
 agents: [psh-architect, psh-sequent-calculus, plan9-systems-engineer]
-related: [decision/try_catch_scoped_errort]
+related: [decision/try_catch_scoped_errort, analysis/error_duality_oplus_par, analysis/cbpv_f_u_separation]
 supersedes: [pre-2026-04-10 bare-NAME form of catch binding in syntax.md:255 and related locations]
 verified_against: [docs/syntax.md@HEAD, docs/specification.md@HEAD, docs/deliberations.md@HEAD, PLAN.md@HEAD]
 ---
