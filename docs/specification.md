@@ -1334,7 +1334,8 @@ point.
 ## References
 
 [1] Tom Duff. "Rc — The Plan 9 Shell." 1990.
-    `reference/plan9/papers/rc.ms`
+    `refs/plan9/papers/rc.ms` (with companion man page at
+    `refs/plan9/man/1/rc`)
 
 [2] Mangel, Melliès, Munch-Maccagnoni. "Duploids."
     `~/gist/classical-notions-of-computation-duploids.gist.txt`
@@ -1358,7 +1359,9 @@ point.
 [9] Munch-Maccagnoni. "Models of a Non-Associative Composition."
     FoSSaCS, 2014.
 
-[9P] Plan 9 9P protocol. `reference/plan9/man/5/`
+[9P] Plan 9 9P protocol. man pages section 5 in any Plan 9
+    distribution; cited here as design inspiration for the
+    coprocess conversation discipline, not for wire protocol.
 
 [Honda98] Honda, Vasconcelos, Kubo. "Language Primitives and
     Type Discipline for Structured Communication-Based

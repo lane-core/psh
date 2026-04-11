@@ -3,8 +3,8 @@
 Formal grammar for psh. Starts from rc (Duff 1990) and names
 each extension. Theoretical foundation: `docs/specification.md`.
 
-rc reference: `reference/plan9/man/1/rc` and
-`reference/plan9/papers/rc.ms`.
+rc reference: `refs/plan9/man/1/rc` and
+`refs/plan9/papers/rc.ms`.
 
 
 ## Design principle
@@ -844,7 +844,7 @@ Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
 ## References
 
 [1] Tom Duff. "Rc — The Plan 9 Shell." 1990.
-    `reference/plan9/papers/rc.ms`
+    `refs/plan9/papers/rc.ms`
 
 [3] Munch-Maccagnoni. "Syntax and Models of a Non-Associative
     Composition of Programs and Proofs." Thesis, 2013.
