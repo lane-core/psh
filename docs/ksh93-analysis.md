@@ -12,13 +12,11 @@ Sequent calculus, polarized type theory, and duploid semantics give us
 precise vocabulary for these patterns. This document maps the theory onto
 the codebase: where the modes are, where the boundaries fall, what invariants
 hold at each crossing, and what goes wrong when they're violated. The
-analysis found bugs [001]–[003b] and informs every direction in
-[REDESIGN.md](REDESIGN.md).
-
-[001]: ../bugs/001-typeset-compound-assoc-expansion.ksh
-[002]: ../bugs/002-typeset-debug-trap-compound-assign.ksh
-[003a]: ../bugs/003-debug-trap-self-unset.ksh
-[003b]: ../bugs/003-debug-trap-free-restore-uaf.ksh
+analysis found bugs 001–003b and informs every direction in the ksh26
+redesign. The referenced bug reproducers and the redesign document live
+in the ksh26 source tree, not in psh; this file is vendored into psh as
+reference material for the polarity frame discipline and the sequent
+calculus mapping of the ksh93 interpreter.
 
 
 ## The observation
