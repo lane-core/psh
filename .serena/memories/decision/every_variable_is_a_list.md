@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [foundational, list, scalar, rc, duff, splicing, type-annotation, no-rescan, element-type]
 agents: [plan9-systems-engineer, psh-sequent-calculus, psh-architect, psh-optics-theorist, vdc-theory]
-related: []
+related: [analysis/duff_principle, decision/parameter_expansion_destructors, decision/three_roles_of_parens, decision/let_is_mu_tilde_binder_cbpv]
 ---
 
 # Decision: every variable is a list

@@ -1004,7 +1004,10 @@ sequence of horizontal arrows (the argument list), forces them into
 a single composite arrow (the concatenated string), and re-parses
 the composite to recover structure. This is exactly the Segal
 condition applied destructively: force the composite to exist, even
-when it doesn't naturally.
+when it doesn't naturally. **The information loss happens in the
+composition step (string concatenation erases boundaries), not in
+the re-parse — the re-parse can only find whatever boundaries the
+concatenation preserved, which is generally none.**
 
 The fact that `eval` must be explicitly invoked — that it is a
 command, not an implicit behavior — is the design expression of the

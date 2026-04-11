@@ -2,11 +2,11 @@
 type: decision
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [struct, positional, named-construction, rejected, permanent, ksh93-compound-variables, arity]
 agents: [psh-architect, psh-sequent-calculus, psh-optics-theorist]
-related: [decision/tagged_construction_uniform, analysis/data_vs_codata]
+related: [decision/tagged_construction_uniform, analysis/data_vs_codata, analysis/constructor_as_opcartesian_cell]
 verified_against: [git-log@ad4dd61]
 ---
 
@@ -41,5 +41,6 @@ Alternative considered and rejected in commit `ad4dd61`: reserve named construct
 - Anonymous records (`(x 3 y 4)` style pseudo-records) are also **not adopted**. Every record type requires a `struct` declaration.
 - Whole-struct replacement is the mutation pattern: `p = Pos(30 $p .1)`. No field-level mutation syntax in v1.
 - List splicing into positional struct construction works uniformly: `let xy = (10 20); Pos($xy)` binds `x=10 y=20`.
+- **VDC universality is load-bearing on this commitment.** The positional-only-forever rule is what makes the struct constructor universal as an opcartesian cell in the VDC framework — see `analysis/constructor_as_opcartesian_cell`. If a named-field form like `Pos(x: 10, y: 20)` were added later, there would be a **second** cell witnessing the same composite (positions and field names both factoring into the constructor), and the universal property of Cruttwell-Shulman §5 Def 5.1 would need re-verification under whatever disambiguation rule was chosen. The "no named form, now or later" commitment preserves a theoretical invariant established by the 2026-04-11 vdc-theory + sequent-calculus investigation — not just an ergonomic preference.
 
 Spec: `docs/specification.md` §"Structs". Ledger: `docs/deliberations.md` §"Struct definitions", §"Why no anonymous records".

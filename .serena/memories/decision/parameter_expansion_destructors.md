@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: normal
 keywords: [parameter-expansion, sigil, length, join, rc-heritage, list-destructor, prefix-sigil, dollar-hash, dollar-quote]
 agents: [plan9-systems-engineer, psh-architect]
-related: [decision/every_variable_is_a_list, analysis/data_vs_codata]
+related: [decision/every_variable_is_a_list, analysis/data_vs_codata, analysis/duff_principle]
 verified_against: [docs/deliberations.md@HEAD §"$#x and $\"x", git-log@30f5f6c]
 ---
 

@@ -6,7 +6,7 @@ last_updated: 2026-04-10
 importance: high
 keywords: [parens, list, tuple, tagged-construction, disambiguation, comma, splicing, rc-heritage]
 agents: [psh-architect, psh-sequent-calculus, vdc-theory]
-related: [decision/tagged_construction_uniform, decision/every_variable_is_a_list, analysis/data_vs_codata]
+related: [decision/tagged_construction_uniform, decision/every_variable_is_a_list, analysis/data_vs_codata, analysis/duff_principle]
 ---
 
 # Decision: three roles of `()` — list, tuple, tagged construction

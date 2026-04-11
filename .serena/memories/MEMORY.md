@@ -54,7 +54,21 @@ Concept-named landings into the foundational material. Each is a short anchor (1
 - [analysis/data_vs_codata](analysis/data_vs_codata) — constructors vs destructors, pattern vs copattern; data and codata are perfectly dual
 - [analysis/squier_critical_pair](analysis/squier_critical_pair) — local-to-global coherence framework (deferred verification — psh has not yet undertaken the local-confluence work Squier consumes)
 
-Tier 3 anchors (~5) are planned but not yet written. **Both tier-1 and tier-2 anchor batches passed mandatory `docs/agent-workflow.md` §"Tier-2 audit for theoretical anchors" verification by domain agents.** Audit findings on the tier-2 batch caught 1 MAJOR (fabricated linear-logic deviation in `error_duality_oplus_par`) and 6 MINOR issues, all folded back in.
+### Tier-3 anchors
+
+- [analysis/duff_principle](analysis/duff_principle) — every variable is a list; rc heritage; the foundational commitment psh extends across the type system
+- [analysis/hasegawa_thielecke](analysis/hasegawa_thielecke) — thunkable = central in dialogue duploids (corrected attribution from Führmann-Thielecke per the tier-1 audit)
+- [analysis/tambara_modules](analysis/tambara_modules) — Pastro-Street + Clarke generalized Tambara representation; why optics compose
+- [analysis/fvdbltt_protypes](analysis/fvdbltt_protypes) — Hayashi-Das FVDblTT; protypes as channel types (forward-looking, v2)
+- [analysis/classical_control_mu_binder](analysis/classical_control_mu_binder) — μ as continuation capture; lexical trap is the operational μ-binder; the trap half of the let/control duality
+
+### Follow-up from 2026-04-11 type-theory investigation
+
+- [analysis/constructor_as_opcartesian_cell](analysis/constructor_as_opcartesian_cell) — struct constructor as opcartesian cell witnessing a composite; universality is load-bearing on `decision/struct_positional_only_forever`
+
+`analysis/shell_t_monolithic_state` was considered for tier 3 but **dropped** as duplicating `analysis/polarity/sh_prefix_critical_pair` (per the merge test in `policy/memory_discipline` §7).
+
+**All three anchor batches (tier 1, tier 2, tier 3) passed mandatory `docs/agent-workflow.md` §"Tier-2 audit for theoretical anchors" verification by domain agents.** Cumulative audit findings: tier 1 caught 3 hallucinations + 6 minor issues; tier 2 caught 1 MAJOR + 6 MINOR; tier 3 caught 0 MAJOR + 5 MINOR. All folded back in.
 
 ## When you need to look up a resolved design decision
 

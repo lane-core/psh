@@ -226,7 +226,10 @@ operators (μ); ⊕ vs ⅋ error handling are dual.
 **Levy** [4] defines Call-by-Push-Value, the practical
 framework for the value/computation distinction. psh's
 `def`/`let` + lambda split is CBPV's `U`/`F` adjunction
-surfaced as syntax.
+surfaced as syntax. The F/U adjunction bridges value types
+and computation types on the positive (Γ) side — it does
+not bridge Γ and Δ; the ⊕/⅋ duality (§"Error model") is
+the Γ/Δ split.
 
 
 ## The three sorts, made explicit
