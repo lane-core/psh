@@ -34,26 +34,74 @@ cannot be a shell pipe. See commit e0ecaf5.
 `\n` is literal `n`, not a C-style newline escape. See §Backslash
 escapes in syntax.md and commit c1512db.
 
-### `.get` discipline: codata model (SUPERSEDED → APPLIED)
+### `.get` discipline: codata model (SUPERSEDED ×2 → APPLIED)
 
-**Initial applied version** (commit 6fbac31): `.get` as a `def`
+**First applied version** (commit 6fbac31): `.get` as a `def`
 with "return discarded, x free in body, side effects for
-logging only" constraints. This was the conservative model.
+logging only" constraints. The **conservative model**. Required
+a separate `cursor.refresh` for value computation.
 
-**Superseded by the codata model** (commit 7afc97d): `.get` is
-now the codata observer — the body computes the value seen by
-the accessor, not just a hook whose output is discarded. `.set`
-is the codata constructor. Both are `def` cells in Kl(Ψ). CBV
-focusing is the reentrancy semantics: within one expression,
-`.get` fires once per variable and the produced value is reused.
-The polarity frame discipline prevents reentrant self-invocation
-during the shift.
+**Second applied version** (commit 7afc97d): `.get` as **codata
+observer with effects**. The body computes the value directly;
+`.set` is the codata constructor; both live in Kl(Ψ). CBV
+focusing was justified via Downen-style static focusing. The
+`cursor.refresh` workaround was retired because `.get` could
+compute values directly.
 
-The `cursor.refresh` workaround is gone either way — it was
-unnecessary once `.get` could compute values directly.
+**Current — third applied version (2026-04-11 roundtable)**:
+`.get` as **pure observer**, `.refresh` **reinstated** as the
+effectful updater, `.set` as the mutator. All three are
+destructors in a codata cocase [Grokking §6.3]. Together `.get`
+and `.set` form a **mixed monadic lens** per Clarke
+`def:monadiclens`: pure view in `W(S, A)`, effectful update in
+`W(S × B, ΨT)`. `.refresh` is orthogonal to the lens structure.
 
-Live spec: `specification.md` §Discipline functions. Live
-grammar: `syntax.md` §Discipline functions.
+CBV focusing of `.get` is now a **theorem** via thunkability
+(Duploids Proposition 8550, "thunkable ⇒ central" — the forward
+direction of Hasegawa-Thielecke, which holds in every symmetric
+monoidal duploid without requiring dialogue structure). The
+Downen static-focusing framing was incorrect and has been
+removed.
+
+The 2026-04-11 rewrite fixes four problems with the second
+version:
+
+1. **Contradiction with Clarke** `def:monadiclens` — the prior
+   claim that both view and update lived in `Kl(Ψ)` was Riley
+   2018 §4.9's non-mixed effectful lens, not Clarke's monadic
+   lens. With pure `.get`, psh instantiates Clarke's definition
+   exactly.
+2. **Terminology inversion** — "proper monadic lens, not a
+   mixed optic" had "mixed" backwards; Clarke's mixed optics
+   are defined by having two distinct base categories, which
+   is *exactly* what a monadic lens has. `prop:monadiclens`
+   says monadic lenses *are* mixed optics.
+3. **Soundness hole** with coprocess queries — an effectful
+   `.get` holding a `PendingReply` obligation across a polarity
+   frame unwound by a signal races with drop-as-cancel, leaving
+   a stale tag that violates the per-tag `Send<Req, Recv<Resp,
+   End>>` session type. Pure `.get` cannot open sessions.
+4. **Downen static focusing misattribution** — Downen's static
+   focusing is a syntactic preprocessing pass, not a runtime
+   reuse mechanism. The correct citation is Duploids Prop 8550
+   (thunkability), which requires `.get` bodies to be pure.
+
+The `cursor.refresh` reinstatement is *not* a revival of the
+conservative model: the conservative model had `.get` as a
+"return discarded" hook, while the current model has `.get` as
+a pure value-producing observation. `.refresh` does what its
+name suggests — refreshes external state into the slot, on
+explicit imperative invocation at a step boundary.
+
+Heritage anchor: `rc.ms` §Environment (observation-as-file-
+read, mutation-as-file-write) realized on contemporary unix-
+likes rather than Plan 9's `/env` specifically. Plan 9
+philosophy, portable mechanism.
+
+Live spec: `specification.md` §"Discipline functions" (line
+562) and §"Polarity frames" (line 414). Serena anchors:
+`analysis/monadic_lens`, `decision/codata_discipline_functions`,
+`analysis/polarity/cbv_focusing` — all rewritten 2026-04-11.
 
 ### `$#x` and `$"x` as parameter expansion destructors (APPLIED)
 

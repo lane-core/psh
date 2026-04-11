@@ -147,12 +147,15 @@ A `def` is not first-class; it is not a value; it cannot be
 stored in a variable or passed as an argument. It is a named
 entry in the computation context Θ.
 
-Also handles discipline functions: `def x.get { body }` and
-`def x.set { body }`. Both are `def` cells — `.get` is the
-codata observer, `.set` is the codata constructor. ksh93
-heritage for the dotted-name convention; the codata model is
-psh's formalization. See specification.md §Discipline functions
-for the full semantics.
+Also handles discipline functions: `def x.get { body }`,
+`def x.refresh { body }`, and `def x.set { body }`. All three
+are `def` cells, all three are **destructors** of a codata
+cocase. `.get` is the pure observer; `.refresh` is the effectful
+updater, invoked imperatively as `x.refresh`; `.set` is the
+mutator, fired on assignment. Dotted-name convention is ksh93
+heritage; the three-discipline codata model is psh's
+formalization. See specification.md §Discipline functions for
+the full semantics.
 
 Type name vs variable name in `def` is disambiguated by
 **capitalization**: `def x.set { }` (lowercase `x`) is a
@@ -210,33 +213,48 @@ to oblique maps. See specification.md §Two kinds of callable.
 
 ### Discipline functions
 
-A variable with `.get` and `.set` disciplines is **codata**:
-its behavior under observation and mutation is defined by the
-discipline cells, not by a naive stored slot.
+A variable may have three discipline cells — `.get`, `.refresh`,
+and `.set` — that together make it **codata**: its behavior is
+defined by the cells, not by a naive stored slot.
 
     def x.get {
-        # body computes the value seen on each $x access
+        # pure observer: reads the stored slot and returns a value.
+        # No effects — no subshells, no coprocess queries, no file reads.
+    }
+
+    def x.refresh {
+        # effectful updater: may invoke any shell machinery and
+        # writes the refreshed value into the slot via `x = v`.
+        # Invoked imperatively at a step boundary.
     }
 
     def x.set {
-        # body mediates assignment; $1 is the incoming value
+        # mutator: receives incoming value as $1, mediates the
+        # assignment, writes the slot via `x = v`. May have effects.
     }
 
-`.get` is the codata observer — it fires on every `$x` access
-and computes the value. `.set` is the codata constructor — it
-fires on every assignment to `x`. Both are `def` cells with
-full effect capabilities (logging, coprocess queries,
-filesystem reads).
+All three are **destructors** in the codata cocase; the cocase
+itself is the sole constructor. `.get` is invoked implicitly on
+every `$x` reference and must remain pure. `.refresh` is invoked
+explicitly as `x.refresh` — a command-position name lookup in Θ,
+runs at a step boundary, produces a status. `.set` is invoked on
+every assignment to `x`.
 
-Within a single expression's evaluation, `.get` fires at most
-once per variable (CBV focusing). Reentrancy is prevented by
-the polarity frame discipline — inside `x.get`, a reference to
-`$x` reads the stored slot directly rather than re-invoking
-the discipline.
+Within a single expression, `.get` fires once per variable and
+its value is shared at every consumption site — this is a
+theorem via Duploids Proposition 8550 ("thunkable ⇒ central"),
+not an operational convention. Pure maps into positive values
+are thunkable, and thunkable maps are central.
+
+`.refresh` and `.set` bodies run inside polarity frames that
+guard reentrancy. Inside the frame, `x = v` is the primitive
+slot write (it bypasses the cocase). Pure `.get` needs no
+polarity frame — there is no polarity crossing and nothing to
+reenter.
 
 See specification.md §Discipline functions for the full
-semantics, the MonadicLens structure, and the caveats around
-cross-expression consistency with mutable external state.
+semantics, the mixed monadic lens structure, and the heritage
+rationale for the observation/refresh split.
 
 
 ## Control flow

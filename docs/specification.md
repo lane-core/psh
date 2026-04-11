@@ -204,11 +204,16 @@ thunking, ↑A for returning) mediate between polarities.
 **Mangel, Melliès, and Munch-Maccagnoni** [2] define duploids —
 non-associative categories integrating call-by-value (Kleisli/
 monadic) and call-by-name (co-Kleisli/comonadic) computation.
-Three of four associativity equations hold; the fourth's failure
-captures the CBV/CBN distinction. Maps restoring full
-associativity are thunkable (pure, value-like). In a dialogue
-duploid (with involutive negation), thunkable = central: purity
-and commutativity coincide (the Hasegawa-Thielecke theorem).
+Three of four associativity equations hold; the fourth — the
+`(⊕,⊖)` equation — fails, and that failure captures the CBV/CBN
+distinction. Maps restoring full associativity on the left are
+thunkable (pure, value-like); one direction of the Hasegawa-
+Thielecke implication, **thunkable ⇒ central** [2, Proposition
+8550], holds in every symmetric monoidal duploid — no dialogue
+structure or involutive negation required. psh cites only the
+forward direction; the reverse (central ⇒ thunkable) is the
+full Hasegawa-Thielecke theorem and requires dialogue-duploid
+structure that psh does not commit to.
 
 **Munch-Maccagnoni's thesis** [3] is where duploids originate.
 The companion paper [9] gives the clearest self-contained
@@ -317,30 +322,47 @@ stdout binding + the script continuation).
 | `if(cond) { A } else { B }` | ⟨status \| case(A, B)⟩ | Coproduct elimination |
 | `match(v) { arms }` | ⟨v \| case(arm₁, ..., armₙ)⟩ | Multi-way elimination |
 
-In psh's AST, the `Binding` sort handles μ̃-binders (context
-extension: assignment, let, def, ref) and the `Command` sort
-handles cuts and control flow (exec, if, for, match, try, trap).
+In psh's AST, assignments and let-bindings are *statements*
+whose consumer is a μ̃-binder: `x = val; rest` is the cut
+⟨val | μ̃x.⟨rest | α⟩⟩ where α is the outer continuation. The
+μ̃-binder is a consumer, not a separate sort — psh's AST does
+not have a dedicated `Binding` node type. Assignments, `let`,
+and `def` are `Command` nodes whose consumer side is μ̃-shaped,
+and the evaluator dispatches on the shape.
 
-### The AST's four sorts
+### The AST's three sorts (plus engineering layer)
 
-The AST has four node types — the three logical sorts plus the
-profunctor layer:
+psh's AST has three logical sorts matching Grokking's [7,
+§"Syntax"] three syntactic categories — producers, consumers,
+statements — plus one engineering layer:
 
-| psh sort | λμμ̃ analog | Evaluation | Examples |
-|---|---|---|---|
-| `Word`/`Value` | Term (producer) | CBV — evaluated eagerly | Literal, Var, CommandSub, Concat, List, Tuple, Sum |
-| `Expr` | Profunctor layer | CBN for pipelines, structural for redirections | Pipeline, Redirect, Background |
-| `Binding` | μ̃-binder | Extends context Γ | Assignment, Cmd, Let |
-| `Command` | Cut / control | Connects terms to coterms, or branches | Exec, If, For, Match, Try, Trap |
+| psh node | λμμ̃ category | Role |
+|---|---|---|
+| `Word` / `Value` | Producer (term) | Values, variable refs, command substitutions, lambdas — everything in Γ |
+| `Coterm` (synthesized) | Consumer | Evaluation contexts: pipe readers, redirect targets, μ̃-binders (let / assign), trap signal handlers, catch bindings |
+| `Command` | Statement (cut) | Every cut: simple commands, pipelines, assignments ⟨val \| μ̃x.rest⟩, if/for/match/try/trap |
+| `Expr` | engineering boundary | Wraps pipelines + redirections — consumer machinery grouped for evaluator organization, not a logical sort |
+
+A `let x = M; rest` or `x = val; rest` is a *statement*, not a
+separate sort: desugared, it is the cut ⟨M | μ̃x.⟨rest | α⟩⟩
+[7, §3.2]. The μ̃-binder is a consumer alternative in Grokking's
+grammar `c ::= α | μ̃x.s | D(p̄;c̄) | case{...}`; it lives
+*inside* a statement as the consumer slot, not alongside the
+statement as a peer sort. Earlier drafts of this spec treated
+`Binding` as a fourth logical sort parallel to `Command`; that
+was a category error. psh synthesizes consumers implicitly from
+the statement's shape rather than storing them as first-class
+nodes — the same way rc's consumers were implicit, made just
+explicit enough for sort-directed evaluation.
 
 The `Expr` sort is an engineering choice, not a logical one —
 it separates the profunctor transformations (redirections,
 pipelines) from the cut/control layer. Logically, `Expr`
-constructs are part of the coterm apparatus: pipelines build
+constructs are part of the consumer apparatus: pipelines build
 co-Kleisli contexts, redirections transform I/O contexts via
 profunctor maps. The evaluator boundary `run_expr` enforces
-this: it handles the coterm machinery before `run_cmd` performs
-the cut.
+this: it handles the consumer machinery before `run_cmd`
+performs the cut.
 
 
 ## Polarity discipline
@@ -405,6 +427,58 @@ The classical control is tamed by lexical scope, not eliminated.
    Each `|` creates a pipe — a linear resource pair — connecting
    stdout-left to stdin-right. Both sides run concurrently.
    Demand flows right-to-left via blocking reads.
+
+### Polarity frames
+
+A **polarity frame** is the operational mechanism for a `↓→↑`
+shift — forcing a negative (computation-mode) term to produce a
+positive (value-mode) result. Structurally, a frame is a
+cartesian cell in the VDC of shell programs (fcmonads §7,
+virtual equipments / restrictions): it saves the positive-mode
+state (the expansion context — splice positions, CBV-focused
+values, partial word accumulators), runs the negative computation,
+and restores the positive-mode state on exit with the produced
+value substituted in.
+
+The frame is the operational analog of the shift connectives
+`↓` / `↑` from the focused sequent calculus, and of the `L ⊣ R`
+adjunction every duploid admits [2, §"Duploids," adjunctions-
+duploids theorem]. Without the frame, a computation-mode
+operation inside a value-mode context can silently corrupt
+positive-mode state — the `sh.prefix` bug pattern documented in
+[SPEC], which is the operational form of the `(⊕,⊖)` non-
+associativity named above.
+
+Polarity frames are invoked in three places in psh:
+
+- **Command substitution** `` `{cmd} `` — frame saves the word
+  expansion context, forks a subprocess, captures stdout, restores
+  the context with the result list substituted. Full ↓→↑ shift.
+- **Arithmetic expansion** `$((…))` — frame is operationally
+  trivial (pure in-process computation, no effects to guard), but
+  the shift is still type-theoretic: the expression is `μα.⊙(e₁,
+  e₂;α)` in [7, §3.2]'s arithmetic translation, a statement
+  wrapped in a μ-binder to produce a positive value. The frame
+  mechanism is the same; its save/restore steps simplify to no-ops.
+- **Discipline refresh** `.refresh` and **mutation** `.set`
+  bodies — frame saves the expansion context, raises a reentrancy
+  flag on the variable, runs the body, restores the context and
+  clears the flag on exit. See §"Reentrancy and the polarity
+  frame" in §Discipline functions.
+
+Pure `.get` bodies do *not* require a polarity frame. `.get` is
+a pure map into the positive subcategory `P_t`; there is no
+polarity crossing and nothing to reenter. This is the single
+biggest simplification the codata model earns by separating pure
+observation from effectful refresh.
+
+Process substitution `<{cmd}` is a structurally distinct case:
+the shift is a downshift (`↓`) that binds a computation behind
+a name, rather than a force. The operational realization is a
+fork that returns immediately with `/dev/fd/N`; the name is
+positive, the computation behind the name is negative and
+demand-driven. The polarity frame discipline applies only to
+the bind, not to the deferred computation.
 
 
 ## Syntax
@@ -504,120 +578,155 @@ invocation site.
 
 ## Discipline functions
 
-A variable with `.get` and `.set` disciplines is **codata** in
-the sense of the sequent calculus: its behavior under observation
-(reading) and mutation (assignment) is defined by destructor and
-constructor cells, not by a naive stored slot. The discipline
-cells *are* the variable's semantics.
+A variable may be equipped with **discipline cells** — `def`-
+registered bodies that mediate observation, refresh, and mutation.
+A variable so equipped is **codata** in the sense of the sequent
+calculus: its behavior is defined by destructors, and the
+discipline cells *are* the variable's semantics. Three disciplines
+are recognized:
+
+- **`.get`** — the **pure observer**. A body of type `W(S, A)`
+  that reads the stored slot and returns a value. No effects
+  allowed.
+- **`.refresh`** — the **effectful updater**. A body in `Kl(Ψ)`
+  that may invoke arbitrary shell machinery (subshells, coprocess
+  queries, filesystem reads) and writes the updated value into
+  the stored slot. Invoked as an imperative command at a step
+  boundary.
+- **`.set`** — the **mutator**. A body that receives an incoming
+  value, mediates the assignment, and writes the slot.
+
+The split between observation and refresh is a return to rc's
+observation philosophy ([1] §Environment): observation is a read,
+mutation is an imperative step, and the shell's reference model
+never hides work behind a variable reference. Plan 9 realized
+this via `/env` as a kernel filesystem; psh realizes the same
+philosophy on contemporary unix-likes using whatever filesystem
+or IPC mechanism the user chooses — the spirit is portable even
+though Plan 9's specific mechanism is not.
+
+ksh93 collapsed observation and refresh by allowing its `get`
+discipline to run arbitrary shell code on every reference [SPEC,
+§Discipline Functions]. psh declines to import that design: it
+hides work at the reference site, conflicts with Duff's "no
+hidden work" principle, and interacts unsoundly with session-
+typed coprocess channels when a signal unwinds a polarity frame
+holding a `PendingReply` obligation.
 
 ### The codata model
 
 In the sequent calculus, data types are defined by constructors
 (how to build a value) and eliminated by pattern matching. Codata
 types are defined by destructors (how to observe or transform a
-value) and eliminated by copattern matching — the producer must
-respond to each destructor invocation.
+value) and eliminated by copattern matching: the producer is a
+cocase that says how to respond to each destructor invocation
+[7, §6.3].
 
-A variable with discipline functions is codata:
+A disciplined variable is the cocase
 
-- **`.get`** is the destructor that fires on observation. Reading
-  the variable invokes `.get`, which computes the value seen by
-  the accessor.
-- **`.set`** is the constructor that fires on mutation. Assigning
-  to the variable invokes `.set`, which mediates how the new
-  value is stored (or rejected, transformed, or propagated).
+    cocase{ get(α)     ⇒ ⟨.get-body | α⟩,
+            refresh(α) ⇒ ⟨.refresh-body | α⟩,
+            set(v; α)  ⇒ ⟨.set-body[v] | α⟩ }
 
-A variable without discipline functions is ordinary data: the
-stored value is what you read, assignment replaces the stored
-value. Adding disciplines moves the variable into the codata
-world where its semantics become whatever the disciplines
-compute.
+where `.get-body` is a pure producer in `W`, `.refresh-body` is
+a statement in `Kl(Ψ)`, and `.set-body` is a statement taking one
+producer argument (the incoming value) and mediating the slot
+write. All three are **destructors** of the codata type; the
+cocase is the sole constructor (the variable *is* its cocase).
+Earlier drafts called `.set` a "constructor"; per [7, §6.3], a
+codata constructor is the whole cocase, and `.set` is a destructor
+with one producer argument.
 
-### .get — the codata observer
+A variable without discipline cells is ordinary data: the stored
+value is what you read, assignment replaces the stored value, and
+there is no cocase.
 
-`.get` disciplines are defined as `def` cells. The body computes
-the value seen by the accessor:
+### .get — the pure observer
+
+A `.get` body is a pure computation `W(S, A)`: it reads the
+stored slot and returns a value without invoking effects. No
+subshells, no coprocess queries, no filesystem reads. Effects
+belong in `.refresh`. By default every disciplined variable has
+the trivial `.get` that reads its stored slot as a pure value;
+user-defined `.get` bodies are permitted but must remain pure
+(typically to compute a derived view of the slot).
+
+The once-per-expression reuse property is a theorem, not an
+operational convention: pure maps into positive values are
+thunkable by construction in the symmetric monoidal duploid, and
+thunkable maps are central [2, Prop 8550]. Central maps may be
+reused at every consumption site inside an expression without
+disturbing composition order. CBV argument expansion therefore
+evaluates `.get` once and shares the result at every occurrence
+of the variable in the same expression, as a consequence of
+thunkability — not as an appeal to Downen-style static focusing
+(which is a syntactic rewrite pass, not a runtime reuse
+mechanism).
+
+There is no polarity frame around `.get`. The input and output
+both live in the positive subcategory `P_t`; there is no polarity
+crossing, and nothing to reenter.
+
+### .refresh — the effectful updater
+
+A `.refresh` body is a statement in `Kl(Ψ)`: it may invoke any
+shell machinery — subshells, coprocess queries, filesystem reads,
+pipelines — and is responsible for writing the updated value into
+the stored slot. It is invoked as an imperative command at a step
+boundary, never implicitly by reference.
+
+Canonical shape (portable across contemporary unix-likes; the
+rc/Plan 9 "observation is a file read" philosophy [1] §Environment
+realized on unix without requiring `/env` or 9P services):
 
     let mut cursor = 0
-    def cursor.get {
-        cursor = `{ cat /srv/input/cursor }
+    def cursor.refresh {
+        cursor = `{ cat $XDG_STATE_HOME/psh/cursor }
     }
 
-Every `$cursor` access fires the discipline, which refreshes the
-stored slot from an external source. The access then returns the
-refreshed value. This is the "live variable" pattern: the
-variable's value is computed on demand.
+    cursor.refresh
+    echo $cursor
 
-The body may have arbitrary effects: logging, tracing, metrics,
-coprocess queries, filesystem reads. The polarity frame
-discipline (see §Polarity discipline) protects the surrounding
-expansion context from the computation-mode intrusion. A `.get`
-body may issue coprocess queries; the shift structure is the
-same ↓→↑ pattern as command substitution, and the polarity frame
-is sufficient to make this safe.
+`cursor.refresh` is a command-position invocation of the
+discipline cell, parsed as a single NAME head and looked up in
+Θ. It runs at a step boundary, produces a status, and composes
+with `try`/`catch` and `trap` the same way any other command
+does. Users who want the ksh93 "live variable" ergonomics wrap
+the pair in their own function — the rc `fn cd` pattern [1,
+§Functions] applied to discipline invocation:
 
-### CBV focusing as the reentrancy semantics
+    fn show_cursor { cursor.refresh; echo $cursor }
 
-Within a single expression's evaluation, `.get` fires at most
-once per variable. Subsequent occurrences of the same variable
-in the same expression use the already-produced value.
+`.refresh` is the site of the ↓→↑ polarity shift. The body runs
+in computation mode inside a polarity frame that saves the
+surrounding expansion context, runs the computation, and restores
+the context on exit (see §Polarity frames). Inside the frame,
+`cursor = value` is the primitive slot write: it bypasses the
+cocase (which would recurse into `.refresh`) and writes the slot
+directly.
 
-This is not memoization as an optimization. It is the correct
-focusing behavior of the focused sequent calculus, realized at
-the polarity boundary. Two pieces fit together:
+Failure propagation is rc-native: `.refresh` errors surface as a
+nonzero `$status` at the invocation site, which `try`/`catch`
+catches the same way it catches any command failure. Silencing
+requires the user's explicit `try { cursor.refresh } catch (_) { }`.
 
-**From the VDC framework** (`docs/vdc-framework.md` §6.2):
-static focusing is the discipline that argument expansion
-uses — before a command runs, all its arguments are focused
-(evaluated to values). Downen et al.'s static focusing applies
-to the shell's CBV evaluation of argument lists.
+### .set — the mutator
 
-**From the VDC framework** (`docs/vdc-framework.md` §9.3):
-a discipline variable is a horizontal arrow of negative type
-(codata). Accessing it is a ↓→↑ polarity shift, which fires
-inside a polarity frame. The frame saves the expansion context,
-runs the discipline, and restores the context on exit. The
-polarity frame mechanism is inherited from ksh93's
-`sh_polarity_enter` / `sh_polarity_leave` and is the operational
-discipline that preserves horizontal arrow types across mode
-boundaries.
-
-**Putting them together:** the `.get` discipline produces a
-positive value via the ↓→↑ shift. Once the shift lands — once
-the polarity frame exits with a value in hand — the result is
-a positive value in W, and CBV focusing applies: the value is
-used at each consumption site within the enclosing expression
-without re-evaluation. The shell's argument expansion pipeline
-treats the shifted value just like any other positive term.
-The polarity frame prevents reentrancy during the shift; CBV
-focusing prevents re-invocation after the shift lands.
-
-Concretely: in the expression `echo $cursor $cursor`, the
-discipline fires on the first `$cursor`, the polarity frame
-wraps the discipline body, a positive value is produced, and
-the second `$cursor` uses that same value. The expression sees
-one consistent reading.
-
-Across expressions, the discipline fires again. A second `echo
-$cursor` on a new line will run `.get` fresh and may see
-different state. Cross-expression consistency is not guaranteed
-— the backing state can change, and that is the expected
-behavior of codata backed by external resources.
-
-### .set — the codata constructor
-
-`.set` disciplines are defined as `def` cells. The body receives
-the incoming value as `$1` and mediates the assignment:
+A `.set` body receives the incoming value as `$1` and mediates
+the assignment. Unlike `.get`, `.set` may have effects — the
+assignment is already at a step boundary, and effects at that
+point are user-visible and expected.
 
     def x.set {
         # $1 is the new value being assigned
-        # the body may validate, transform, reject, or propagate
+        # the body may validate, transform, reject, or write
+        # the slot via the primitive assignment x = v
     }
 
 `.set` fires on every assignment to `x`. Typical patterns:
 
-- **Validation.** Reject assignments that don't meet a
-  constraint, by calling `return` with a nonzero status.
+- **Validation.** Reject assignments that don't meet a constraint,
+  by calling `return` with a nonzero status.
 - **Transformation.** Normalize or clamp the value before storing
   (e.g., clamp a percentage to 0-100).
 - **Propagation.** Write the value to an external resource
@@ -625,75 +734,92 @@ the incoming value as `$1` and mediates the assignment:
 - **Notification.** Log the change, emit metrics, trigger
   dependent updates.
 
-CBV focusing applies symmetrically: within one assignment
-expression, `.set` fires once. The incoming value is focused to
-a positive form, the discipline runs, the assignment completes.
+**Who writes the stored slot.** Under the cocase framing, the
+`.set` body owns the write. Inside `.set`'s polarity frame,
+`x = v` is the primitive slot write: it bypasses the cocase
+(which would recurse into `.set`) and writes the stored slot
+directly. A `.set` body that does not perform such an assignment
+does not update the slot. The evaluator does not write the slot
+after `.set` returns — every state transition goes through a
+destructor body [7, §6.3]. This makes `.set` the sole legitimate
+writer of a disciplined variable's slot from the assignment
+side; `.refresh` is the legitimate writer from the observation
+side.
 
 ### Reentrancy and the polarity frame
 
-Because discipline bodies can issue the same operation they are
-mediating (a `.get` that reads other variables, a `.set` that
-triggers further assignments), reentrancy is a real concern.
-Each discipline invocation runs inside a polarity frame that
-prevents the discipline from firing recursively on the variable
-it is attached to. Within the body of `x.get`, a reference to
-`$x` returns the current stored value directly, bypassing the
-discipline. Similarly, within `x.set`, an assignment to `x`
-writes to the stored slot directly.
+`.refresh` and `.set` bodies may reference the variable they are
+mediating (a `.refresh` that reads `$x` to compute the next value,
+a `.set` that reads the old value before deciding what to store).
+Within such a body, a reference to `$x` fires the default pure
+`.get` on the current slot — which returns whatever value is
+currently stored. There is no reentrancy problem at `.get`: pure
+observation has no frame to reenter.
 
-This is the same polarity frame mechanism that protects the
-surrounding expansion context from computation-mode intrusions.
-The frame saves context, runs the discipline, restores context
-on exit. Reentrancy within the frame is resolved by a flag on
-the variable's discipline state.
+`.refresh` and `.set` themselves are guarded by polarity frames
+(see §Polarity frames). Each frame saves the expansion context,
+raises a reentrancy flag on the variable, runs the body, restores
+the context on exit, and clears the flag. Inside the frame,
+`x = v` writes the slot directly (it bypasses the cocase).
+Recursive invocation of `.refresh` within its own body — calling
+`x.refresh` while the flag is raised — is caught by the flag and
+reported as a runtime error; a discipline that needs to refresh
+itself mid-refresh is ill-defined.
 
-### MonadicLens structure
+The narrowing relative to prior drafts: only `.refresh` and
+`.set` need polarity frames. `.get` is pure and needs none,
+which is the simplest possible reentrancy story — there is
+nothing to reenter.
 
-A variable with `.get` and `.set` disciplines is a MonadicLens
-[Clarke, def:monadiclens]:
+### Mixed-optic structure
+
+A variable with `.get` and `.set` (with or without `.refresh`)
+is a **mixed optic** in Clarke's sense — specifically a monadic
+lens [Clarke, def:monadiclens]:
 
     MndLens_Ψ((A,B),(S,T)) = W(S, A) × W(S × B, ΨT)
 
-Under the codata model, both view and update live in Kl(Ψ) —
-the shell's effect monad. The view is the `.get` computation
-(which may have effects); the update is the `.set` computation
-(same). This is a proper monadic lens, not a mixed optic.
+The view `.get` lives in the pure base `W`, and the update
+`.set` lives in `Kl(Ψ)` — two different categories of morphisms,
+glued by the action `⋊ : W × Kl(Ψ) → Kl(Ψ)` [Clarke,
+prop:monadiclens]. "Mixed optic" is Clarke's term for an optic
+whose decomposition and reconstruction categories differ; it
+is not a term for "impure optic." psh's disciplined variable is
+monadic-lens-shaped precisely because its view is pure and its
+update is effectful — the defining case of a mixed optic. Earlier
+drafts of this spec claimed the psh construct was "a proper
+monadic lens, not a mixed optic," which inverted Clarke's
+terminology; `prop:monadiclens` explicitly establishes that
+monadic lenses *are* mixed optics.
 
-The MonadicLens laws hold modulo the effects:
+The monadic lens laws [Clarke, cited via AbouSaleh et al. 2016
+§2.3], stated up to Kleisli equality on the update side:
 
-- **PutGet:** assigning a value and then reading it returns the
-  assigned value, *if* `.set` stores it faithfully and `.get`
-  reads the stored slot. A `.set` that transforms or a `.get`
-  that recomputes may break PutGet — this is the price of
-  codata.
-- **GetPut:** reading and then assigning back is a no-op, *if*
-  the disciplines are inverse to each other.
-- **PutPut:** the second assignment overrides the first, *if*
-  `.set` is idempotent under repeated assignment.
+- **PutGet.**  `set s b >>=_Ψ get  ≡  return b` — the view is
+  pure on the right side of the equation; the left side runs one
+  effect and discards it. Holds when `.set` stores the value
+  faithfully.
+- **GetPut.**  `get s >>=_Ψ (λa. set s a)  ≡_Ψ  return s` — the
+  view produces a pure value, the update writes it back. Holds
+  when `.set` is inverse to `.get` on the stored slot.
+- **PutPut.**  `set s b₁ >>=_Ψ (λs'. set s' b₂)  ≡_Ψ  set s b₂`
+  — consecutive writes collapse to the last. Holds when `.set`
+  is idempotent under Kleisli composition.
 
-For ordinary variables without discipline functions, the view is
-identity in W (trivially pure) and the laws hold unconditionally.
-Adding disciplines moves the variable into Kl(Ψ), where the laws
-become contracts the user must maintain, not automatic
-consequences.
+For ordinary variables without discipline cells, the view is
+identity in `W`, the update is trivial, and all three laws hold
+unconditionally. Adding `.set` turns the laws into contracts the
+user maintains by discipline: a `.set` that silently transforms
+its input breaks PutGet; a non-idempotent `.set` breaks PutPut.
+The spec does not mechanically verify the laws; they are
+documented here as the expected discipline and the user's
+obligation.
 
-### Known caveat: cross-variable consistency
-
-A `.get` discipline that queries mutable external state may
-produce inconsistent reads across expressions. If `.get` on X
-queries a coprocess whose response depends on state modified by
-a concurrent process, two expressions involving `$x` may see
-different underlying stored values. Within one expression, CBV
-focusing gives consistency (the value is computed once and
-reused). Across expressions, the discipline fires fresh each
-time, and the state it observes may have changed.
-
-This is documented behavior, not a bug. The codata model makes
-the value's computation explicit — if that computation depends
-on mutable external state, its results depend on when it runs.
-Users who need strict cross-expression consistency should either
-avoid discipline-backed variables for the relevant reads or cache
-values into discipline-free variables.
+`.refresh` is orthogonal to the mixed-optic structure. It is an
+imperative update to the view — a "write from outside" — that
+the user invokes explicitly. The view remains pure between
+refreshes; `.refresh` is not part of the lens, and its presence
+or absence does not change the lens laws.
 
 
 ## Profunctor structure
@@ -737,8 +863,9 @@ rc-compatible base:
 Word expansion has Kleisli structure — each stage is a function
 `Word → Val` with possible effects, composing sequentially.
 This is a composition pattern in the shell's effect monad,
-not an optic. It provides the
-view morphism that the discipline system's MonadicLens uses.
+not an optic. The `.set` update side of the discipline system's
+mixed monadic lens lives in the same `Kl(Ψ)` the expansion
+pipeline lives in; the `.get` view is pure `W`.
 
 The full optic hierarchy (Prism, AffineTraversal, Traversal)
 activates when products and coproducts are added.
@@ -751,10 +878,13 @@ composition [SPEC, §"The monadic side"]. psh's `eval_word` has
 a simpler pipeline:
 
 1. **Literal** → identity (pure, no effects)
-2. **Var** → codata access: if the variable has a `.get`
-   discipline, invoke it (polarity shift, runs in a polarity
-   frame, result memoized within the expression by CBV
-   focusing); otherwise read the stored value directly
+2. **Var** → read the stored slot, invoking the variable's
+   `.get` cell (pure `W(S, A)` — default is the identity slot
+   reader; a user-defined `.get` must remain pure). The result
+   is thunkable and is reused within the expression by CBV
+   focusing [2, Prop 8550]. No polarity frame — `.get` has no
+   effects to guard. Effectful state refresh is the job of
+   `.refresh`, invoked separately as an imperative command.
 3. **Count** → lookup then measure
 4. **CommandSub** → polarity shift (↓→↑: fork, capture, return)
 5. **Concat** → rc's `^` (pairwise or broadcast join)
