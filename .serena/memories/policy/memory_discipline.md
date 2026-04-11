@@ -2,14 +2,13 @@
 type: policy
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [memory, serena, memx, frontmatter, namespace, hub-spokes, archive, migration, per-type-schema, three-member-minimum, status-singleton, forwarder-stub, multi-layer-migration, hand-merge, staleness-prevention, needs-verification, verified-against, sources]
 agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect]
-source: /Users/lane/memx-serena.md (synced 2026-04-10, revised with needs_verification + staleness prevention)
 ---
 
-# Memory discipline (synced from /Users/lane/memx-serena.md)
+# Memory discipline
 
 **Scope.** Defines how psh's serena memory store is organized:
 frontmatter, namespace, hub-and-spokes, per-type schemas,
@@ -18,9 +17,11 @@ staleness prevention. Operational workflow (pre-task retrieval,
 memo format, scope handoff) is in `docs/agent-workflow.md` —
 read both once per session.
 
-**Source.** This memory is synced from `/Users/lane/memx-serena.md`
-on 2026-04-10 (revised). The file there is Lane's authoring copy.
-If Lane edits the authoring copy, re-sync this memory to match.
+**Status.** This memory is the **project's canonical source of
+truth for memory discipline**. The MemX paper at
+`/Users/lane/gist/memx/memx.tex` (Sun 2026) is the theoretical
+ground; this memory is the psh-specific port. Edit this memory
+directly when the discipline evolves.
 
 ---
 
@@ -272,6 +273,64 @@ the proxy is: memories that appear in the index, in agent charters,
 or in other memories' `related` fields are high-utility and should
 be marked `importance: high`. Memories nobody points to are dead
 weight and become candidates for archiving.
+
+### 10. Epistemic strength matches the source
+
+When citing or paraphrasing a primary source in a memory, the
+epistemic strength of the memory must match the source. If the
+source hedges, the memory hedges. If the source says "structurally
+analogous," the memory must not say "manifest" or "is." If the
+source notes "not formally verified," the memory must carry that
+caveat. The same discipline rejects adding details (symptoms,
+examples, narrative about authorial intent) the source doesn't
+contain — that's the same class of error in the writing direction.
+
+This is the paraphrase-time analogue of MemX's R1 low-confidence
+rejection rule: just as MemX rejects retrieval when both signals
+are weak, the writing agent rejects a paraphrase that strengthens
+the source. Each paraphrase hop must preserve the original
+epistemic strength; if a hop strengthens the claim, the chain is
+broken.
+
+**The rule applied:**
+
+- Read the source's exact wording before paraphrasing.
+- Preserve hedge words ("analogous", "approximately", "the pattern
+  matches", "structurally similar") and caveat phrases ("not
+  formally verified", "modulo", "up to", "we conjecture").
+- Do not invent symptoms, examples, narrative about authorial
+  intent, or details the source doesn't contain.
+- When in doubt, quote the source's exact phrasing rather than
+  paraphrasing it.
+- Tag the memo with `verified_against: [<source>@<date>]` so the
+  next reader can audit the paraphrase against the source.
+
+**Worked example.** During the tier-1 anchor audit on 2026-04-11,
+three psh memory failures of this rule were caught:
+
+1. `analysis/polarity/dccache_witness` originally said "the (+,−)
+   equation **manifest** in a real I/O library." The source
+   (`docs/specification.md` §"The sfio insight") actually says
+   "**structurally analogous**" and "the pattern matches; the full
+   duploid composition laws have not been formally verified."
+   *Fix:* weaken "manifest" to "structurally analogous"; preserve
+   the caveat.
+2. `analysis/oblique_maps` originally said "every shell command
+   **is** an oblique map." `refs/ksh93/ksh93-analysis.md` §461
+   says "structural analogy ... whether the full composition laws
+   carry over is unverified." *Fix:* "every shell command **has
+   the structure of** an oblique map."
+3. `analysis/polarity/sh_prefix_critical_pair` invented a list of
+   symptoms ("stale prompts, wrong PS4") that are not in the
+   source — `sh.prefix` is the compound-name resolution prefix in
+   `name.c`, not a prompt prefix. The hallucinated symptoms came
+   from extrapolating on the field name without reading the bug
+   taxonomy. *Fix:* replace the hallucinated symptoms with the
+   actual Bug 001/002/003a/003b taxonomy from the source.
+
+Each is the same failure shape: the source's epistemic and detail
+level is the ceiling. Never exceed it. Extracting fewer claims is
+fine; strengthening hedges or inventing detail is not.
 
 ## Agents and the project store
 

@@ -249,6 +249,73 @@ When the task produces a memo worth persisting, consult
   plus project-level types when content is multi-agent. Do not
   write to another agent's sub-folder.
 
+## Tier-2 audit for theoretical anchors
+
+**Mandatory** before any new `analysis/<concept>.md` memo
+(theoretical concept anchor) that cites external papers, framework
+sections, or vendored references is treated as authoritative for
+cross-agent retrieval.
+
+The pre-task retrieval protocol checks that you read the right
+material *before* writing. The tier-2 audit checks that the
+memo's *paraphrases of cited material* are faithful to the source
+*after* writing. The two are independent; you need both.
+
+**Why mandatory.** During the 2026-04-11 tier-1 anchor batch,
+13 anchors were written by a single writing agent. A manual
+spot-check caught 3 hallucinations; a follow-up dispatch of 5
+domain agents caught 6 more — a 1:2 ratio of self-caught to
+agent-caught, even with the writer trying to be careful. The
+discipline of catching errors at write time is unreliable; the
+discipline of catching them at audit time, by a different agent
+reading the sources fresh, is the practical floor on accuracy.
+
+**Procedure.**
+
+1. Write the anchors. Cite refs and §pointers as you go.
+2. Identify the domain agent(s) whose scope covers each anchor:
+
+   | Anchor topic | Auditor |
+   |---|---|
+   | duploids, VDCs, composition laws, decision procedure, oblique maps | vdc-theory |
+   | sequent calculus, focusing, three sorts, shifts, μ/μ̃ binders | psh-sequent-calculus |
+   | profunctor optics, MonadicLens, accessors | psh-optics-theorist |
+   | session types, multiparty, coprocess channels, wire format | psh-session-type-agent |
+   | rc heritage, ksh93 internals, sfio | plan9-systems-engineer |
+   | Rust implementation claims | psh-architect |
+
+3. Dispatch the auditor agents in parallel. Each gets a brief
+   listing the anchors it owns and the verification rules:
+
+   - Every §pointer or line number is real and points to material
+     on the claimed topic.
+   - Every substantive claim traces to a specific passage in the
+     cited reference.
+   - Epistemic strength matches the source (per the serena memory
+     `policy/memory_discipline` §10).
+   - No invented narrative, symptoms, examples, or details.
+   - Output: per-anchor verdict (CLEAN / MINOR / MAJOR) with
+     quotes from source vs anchor when divergent.
+
+4. Fold corrections. Update each corrected anchor's
+   `verified_against:` frontmatter to record the audit date and
+   the agent that verified it. Bump `last_updated:` to merge time.
+
+5. Only after the audit pass and folded corrections may the
+   anchors be marked authoritative for cross-agent retrieval.
+
+**Out of scope for the audit.** Upstream issues found in the spec
+or framework documents (e.g., a typo or mis-attribution in
+`docs/specification.md`) are flagged in the audit report and
+routed to Lane for separate resolution. The audit fixes the
+anchors; the spec gets its own review pass.
+
+**Skipping the audit.** Permitted only for tier-3 anchors, short
+corrections that don't introduce new citations, or anchors that
+cite only psh's own materials (`docs/specification.md`,
+`docs/deliberations.md`, decision memos). Any new external paper
+citation triggers the audit on the next pass.
+
 ## Source
 
 This workflow derives from Sun (2026), *MemX: A Local-First

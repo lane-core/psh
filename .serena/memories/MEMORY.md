@@ -4,7 +4,7 @@ status: current
 created: 2026-04-11
 last_updated: 2026-04-11
 importance: high
-keywords: [index, memory-index, landing-page, query-organized, hub, navigation]
+keywords: [index, memory-index, landing-page, query-organized, hub, navigation, theoretical-concept-anchors, analysis-namespace]
 agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect]
 ---
 
@@ -17,8 +17,44 @@ This is the top-level project index — itself a hub per `policy/memory_discipli
 ## Start here (every session)
 
 - [status](status) — where psh is now, what's next, known open questions
-- [policy/memory_discipline](policy/memory_discipline) — frontmatter, namespaces, hub-and-spokes, per-type schemas, archive, migration, staleness prevention. Synced from `/Users/lane/memx-serena.md`. **Read once per session.**
+- [policy/memory_discipline](policy/memory_discipline) — frontmatter, namespaces, hub-and-spokes, per-type schemas, archive, migration, staleness prevention, epistemic-strength rule. **Project's canonical source of truth for memory discipline. Read once per session.**
 - `docs/agent-workflow.md` — operational protocol (not a serena memory): pre-task retrieval, memo format, scope handoff, self-review. Read once per session.
+
+## Theoretical concept anchors
+
+Concept-named landings into the foundational material. Each is a short anchor (150–300 words) pointing at the canonical reference sections. Drill into the references for depth; come back to the anchor for the keyword landing. These supplement — they do not replace — the query-organized sections below.
+
+### Polarity discipline cluster (hub-and-spokes)
+
+- [analysis/polarity/_hub](analysis/polarity/_hub) — orientation hub. **Read first** for any polarity-related question. Includes both reading orders (theoretical-first / empirical-first).
+- [analysis/polarity/frames](analysis/polarity/frames) — save/restore-around-shift engineering principle
+- [analysis/polarity/shifts](analysis/polarity/shifts) — ↓/↑ as the operator the frame brackets
+- [analysis/polarity/cbv_focusing](analysis/polarity/cbv_focusing) — static focusing as reentrancy semantics
+- [analysis/polarity/duploid_composition](analysis/polarity/duploid_composition) — •, ○, cut and the four equations
+- [analysis/polarity/plus_minus_failure](analysis/polarity/plus_minus_failure) — the (+,−) equation, named directly
+- [analysis/polarity/dccache_witness](analysis/polarity/dccache_witness) — sfio §07 as empirical (+,−) failure
+- [analysis/polarity/sh_prefix_critical_pair](analysis/polarity/sh_prefix_critical_pair) — ksh93 bug class as critical-pair manifestation
+
+### Standalone tier-1 anchors
+
+- [analysis/decision_procedure_8_5](analysis/decision_procedure_8_5) — **First stop** for "should psh add feature X." The monadic / comonadic / boundary-crossing classifier from `docs/vdc-framework.md` §8.5.
+- [analysis/three_sorts](analysis/three_sorts) — producers Γ / consumers Δ / commands ⟨t|e⟩, plus the AST's four-sort extension (with Mode)
+- [analysis/oblique_maps](analysis/oblique_maps) — every shell command is a P→N cross-polarity arrow
+- [analysis/monadic_lens](analysis/monadic_lens) — `def:monadiclens` from Clarke et al., Kl(Ψ) structure of discipline functions
+- [analysis/wire_format_horizontal_arrow](analysis/wire_format_horizontal_arrow) — coprocess wire format as VDC horizontal arrow
+
+### Tier-2 anchors
+
+- [analysis/forwarders_as_cut](analysis/forwarders_as_cut) — Carbone-Marin-Schürmann; star topology justified by cut elimination at the proof-theoretic level
+- [analysis/nine_p_discipline](analysis/nine_p_discipline) — negotiate / req-resp / error / teardown as the conversation shape psh borrows from 9P
+- [analysis/error_duality_oplus_par](analysis/error_duality_oplus_par) — ⊕/⅋ as the two disjunctions of linear logic; try (⊕) vs trap (⅋) compose orthogonally
+- [analysis/sfio_as_implicit_type_theory](analysis/sfio_as_implicit_type_theory) — the framing claim: sfio is the structure ksh93 built right at I/O and failed to propagate to the shell
+- [analysis/cut_as_execution](analysis/cut_as_execution) — ⟨t | e⟩ as the execution rule; pipe = cut; assignment = cut against μ̃-binder
+- [analysis/cbpv_f_u_separation](analysis/cbpv_f_u_separation) — Levy CBPV F/U adjunction surfaced as `def`/lambda
+- [analysis/data_vs_codata](analysis/data_vs_codata) — constructors vs destructors, pattern vs copattern; data and codata are perfectly dual
+- [analysis/squier_critical_pair](analysis/squier_critical_pair) — local-to-global coherence framework (deferred verification — psh has not yet undertaken the local-confluence work Squier consumes)
+
+Tier 3 anchors (~5) are planned but not yet written. **Both tier-1 and tier-2 anchor batches passed mandatory `docs/agent-workflow.md` §"Tier-2 audit for theoretical anchors" verification by domain agents.** Audit findings on the tier-2 batch caught 1 MAJOR (fabricated linear-logic deviation in `error_duality_oplus_par`) and 6 MINOR issues, all folded back in.
 
 ## When you need to look up a resolved design decision
 
