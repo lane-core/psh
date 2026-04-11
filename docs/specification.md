@@ -383,13 +383,33 @@ completion. The pipe's blocking read is the demand.
 
 Cross-polarity composition — a pipeline stage that expands a
 variable (CBV) and writes to a pipe (CBN) — is non-associative
-in the duploid sense. psh's sequential evaluation within each
-process prevents both bracketings from being simultaneously
-available. Word expansion completes before `execvp` runs; the
-fork boundary separates the two polarities. This is operational
-focalization — the same deterministic reduction order that
-Curien and Munch-Maccagnoni's focused calculus [8] achieves
-syntactically, psh achieves operationally.
+in the duploid sense. Specifically: among the four cases
+`(ε, ε') ∈ {⊕,⊖}²` enumerated in [2, §"Emergence of non-
+associativity"], three associate cleanly and the fourth —
+`(⊕,⊖)` — fails. Writing `•` for Kleisli (monadic) composition
+and `○` for co-Kleisli (comonadic) composition, the failing
+bracketing is:
+
+    (h ○ g) • f   ≠   h ○ (g • f)
+
+— a comonadic step `○` wrapping a monadic step `•`. This is the
+operational shape of the `sh.prefix` bugs documented in [SPEC,
+§"Non-associativity made concrete"]: a computation-mode
+operation (DEBUG trap, `○`) intruding into a value-mode context
+(compound assignment, `•`) with no mediator. sfio had the
+mediator (Dccache); the ksh93 shell proper did not.
+
+psh's sequential evaluation within each process prevents both
+bracketings from being simultaneously available. Word expansion
+completes before `execvp` runs; the fork boundary separates the
+two polarities; the polarity frame discipline (see §Polarity
+frames) mediates the remaining `↓→↑` crossings. This is
+operational focalization — the same deterministic reduction
+order that Curien and Munch-Maccagnoni's focused calculus [8]
+achieves syntactically, psh achieves operationally. See
+`docs/vdc-framework.md` §8.4 for the full statement of the
+non-associativity failure and its decision-procedure
+classification in §8.5.
 
 ### Classical control
 
@@ -1050,9 +1070,27 @@ Rust's `Drop` on `Coproc` handles cleanup.
 
 **Topology.** The shell is the hub. No coprocess-to-coprocess
 communication — star topology. Each coprocess talks only to
-the shell. Deadlock freedom by asymmetric initiator/responder
-discipline (shell always initiates, coprocess always responds).
-N independent binary sessions, same topology class as one.
+the shell. This is consistent with Carbone, Marin, and
+Schürmann's forwarder logic [CMS]: their **MCutF admissibility
+theorem** (§5) proves that any multiparty compatible
+composition of session-typed processes can be composed through
+a single forwarder, and that forwarders strictly generalize
+classical coherence proofs (§4). The shell-as-hub arrangement
+is therefore not a restriction psh accepts for engineering
+convenience — it is the general case of multiparty compatible
+composition. If N coprocesses with per-tag local session types
+are jointly multiparty compatible, then a shell that forwards
+messages according to their composition is a witness of that
+compatibility.
+
+Within this frame, psh restricts itself further: the shell
+always initiates and the coprocess always responds on each
+per-tag binary session `Send<Req, Recv<Resp, End>>`. This
+asymmetric discipline makes each per-tag interaction duality-
+safe (no interleaved cycles, no crossed initiative), so two-
+party deadlock freedom per tag is immediate and multiparty
+safety reduces to the forwarder correctness of the shell
+itself.
 
 ## Namespace (three tiers)
 
@@ -1447,21 +1485,48 @@ should add dedicated sections for each.
 
 | Type | Optic | Profunctor constraint |
 |---|---|---|
-| Lists (rc base) | Traversal (iteration) | Monoidal |
+| Lists (rc base) | Traversal (iteration) | Traversing (Applicative) |
 | Tuples (products) | Lens (projection) | Cartesian |
 | Structs (named products) | Lens (named and positional) | Cartesian |
 | Sums (coproducts) | Prism (preview) | Cocartesian |
-| Products × Coproducts | AffineTraversal | Cartesian + Cocartesian |
-| Map (associative) | AffineTraversal (partial lookup) | Cartesian + Cocartesian |
+| Products × Coproducts | Affine traversal | Cartesian + Cocartesian |
+| Map[k,v], key-indexed view | Affine traversal (partial lookup) | Cartesian + Cocartesian |
+| Map[k,v], iterate all values | Traversal | Traversing (Applicative) |
 | fd table (save/restore) | Lens | Cartesian |
 | Redirections | Adapter | Profunctor |
 
+Discipline-equipped variables are not listed here — they are
+mixed monadic lenses per `def:monadiclens`, orthogonal to the
+type-shape classification above. See §"Mixed-optic structure"
+in §Discipline functions.
+
+**Traversing / Applicative** is the Tambara-module class
+corresponding to Clarke's power-series action [Clarke,
+`def:traversal`]. It is the class for van-Laarhoven-style
+traversals `forall f. Applicative f => (a -> f b) -> (s -> f t)`.
+"Monoidal" in earlier drafts was Don't Fear's informal name for
+the same class; Traversing is the Clarke-aligned terminology
+and matches the Haskell `profunctors` library convention.
+
+**Affine traversal** requires a cartesian-closed base category
+and symmetric-monoidal-closed cocartesian structure [Clarke,
+`def:affine`]. For psh's pure value category W this is
+satisfied; the "Cartesian + Cocartesian" profunctor constraint
+is sufficient for user-facing classification.
+
+**Map type** gets two rows because the two views are
+structurally different: a single-key view (`m .get(k)` or
+`$m .k`) is a partial lookup — affine traversal, may or may
+not hit. Iteration over all entries is an unconditional fold
+over every stored value — a proper Traversal in the Applicative
+sense.
+
 The accessor syntax `$x .N` (tuples/lists) and `$x .tag`
-(sums/struct fields) is stable. The postfix-dot-with-space form
-works for any type with registered accessors. What changes is
-whether the accessor is a Lens (product), Prism (coproduct), or
-AffineTraversal (mixed), determined by the type at the access
-point.
+(sums/struct fields) is stable. The postfix-dot-with-space
+form works for any type with registered accessors. What changes
+is whether the accessor is a Lens (product), Prism (coproduct),
+or affine traversal (mixed), determined by the type at the
+access point.
 
 
 ## References
@@ -1500,9 +1565,21 @@ point.
     Type Discipline for Structured Communication-Based
     Programming." ESOP, 1998.
 
+[CMS] Carbone, Marin, Schürmann. "A Logical Interpretation of
+    Asynchronous Multiparty Compatibility." Proves the MCutF
+    admissibility theorem: forwarders subsume classical
+    coherence and capture all multiparty compatible
+    compositions. Load-bearing justification for psh's star
+    topology.
+    `~/gist/logical-interpretation-of-async-multiparty-compatbility/`
+
 [Clarke] Clarke, Boisseau, Gibbons. "Profunctor Optics, a
     Categorical Update." Compositionality, 2024.
-    `~/gist/DontFearTheProfunctorOptics/`
+    `~/gist/profunctor-optics/arxivmain.tex` (formal paper,
+    primary citation for def-labels like `def:monadiclens`).
+    `~/gist/DontFearTheProfunctorOptics/` is the three-part
+    intuition introduction; read first, then Clarke for formal
+    definitions.
 
 [SPW] Spiwack. "A Dissection of L." 2014.
     `~/gist/dissection-of-l.gist.txt`
