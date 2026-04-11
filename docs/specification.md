@@ -208,7 +208,7 @@ Three of four associativity equations hold; the fourth's failure
 captures the CBV/CBN distinction. Maps restoring full
 associativity are thunkable (pure, value-like). In a dialogue
 duploid (with involutive negation), thunkable = central: purity
-and commutativity coincide (the Führmann-Thielecke theorem).
+and commutativity coincide (the Hasegawa-Thielecke theorem).
 
 **Munch-Maccagnoni's thesis** [3] is where duploids originate.
 The companion paper [9] gives the clearest self-contained
@@ -649,7 +649,7 @@ the variable's discipline state.
 A variable with `.get` and `.set` disciplines is a MonadicLens
 [Clarke, def:monadiclens]:
 
-    MndLens_Ψ((A,B),(S,T)) = W(S, ΨA) × W(S × B, ΨT)
+    MndLens_Ψ((A,B),(S,T)) = W(S, A) × W(S × B, ΨT)
 
 Under the codata model, both view and update live in Kl(Ψ) —
 the shell's effect monad. The view is the `.get` computation
