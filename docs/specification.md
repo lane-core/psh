@@ -280,7 +280,7 @@ entirely implicit. psh names them.
 | Redirect target (`>file`) | I/O context | Waiting for output to direct somewhere |
 | The rest of the script after `x = val` | Continuation (μ̃) | `x = val; rest` — `rest` is the coterm |
 | Signal handler in `trap` | Named continuation (μ) | Waiting for a signal to fire |
-| `catch e { handler }` | Error continuation | Waiting for a nonzero status |
+| `catch (e) { handler }` | Error continuation | Waiting for a nonzero status |
 
 Coterms populate Δ. In the classical sequent Γ ⊢ A | Δ,
 Δ contains the continuations — alternative futures that the
@@ -290,7 +290,7 @@ computation might jump to. In psh, Δ is populated by:
   the handler as a continuation in Δ for the duration of the
   body. The μ-binder `μα.c` in the calculus [5] — α names the
   signal continuation, c is the body that runs with α in scope.
-- **catch bindings**: `try { body } catch e { handler }` binds
+- **catch bindings**: `try { body } catch (e) { handler }` binds
   the error handler as a continuation in Δ for the duration of
   the try body. Semantically similar but triggered by status
   rather than signal.
@@ -956,7 +956,7 @@ continuation). Both are present.
 
 ### try/catch — scoped ErrorT (⊕ discipline)
 
-`try { body } catch e { handler }` changes the sequencing
+`try { body } catch (e) { handler }` changes the sequencing
 combinator within `body` from unconditional `;` to monadic `;ₜ`
 that checks Status after each command. On nonzero status,
 execution aborts to the handler. The handler binding `e` is a
@@ -1018,7 +1018,7 @@ independently in the child (Plan 9 `rfork` model).
 
 ### Signal interaction with try blocks
 
-When a signal arrives during a `try { body } catch e { }`:
+When a signal arrives during a `try { body } catch (e) { }`:
 
 1. **Between commands, handler returns.** The signal fires at
    the next step boundary. If the handler calls `return N`,

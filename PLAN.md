@@ -78,7 +78,7 @@ The build sequence, in order:
   - [ ] Tuple literals `(a, b, c)` and list literals `(a b c)`
   - [ ] Expression precedence tower (or, and, pipeline, cmd_expr)
   - [ ] Commands: `if(cond)`, `while(cond)`, `for(x in list)`,
-        `match(expr) { arms }`, `try { } catch e { }`,
+        `match(expr) { arms }`, `try { } catch (e) { }`,
         `trap SIGNAL (body body?)?`
   - [ ] Bindings: `let`, `def`, `struct`, `ref`, assignment
   - [ ] Patterns for match arms: constructor patterns with
@@ -116,7 +116,7 @@ The build sequence, in order:
 - [ ] `if`/`else`, `while`, `for` with rc parens
 - [ ] `match` with constructor patterns, `|` alternation, no
       guards (deferred)
-- [ ] `try { } catch e { }` as scoped ErrorT monad transformer
+- [ ] `try { } catch (e) { }` as scoped ErrorT monad transformer
 - [ ] Unified `trap` (lexical / global / deletion forms)
 - [ ] Signal delivery via self-pipe with wake-from-block handling
 

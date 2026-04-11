@@ -61,6 +61,22 @@ Documented that `$#x` and `$"x` are type-specific eliminators for the
 List type — length and join destructors. psh uses the prefix-sigil
 convention from rc, not ksh93's suffix form. See commit 30f5f6c.
 
+### `catch` binding form: parenthesized (APPLIED)
+
+The `try_cmd` grammar production was the lone outlier among the
+rc-style control constructs — `if_cmd`, `for_cmd`, `while_cmd`,
+and `match_cmd` all parenthesize their bound name or condition
+(`'(' ... ')'`), but `try_cmd` bound the error name with a bare
+`NAME`. Tightened to `'try' body 'catch' '(' NAME ')' body` for
+consistency.
+
+Supersedes the prior form `try { body } catch e { handler }` in
+`syntax.md:255` (grammar production), the accompanying example
+and prose at `syntax.md:376` and `syntax.md:384`, the coterm
+table row and prose in `specification.md:283`, `:293`, `:959`,
+and `:1021`, and the Phase 4 roadmap references in `PLAN.md:81`
+and `:119`.
+
 
 ## Resolved design areas (pending propagation to live specs)
 

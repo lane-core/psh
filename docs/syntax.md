@@ -252,7 +252,7 @@ a braced block or `=>` single-line form.
     for_cmd     = 'for' '(' NAME 'in' value ')' body
     while_cmd   = 'while' '(' pipeline ')' body
     match_cmd   = 'match' '(' value ')' '{' match_arm (';' match_arm)* ';'? '}'
-    try_cmd     = 'try' body 'catch' NAME body
+    try_cmd     = 'try' body 'catch' '(' NAME ')' body
     trap_cmd    = 'trap' SIGNAL (body body?)?
 
     match_arm   = pattern ('|' pattern)* '=>' lambda_body
@@ -373,7 +373,7 @@ immediately after a word.
         let title = `{ cat /srv/window/title }
         let cursor = `{ cat /srv/window/cursor }
         echo $title' ['$cursor']'
-    } catch e {
+    } catch (e) {
         echo 'unavailable: '$e
     }
 
@@ -381,7 +381,7 @@ Scoped error handling — ErrorT monad transformer over command
 sequences. `try` changes the sequencing combinator from
 unconditional `;` to monadic `;ₜ` that checks Status after
 each command. On nonzero status, execution aborts to `catch`.
-The `catch e` binding is a μ̃-binder on the error case.
+The `catch (e)` binding is a μ̃-binder on the error case.
 
 This is categorically different from `if`:
 - `if` = single coproduct elimination (check one command's
