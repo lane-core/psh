@@ -26,7 +26,7 @@ evaluator, and value model against the current spec.
 | `docs/syntax.md` | Formal grammar. |
 | `docs/deliberations.md` | Working doc with decision history, supersession notes, and in-progress items. Consult for context. |
 | `docs/vdc-framework.md` | Theoretical framework report. §4 (VDCs), §8 (composition laws + decision procedure), §9 (engineering principles) are load-bearing. |
-| `docs/ksh93-analysis.md` | ksh26 sequent-calculus analysis of ksh93. Source of the polarity frame discipline and the sh.prefix bug analysis. |
+| `refs/ksh93/ksh93-analysis.md` | ksh26 sequent-calculus analysis of ksh93. Source of the polarity frame discipline and the sh.prefix bug analysis. |
 | `docs/implementation.md` | Dependency rationale and engineering principles (CLOEXEC, polarity frames, no global mutable state). |
 | `PLAN.md` | Roadmap. |
 | `STYLEGUIDE.md` | Coding conventions. |
@@ -148,7 +148,7 @@ Generated-with: Claude opus-4-6 (Anthropic) via Claude Code
 | rc man page | `refs/plan9/man/1/rc` |
 | ksh93u+m manpage | `refs/ksh93/sh.1` |
 | sfio analysis (14 files) | `refs/ksh93/sfio-analysis/` |
-| ksh26 theoretical foundation | `docs/ksh93-analysis.md` |
+| ksh26 theoretical foundation | `refs/ksh93/ksh93-analysis.md` |
 | VDC framework report | `docs/vdc-framework.md` |
 | Theoretical papers (duploids, VDCs, optics, session types, sequent calculus) | `~/gist/` — accessed via agent-specific reference lists |
 

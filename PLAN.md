@@ -18,10 +18,10 @@ categories, and the Plan 9 / ksh93 operational heritage.
 decisions are captured in `docs/specification.md`,
 `docs/syntax.md`, and `docs/deliberations.md`. The theoretical
 framework is in `docs/vdc-framework.md`. The ksh93 operational
-analysis is vendored as `docs/ksh93-analysis.md`. The dependency
-rationale is in `docs/implementation.md`. All reference material
-is vendored: rc paper and man page at `refs/plan9/`, ksh93
-manpage and sfio-analysis at `refs/ksh93/`.
+analysis is vendored as `refs/ksh93/ksh93-analysis.md`. The
+dependency rationale is in `docs/implementation.md`. All reference
+material is vendored: rc paper and man page at `refs/plan9/`,
+ksh93 manpage, sfio-analysis, and ksh26 analysis at `refs/ksh93/`.
 
 **Implementation: retired.** The prior implementation (~8800 lines
 across ast.rs, parse.rs, exec.rs, env.rs, value.rs, job.rs)

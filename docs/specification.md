@@ -1377,7 +1377,7 @@ point.
 [Be] Haiku / BeOS. Application Kit, Interface Kit, I/O hierarchy.
     `reference/haiku-book/`
 
-[SPEC] ksh26 Theoretical Foundation. `docs/ksh93-analysis.md`
+[SPEC] ksh26 Theoretical Foundation. `refs/ksh93/ksh93-analysis.md`
 
 [SFIO] sfio Operational Semantics Reference.
     `refs/ksh93/sfio-analysis/README.md`

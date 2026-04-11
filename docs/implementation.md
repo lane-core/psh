@@ -160,4 +160,4 @@ The reentrancy guard for discipline functions is a field on
 ## References
 
 [1] Tom Duff. "Rc — The Plan 9 Shell." 1990.
-[SPEC] ksh26 Theoretical Foundation. `docs/ksh93-analysis.md`
+[SPEC] ksh26 Theoretical Foundation. `refs/ksh93/ksh93-analysis.md`
