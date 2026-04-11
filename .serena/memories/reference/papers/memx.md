@@ -49,4 +49,4 @@ Specifically:
 
 ## Location note
 
-The paper lives at `/Users/lane/gist/memx/memx.tex`, **not** `refs/memx.tex`. Two files accompany it: `references.bib` and figures. Lane maintains `/Users/lane/memx-serena.md` as the authoring copy of the psh-specific port; `policy/memory_discipline` is synced from that file.
+The paper lives at `/Users/lane/gist/memx/memx.tex`, **not** `refs/memx.tex`. Two files accompany it: `references.bib` and figures. The serena memory `policy/memory_discipline` is the project's canonical psh-specific port of MemX principles to serena — edited in place when the discipline evolves.

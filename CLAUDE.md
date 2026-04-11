@@ -195,8 +195,8 @@ handoff, self-review) is in **`docs/agent-workflow.md`**. Memory
 organization discipline (frontmatter, namespaces, hub-and-spokes,
 per-type schemas, migration rules) lives in serena as the
 **`policy/memory_discipline`** memory — Lane's port of the MemX
-paper (Sun 2026, `/Users/lane/gist/memx/memx.tex`) to serena,
-synced from `/Users/lane/memx-serena.md`.
+paper (Sun 2026, `/Users/lane/gist/memx/memx.tex`) to serena —
+the project's canonical source of truth for memory discipline.
 
 The seven operational principles, in short:
 

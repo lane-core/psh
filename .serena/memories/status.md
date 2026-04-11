@@ -2,7 +2,7 @@
 type: status
 status: current
 created: 2026-04-10
-last_updated: 2026-04-10
+last_updated: 2026-04-11
 importance: high
 keywords: [psh, design-phase, implementation-retired, vdc-reframing, stub, rc, ksh93, serena-seeding, phase-1-parser]
 agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect]
@@ -29,7 +29,7 @@ psh is a new Plan 9 rc-derived system shell. Standalone (no pane dependency, no 
 
 **Agent ecosystem:** six specialized design agents under `.claude/agents/` (plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect). Operational workflow at `docs/agent-workflow.md`. Memory discipline at serena `policy/memory_discipline`.
 
-**Serena memory store:** seeded 2026-04-10 with `policy/memory_discipline` (MemX-serena principles, synced from `/Users/lane/memx-serena.md`), this `status`, decision memos for load-bearing design choices, reference pointers for vendored material and theoretical papers. Agent sub-namespaces (`agent/<agent-name>/`) are initially empty and populate as agents work.
+**Serena memory store:** seeded 2026-04-10 with `policy/memory_discipline` (project's canonical MemX-serena principles, edited in place), this `status`, decision memos for load-bearing design choices, reference pointers for vendored material and theoretical papers. Agent sub-namespaces (`agent/<agent-name>/`) are initially empty and populate as agents work.
 
 ## What's next
 
