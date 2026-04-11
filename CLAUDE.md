@@ -112,10 +112,12 @@ Six specialized agents live in `.claude/agents/`:
   structure, evaluator architecture.
 
 For significant design decisions, dispatch the relevant agents in
-parallel for deliberation. The spec is the single source of truth —
-if an agent's recommendation contradicts the spec, follow the spec.
-When an agent is out of scope, name the agent that should handle
-it rather than attempting the question.
+parallel for deliberation. Every agent follows the operational
+workflow in **`docs/agent-workflow.md`** — pre-task retrieval,
+supersession tracking, scope handoff, and the memo output format
+are defined there. When an agent charter disagrees with the
+workflow doc, the workflow doc wins; when either disagrees with
+`docs/specification.md`, the spec wins.
 
 ## Committing
 
@@ -170,3 +172,44 @@ Generated-with: Claude opus-4-6 (Anthropic) via Claude Code
 - **Citation discipline.** When an analysis or implementation
   decision draws on a reference, cite the reference and section.
   When the spec is silent on a detail, note your judgment call.
+
+## Knowledge management
+
+Knowledge in psh lives at five tiers: `docs/specification.md` (tier
+1, single source of truth) > `docs/deliberations.md` (tier 2,
+working doc with supersession) > framework documents
+(`docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`,
+`docs/implementation.md` — tier 3) > **serena memory store** (tier
+4, project-shared knowledge base; every agent reads the whole store,
+writes only to `agent/<name>/` or project-level types) > vendored
+papers at `/Users/lane/gist/` (tier 5). Higher tiers override lower;
+spec always wins.
+
+There is **no parallel per-tool memory layer.** Agent-private
+institutional knowledge lives inside serena under
+`agent/<agent-name>/`, not in a separate directory. The
+`.claude/agent-memory/` path does not exist.
+
+Operational protocol (pre-task retrieval, memo format, scope
+handoff, self-review) is in **`docs/agent-workflow.md`**. Memory
+organization discipline (frontmatter, namespaces, hub-and-spokes,
+per-type schemas, migration rules) lives in serena as the
+**`policy/memory_discipline`** memory — Lane's port of the MemX
+paper (Sun 2026, `/Users/lane/gist/memx/memx.tex`) to serena,
+synced from `/Users/lane/memx-serena.md`.
+
+The seven operational principles, in short:
+
+1. **Hybrid retrieval.** Semantic query AND keyword query. Combine.
+2. **Access vs retrieval.** Cite what you used; list consulted-
+   but-not-applicable separately.
+3. **Low-confidence rejection.** "No prior material" beats a
+   stretched citation.
+4. **Supersession tracking.** New decisions state what they
+   supersede / extend / refine / contradict, with file + section.
+5. **Source ranking.** Follow higher tier; flag conflicts, don't
+   reconcile.
+6. **Scope boundaries.** Hand off out-of-scope queries by name.
+7. **Deduplication.** Search `docs/deliberations.md`, serena
+   (including your `agent/<name>/` folder), and the spec before
+   writing new material.

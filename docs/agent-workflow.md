@@ -1,0 +1,259 @@
+# Agent workflow
+
+Operational workflow for psh's specialized design agents (plan9,
+session type, optics, VDC theory, sequent calculus, psh-architect).
+Every agent reads this once per session. Covers pre-task retrieval,
+memo output format, scope handoff, and self-review.
+
+Memory organization discipline — frontmatter, namespaces,
+hub-and-spokes, per-type schemas, migration rules — is a separate
+concern. The canonical source is **the serena memory `policy/memory_discipline`**,
+Lane's port of the MemX paper's principles to serena. Read it once
+per session for memory layout discipline.
+
+When this document and `policy/memory_discipline` disagree,
+`policy/memory_discipline` wins on memory organization. When either
+disagrees with `docs/specification.md`, the spec wins on psh semantics.
+
+## The seven operational principles
+
+From Sun (2026), *MemX: A Local-First Long-Term Memory System for
+AI Assistants* (`/Users/lane/gist/memx/memx.tex`), via
+`policy/memory_discipline`. That memory has the nine-principle
+organization-focused version; these seven apply to how an agent
+*uses* memory during a task.
+
+1. **Hybrid retrieval.** For every topic, run both a semantic
+   query (natural-language description of what you're looking for)
+   and a keyword query (specific identifiers, section titles,
+   names) via Grep. Combine results. Either alone misses material.
+
+2. **Access vs retrieval.** Cite only references that actually
+   informed the answer. List consulted-but-not-applicable
+   references separately. Don't pad citations.
+
+3. **Low-confidence rejection.** If you search and find nothing
+   directly relevant, say so. "No prior material on this topic"
+   beats a stretched citation. Return null results honestly.
+
+4. **Supersession tracking.** New decisions state what they
+   supersede, extend, refine, or contradict — with file and
+   section — or "none — new topic." Use those four verbs on an
+   explicit relationship line so future searches can follow the
+   chain.
+
+5. **Source ranking.** When multiple sources discuss the same
+   topic, rank them:
+
+   `docs/specification.md` > `docs/deliberations.md` (resolved
+   entries) > `docs/vdc-framework.md` and
+   `refs/ksh93/ksh93-analysis.md` (framework) > serena memory >
+   vendored papers at `/Users/lane/gist/`.
+
+   Recent beats old at the same rank. Do not reconcile across
+   ranks — follow the higher rank and flag the conflict.
+
+6. **Scope boundaries.** Each agent has a scope. Out-of-scope
+   queries get handed off to the named agent, not answered from
+   tangential references.
+
+7. **Deduplication.** Before writing a new analysis, search for
+   existing material in `docs/deliberations.md`, serena (list
+   memories, read matches), and your own `agent/<your-name>/`
+   sub-namespace. Extend or refine rather than duplicating.
+
+## Knowledge tiers
+
+Knowledge in psh lives at five tiers. Higher tiers override lower.
+In conflict, follow the higher tier and flag the conflict to Lane.
+
+| Tier | Location | Authority |
+|---|---|---|
+| 1 | `docs/specification.md` | single source of truth |
+| 2 | `docs/deliberations.md` | working doc with supersession; lands in spec |
+| 3 | `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/implementation.md` | framework |
+| 4 | serena memory store | project-shared knowledge base |
+| 5 | vendored papers at `/Users/lane/gist/` | original literature |
+
+**Serena is one store per project, shared by all agents.** Every
+agent reads the whole store; every agent writes only to its own
+`agent/<agent-name>/` sub-namespace or to project-level types
+(`policy/`, `decision/`, `architecture/`, `analysis/`, `reference/`)
+when the content is multi-agent. **There is no parallel per-tool
+memory layer** — the `.claude/agent-memory/` directory does not
+exist. Agent-private institutional knowledge lives inside serena,
+in the agent's sub-namespace. Full discipline in
+the serena memory `policy/memory_discipline` §"Agents and the project store".
+
+## Pre-task retrieval protocol
+
+Before any substantive analysis:
+
+1. **Read the spec.** Read `docs/specification.md` section(s)
+   touching the topic. If the topic is absent from the spec, say
+   so explicitly — the spec's silence is meaningful.
+
+2. **Grep deliberations.md.** Identify resolved decisions,
+   supersession chains, or in-progress items on the topic.
+
+3. **Query serena.** Call `mcp__serena__list_memories` (optional
+   topic filter); read relevant matches with
+   `mcp__serena__read_memory`. Start with `_index`. Check
+   `agent/<your-name>/` for your own prior notes, and check other
+   agents' sub-namespaces when the question crosses scopes. **On
+   each read, check frontmatter:** `status: superseded` → follow
+   `superseded_by` and read that instead; `status:
+   needs_verification` → treat the claims as provisional and
+   re-verify before citing.
+
+4. **Hybrid search across references.** For each topic, run a
+   semantic query (natural language) and a keyword query (Grep
+   against specific identifiers). For Rust source files when they
+   exist, prefer Serena's `get_symbols_overview` and `find_symbol`
+   over reading whole files.
+
+5. **State what you found.** Before answering, list what you
+   consulted and what was actually relevant. Mark
+   consulted-but-not-used separately.
+
+## Memo output format
+
+Every new analysis, classification, or decision memo includes
+these fields. Short-form answers may collapse to a single
+paragraph but keep the supersession and confidence lines.
+
+```
+## <topic>
+
+**Scope check:** <in scope, or name the right agent and stop>
+
+**Supersedes / extends / refines / contradicts:**
+  <prior entry, with file and section>, or
+  "none — new topic"
+
+**Consulted (used):**
+- <ref 1> — <specific section> — <how it bore on the answer>
+- <ref 2> — ...
+
+**Consulted (not applicable):**
+- <ref 3> — <one-line reason it didn't fit>
+
+**Analysis:** <reasoning with citations inline>
+
+**Confidence:** <what you verified, what you inferred, what's a
+guess — same sentence as the claim>
+
+**Open questions / gaps:** <what sources don't cover>
+```
+
+Memos written into serena use the per-type schema from
+the serena memory `policy/memory_discipline` §"Per-type memory schemas". For
+analysis clusters with 4+ related memos, apply the **hub-and-
+spokes** pattern: hubs reference but do not contain spoke content;
+hub name is `_hub.md`; spokes cite the hub via `extends:
+<hub_path>` in frontmatter.
+
+## Scope handoff protocol
+
+When a query falls outside your scope:
+
+1. State that it's out of scope for you.
+2. Name the specific agent that should handle it (see your "Out of
+   scope" charter section).
+3. If a small in-scope portion exists, answer that portion and
+   defer the rest.
+4. Do not speculate outside your scope from references you're not
+   equipped to interpret.
+
+Cross-agent overlaps default as follows:
+
+- "Is this feature monadic, comonadic, or boundary-crossing?" →
+  VDC theory agent (§8.5 decision procedure), with typing-rule
+  verification from sequent calculus.
+- "What optic class is this accessor?" → optics agent.
+- "Is this typing rule sound?" → sequent calculus agent.
+- "Does this preserve rc's principles?" → plan9 agent.
+- "Does this protocol preserve deadlock freedom?" → session type
+  agent.
+- "How should this be built in Rust?" → psh architect.
+
+## Self-review before responding
+
+Before emitting any non-trivial output, check:
+
+- [ ] Did I read the spec section for this topic?
+- [ ] Did I use both semantic and keyword retrieval?
+- [ ] Did I check `docs/deliberations.md` for prior decisions?
+- [ ] Did I check serena (`_index`, my agent sub-namespace, any
+      relevant analysis hubs)?
+- [ ] Did I cite only references that actually informed the
+      answer?
+- [ ] Did I mark consulted-but-not-used references?
+- [ ] Did I state the supersession relationship (or "none")?
+- [ ] Did I state confidence and gaps explicitly?
+- [ ] Did I stay in scope, or hand off to the right agent?
+- [ ] Did I avoid fabricating from tangential references?
+- [ ] If I wrote to serena: did I populate frontmatter, pick the
+      right namespace, honor the three-member minimum, and respect
+      the hub-and-spokes pattern?
+
+Any unchecked box is a signal to revise before emitting.
+
+## Deliberation rounds
+
+For design decisions requiring multiple agents (e.g., a new
+construct whose classification needs VDC theory, whose typing
+rules need sequent calculus, and whose implementation needs psh
+architect), Lane dispatches the agents in parallel. Each agent
+follows this workflow independently and produces a memo. Lane
+synthesizes results and records the resolution in
+`docs/deliberations.md`, which eventually lands in
+`docs/specification.md`.
+
+When an agent reviews another agent's memo, the review uses the
+same memo format with the supersession line pointing at the memo
+under review.
+
+## Memory-writing quick reference
+
+When the task produces a memo worth persisting, consult
+`policy/memory_discipline` for the full rules. Short form:
+
+- **Namespace.** Project-level memos go to `policy/`, `decision/`,
+  `architecture/`, `analysis/<topic>/`, `reference/`. Agent-private
+  notes go to `agent/<your-name>/`. Status is the top-level
+  singleton `status.md`.
+- **Frontmatter.** Every indexed memo populates the YAML block:
+  `type`, `status: current|needs_verification|superseded|archived`,
+  `created`, `last_updated`, `importance`, `keywords`, `agents`,
+  plus link fields (`supersedes`, `superseded_by`, `related`,
+  `extends`, `contradicts`) where relevant. Optional:
+  `sources:` (memos merged in, more granular than supersedes) and
+  `verified_against:` (external sources checked at write time,
+  e.g. `PLAN.md@HEAD`, `commits-since-2026-04-06`).
+- **Re-read sources at write time.** If you drafted a memo during
+  planning, re-read every source immediately before writing. For
+  status / architecture memos, verify external sources
+  (`PLAN.md`, `docs/specification.md`, `git log`, code) and
+  record what you checked in `verified_against:`. Set
+  `last_updated` to merge time, not plan time.
+- **Hub-and-spokes.** Clusters of 4+ related memos get a `_hub.md`
+  that orients and points but does not contain spoke content.
+  Below 3, flatten with a name prefix.
+- **Supersession.** New memo replaces old → note it in the new
+  memo's frontmatter; delete the old memo or flip its `status:
+  archived` and move it to `archive/<original-path>_<date>.md`.
+  A new memo marked `needs_verification` is a soft supersession —
+  readers see the flag and know to re-verify.
+- **Write only to your own folder** under `agent/<your-name>/`,
+  plus project-level types when content is multi-agent. Do not
+  write to another agent's sub-folder.
+
+## Source
+
+This workflow derives from Sun (2026), *MemX: A Local-First
+Long-Term Memory System for AI Assistants*, at
+`/Users/lane/gist/memx/memx.tex`. The psh-specific porting of
+MemX principles to serena memory layout is in
+the serena memory `policy/memory_discipline`, authoritative for memory
+organization.
