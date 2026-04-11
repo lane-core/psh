@@ -2,13 +2,11 @@
 
 **Status:** Working document. Captures in-progress design decisions.
 Items marked **applied** are now in `specification.md` or `syntax.md`;
-items marked **open** or **pending** are staged for later work.
+items marked **pending** are staged for later work.
 
 Organized by status:
 - **Applied** — landed in the live specs; kept here as a changelog until
   we archive them.
-- **Open (pending VDC reframing)** — direction confirmed but presentation
-  is waiting on the broader spec restructure.
 - **Pending** — identified but not yet discussed in depth.
 
 
@@ -62,88 +60,6 @@ grammar: `syntax.md` §Discipline functions.
 Documented that `$#x` and `$"x` are type-specific eliminators for the
 List type — length and join destructors. psh uses the prefix-sigil
 convention from rc, not ksh93's suffix form. See commit 30f5f6c.
-
-
-## Open (pending VDC reframing)
-
-These items reached tentative agreement but are waiting on the broader
-spec restructure around the Virtual Double Category framework (see
-`docs/vdc-framework.md`). The direction is confirmed; the final
-presentation will happen as part of the VDC reframing.
-
-### Integration of the VDC appendix
-
-Lane also provided an appendix to the VDC report, "Integrating Rc and
-Ksh93 in the Virtual Double Category Framework" (not yet saved as a
-doc). The appendix extends the VDC framework with concrete guidance on
-integrating features from both shells. Lane has reviewed it and
-selected which parts to adopt:
-
-**Adopt wholesale (framework-level):**
-- The generalized Duff principle (§A.6.1): "structure is never
-  destroyed and reconstructed" — covers lists, types, polarity,
-  session protocols.
-- The horizontal arrow discipline (§A.6.2).
-- The polarity frame discipline (§A.6.3).
-- The Segal condition as optimization guide (§A.6.4).
-- Named cells over eval (§A.6.5).
-- The decision procedure for new features (§A.5.4): value-level →
-  monadic threading, computation-level → save/restore, boundary-
-  crossing → polarity frame.
-- The duploid composition laws table (§A.5).
-- The correspondence table (§A.7) — cleaner than what we currently
-  have in specification.md.
-
-**Reconcile with existing decisions:**
-- **Accessor notation** (§A.3.4): appendix uses `$config.db.host`
-  (no space, no braces). Lane's decision stands — space required
-  before postfix dot. Rewrite appendix examples to use our form.
-- **Records / compound variables** (§A.3.2): **resolved.** Lane
-  decided: no anonymous records, every record type requires a
-  `struct` declaration. The conceptual framing (a struct value
-  occupies one element of a containing list) is adopted; the
-  literal syntax question is avoided entirely. Tuples `(10, 20)`
-  for "quick pair," named structs `Pos(10 20)` for "real record."
-  No middle ground.
-- **Discipline function semantics** (§A.3.3): appendix treats
-  disciplined variables as codata — `.get` computes the value seen
-  by the accessor. Our session decision was more conservative: `.get`
-  is a def whose return is discarded. Lane is **willing to see what
-  happens with the codata model now that we have the VDC framework
-  as theoretical scaffolding**. The polarity frame discipline is
-  supposed to prevent the bug class that made us conservative. The
-  session's constrained-def model is **superseded by the codata
-  model** pending verification in the restructured spec.
-- **Type annotations AND the everything-is-a-list model** (§A.3.1):
-  appendix uses `count : int = (0)`. Lane committed to both the
-  annotation syntax and the underlying model: **every variable holds
-  a list. A "scalar" is a list of length 1.** `$#count` for `count
-  = (0)` is 1. Type annotations refer to element types — `: Int`
-  means "list whose elements are Int." Length is a runtime property,
-  not part of the type. `let x : Int = 42` is sugar for `let x : Int
-  = (42)`. Substitution always splices a list (rc's exact model).
-  Tuples, sums, and structs remain distinct types at the element
-  level — they can appear inside the list. `let pos : Tuple = (10,
-  20)` is a list containing one tuple, `$#pos` is 1.
-
-  **Lane also noted: the current implementation is not sacred. We
-  can scrap and rebuild from the parser up.** This frees the spec
-  from compatibility constraints when applying the architectural
-  decisions.
-- **`eval` as escape hatch** (§A.3.6, §A.6.5): appendix retains
-  `eval` as the explicit "force the Segal condition" escape hatch.
-  Lane: **include it for now**. Easy to remove later if unused.
-- **Name references**: appendix proposes `ref = *target` with no
-  stated reasoning. Lane's decision: **stick with our `ref name =
-  target` keyword form**.
-- **Coprocess harmonization**: appendix treats coprocesses as
-  "bidirectional horizontal arrows carrying session types" at the
-  framework level. Our session-specific design (9P-shaped, tagged,
-  PendingReply) is compatible but more detailed. **Need to harmonize
-  our design with the VDC framework view. See research memo.**
-- **Signal handling**: appendix implicitly endorses rc-style `fn
-  sigint { ... }`. Our current spec has lexical `trap SIGNAL { }
-  { }`. **Open — see research memo.**
 
 
 ## Resolved design areas (pending propagation to live specs)

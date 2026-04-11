@@ -8,8 +8,8 @@ shell. The analysis begins there.
 
 This document is the output of a systematic design process:
 interrogation of rc's design philosophy, ksh93's implicit type
-theory (discovered via the sfio-analysis and SPEC.md sequent
-calculus mapping), the duploid semantics of Mangel/Melliès/
+theory (discovered via the sfio-analysis and ksh93-analysis.md
+sequent calculus mapping), the duploid semantics of Mangel/Melliès/
 Munch-Maccagnoni, Curien-Herbelin's λμμ̃-calculus, and the
 profunctor optics framework of Clarke et al. Every design
 decision references its lineage.
@@ -569,15 +569,15 @@ uses — before a command runs, all its arguments are focused
 (evaluated to values). Downen et al.'s static focusing applies
 to the shell's CBV evaluation of argument lists.
 
-**From the integration appendix** (`docs/appendix-integrating-
-rc-and-ksh93.md` §A.3.3 and §A.6.3): a discipline variable is a
-horizontal arrow of negative type (codata). Accessing it is a
-↓→↑ polarity shift, which fires inside a polarity frame. The
-frame saves the expansion context, runs the discipline, and
-restores the context on exit. The polarity frame mechanism is
-inherited from ksh93's SPEC (`sh_polarity_enter` /
-`sh_polarity_leave`) and is the operational discipline that
-preserves horizontal arrow types across mode boundaries.
+**From the VDC framework** (`docs/vdc-framework.md` §9.3):
+a discipline variable is a horizontal arrow of negative type
+(codata). Accessing it is a ↓→↑ polarity shift, which fires
+inside a polarity frame. The frame saves the expansion context,
+runs the discipline, and restores the context on exit. The
+polarity frame mechanism is inherited from ksh93's
+`sh_polarity_enter` / `sh_polarity_leave` and is the operational
+discipline that preserves horizontal arrow types across mode
+boundaries.
 
 **Putting them together:** the `.get` discipline produces a
 positive value via the ↓→↑ shift. Once the shift lands — once
@@ -1269,7 +1269,7 @@ should add dedicated sections for each.
   Constructor: `Map(('k1' 'v1') ('k2' 'v2'))` using the uniform
   tagged construction rule. Accessors: `.get` (returns
   `some(v)` or `none()`), `.set`, `.keys`, `.values`. Optic:
-  AffineTraversal. See deliberations.md §Map type.
+  AffineTraversal.
 
 - **String methods on `Str`** — fork-free string operations
   registered as `def Str.name { }` accessor methods. `.length`,
@@ -1378,16 +1378,15 @@ point.
     `reference/haiku-book/`
 
 [SPEC] ksh26 Theoretical Foundation. `docs/ksh93-analysis.md`
-    (copy of `~/src/ksh/ksh/SPEC.md`)
 
 [SFIO] sfio Operational Semantics Reference.
-    `~/src/ksh/ksh/notes/sfio-analysis/README.md`
+    `refs/ksh93/sfio-analysis/README.md`
 
 [SFIO-3] sfio Buffer Model.
-    `~/src/ksh/ksh/notes/sfio-analysis/03-buffer-model.md`
+    `refs/ksh93/sfio-analysis/03-buffer-model.md`
 
 [SFIO-7] sfio Disciplines.
-    `~/src/ksh/ksh/notes/sfio-analysis/07-disciplines.md`
+    `refs/ksh93/sfio-analysis/07-disciplines.md`
 
 [VDC] psh VDC Framework Report. `docs/vdc-framework.md`
 
