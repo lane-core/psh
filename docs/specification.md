@@ -97,19 +97,35 @@ The shifts exist in rc but are unnamed:
 
 | rc mechanism | Shift type | Direction |
 |---|---|---|
-| `` `{cmd} `` command substitution | Force then return (↓→↑) | computation → value |
-| `<{cmd}` process substitution | Namespace extension (bind) | computation → name |
+| `` `{cmd} `` command substitution | Force then return (↓→↑), oblique map | computation → value |
+| `<{cmd}` process substitution | Downshift ↓ (thunk into namespace) | computation → name |
 | `x=val; rest` | μ̃-binding (let) | bind value, continue |
 
-psh adds one shift that rc did not have:
+psh adds one statement-to-producer move that rc did not have:
 
-| psh mechanism | Shift type | Direction |
+| psh mechanism | Logical shape | Effect |
 |---|---|---|
-| `$((...))` arithmetic | In-process eval (↓→↑) | computation → value (Int) |
+| `$((...))` arithmetic | `μα.⊙(e₁,e₂;α)` — μ-binding around a binop statement | In-process, no subprocess, pure central map in `P_t` |
 
-`$((...))` is the same ↓→↑ shift as command substitution, but
-the computation is arithmetic evaluated in-process rather than
-a subprocess. ksh93/POSIX heritage.
+`$((...))` is **distinct from command substitution**, not a
+copy. Command substitution is a genuine oblique map in the
+duploid — it packages the body as a thunk, forces it by
+forking, runs a full shell statement whose effects include
+subprocess creation and I/O, and captures the byte-valued
+return; the inner computation straddles CBV/CBN because the
+forked pipeline is itself co-Kleisli. `$((...))` has neither
+polarity straddle nor subprocess. Per [7, §3.2] "Arithmetic
+Expressions," arithmetic binop in λμμ̃ is a **statement**
+shaped `⊙(p₁, p₂; c)` taking two producers and a consumer;
+the surface form `e₁ + e₂` translates as `μα.⊙(⟦e₁⟧, ⟦e₂⟧; α)`
+— a μ-binding wrapping a statement to produce a positive. Any
+"shift" here is type-theoretic only: the shell does fire a
+polarity frame around `$((...))` to match the uniform mechanism
+described in §Polarity frames, but since the inner computation
+is effect-free the frame's save and restore steps simplify to
+no-ops. Operationally trivial; categorically a pure central
+map. ksh93/POSIX heritage for the syntax; the categorical
+reading is psh's own.
 
 psh makes two shifts explicit that rc left implicit:
 
@@ -118,16 +134,22 @@ psh makes two shifts explicit that rc left implicit:
    is fixed. Duff kept `$ifs` only because "indispensable" [1,
    §Design Principles]; psh removes it, closing the last re-scanning hole.
 
-2. **Process substitution as namespace extension.** rc's `<{cmd}`
-   returned an fd path while the child ran concurrently. This is
-   not a fork (synchronous shift) but a bind — it extends the fd
-   namespace with a name pointing to a concurrent computation.
-   The name is positive (CBV — it's a string `/dev/fd/N`); the
-   computation behind it is negative (CBN, demand-driven). This
-   matches Plan 9's mount model: `mount` returns immediately, the
-   server behind the mount point is concurrent. Nobody considers
-   `mount` a violation of sequential execution. The concurrency
-   is behind the name, accessed only when something reads the fd.
+2. **Process substitution as downshift into namespace.** rc's
+   `<{cmd}` returned an fd path while the child ran concurrently.
+   Categorically this is a **downshift `↓`**: the negative CBN
+   pipeline is thunked behind a name (a `/dev/fd/N` string) so
+   it can be passed to a CBV caller. The name is positive (CBV —
+   a string); the computation behind the name is negative (CBN,
+   demand-driven, reads through the fd trigger it). The downshift
+   itself is synchronous (the bind is immediate), but the
+   computation is only scheduled; it runs when the fd is opened.
+   This is not a `↓→↑` shift — there is no upshift back, because
+   the caller receives the name, not the computation's eventual
+   value. This matches Plan 9's mount model: `mount` returns
+   immediately with a name, the server behind the mount point is
+   concurrent. Nobody considers `mount` a violation of sequential
+   execution. The concurrency is behind the name, accessed only
+   when something reads the fd.
 
 
 ## The sfio insight
@@ -198,6 +220,24 @@ coterms (μ̃-binder captures the current value), and commands
 positive types (values, introduced eagerly) vs negative types
 (computations, introduced lazily). Shift connectives (↓N for
 thunking, ↑A for returning) mediate between polarities.
+
+psh adopts Grokking's [7] **two-sided** reading of λμμ̃ — three
+syntactic categories (producers, consumers, statements) with
+μ distinct from μ̃ — rather than Spiwack's **one-sided**
+reading, where there are two categories (terms and commands)
+and polarity is handled at the type level via dualisation
+`A⁻`. The two presentations are logically equivalent. psh
+chooses the two-sided reading because a shell has an
+observable operational asymmetry between producers and
+consumers that the one-sided reading obscures: producers are
+values in hand (literals, captured command output, variable
+slots), consumers are running processes reading from pipes
+and file descriptors waiting to be written. The process
+boundary is the asymmetry — converting a consumer to a
+producer requires forking or thunking, which costs real
+resources. Spiwack's dualisation is faithful to this at the
+type level, but psh names both sides at the sort level so
+the evaluator dispatches differently on each.
 
 ### The semantics
 
@@ -435,13 +475,17 @@ The classical control is tamed by lexical scope, not eliminated.
    mechanism forks, pipes stdout, runs the body, calls waitpid,
    returns `(stdout, exit_code)`. CBV — evaluates immediately.
 
-2. **Process substitution** (`<{cmd}`): bind a name to a
-   concurrent computation. Namespace extension. The name
-   `/dev/fd/N` is positive (a string); the computation behind
-   it is negative (demand-driven, reads trigger it). This is
-   Plan 9's mount model — synchronous bind, concurrent server.
-   Focalization is not violated because the bind itself is
-   instantaneous; the concurrency is behind the name.
+2. **Process substitution** (`<{cmd}`): downshift `↓` into the
+   fd namespace. The negative CBN pipeline is thunked behind a
+   `/dev/fd/N` name. The name is positive (a string), the
+   computation behind it is negative (demand-driven, reads
+   trigger it). This is Plan 9's mount model — synchronous
+   bind, concurrent server. Focalization is not violated because
+   the bind itself is instantaneous; the concurrency is behind
+   the name. Distinct from command substitution: command
+   substitution forces the computation to produce a value
+   (`↓→↑`), while process substitution thunks it behind a name
+   (`↓` only).
 
 3. **Pipeline** (`|`): concurrent cut. Co-Kleisli composition.
    Each `|` creates a pipe — a linear resource pair — connecting
@@ -708,12 +752,20 @@ realized on unix without requiring `/env` or 9P services):
     echo $cursor
 
 `cursor.refresh` is a command-position invocation of the
-discipline cell, parsed as a single NAME head and looked up in
-Θ. It runs at a step boundary, produces a status, and composes
-with `try`/`catch` and `trap` the same way any other command
-does. Users who want the ksh93 "live variable" ergonomics wrap
-the pair in their own function — the rc `fn cd` pattern [1,
-§Functions] applied to discipline invocation:
+discipline cell, parsed as a single NAME head and looked up
+in Θ — syntactically the same shape as invoking a `def`-named
+computation, and semantically the destructor `.refresh` of the
+disciplined variable's cocase (§"The codata model"). It runs
+at a step boundary, produces a status, and composes with
+`try`/`catch` and `trap` the same way any other command does.
+The parser's NAME-head dispatch plus the capitalization
+convention (`def Type.method` for per-type methods uppercase;
+`def varname.discipline` for per-variable disciplines
+lowercase) is enough to disambiguate `cursor.refresh` from a
+per-type method invocation. Users who want the ksh93 "live
+variable" ergonomics wrap the pair in their own function — the
+rc `fn cd` pattern [1, §Functions] applied to discipline
+invocation:
 
     fn show_cursor { cursor.refresh; echo $cursor }
 
@@ -725,10 +777,26 @@ the context on exit (see §Polarity frames). Inside the frame,
 cocase (which would recurse into `.refresh`) and writes the slot
 directly.
 
-Failure propagation is rc-native: `.refresh` errors surface as a
-nonzero `$status` at the invocation site, which `try`/`catch`
+Failure propagation is rc-native: `.refresh` errors surface as
+a nonzero `$status` at the invocation site, which `try`/`catch`
 catches the same way it catches any command failure. Silencing
 requires the user's explicit `try { cursor.refresh } catch (_) { }`.
+
+**Race bound under frame unwind.** A `.refresh` body that
+issues coprocess requests holds its `PendingReply` tag
+obligations inside the polarity frame. If the frame unwinds
+before the body completes — signal handler issues `return N`,
+`try`/`catch` aborts — the outstanding tags enter the draining
+state described in §"Shell-internal tracking" and any stale
+Rresponse is discarded. The primitive slot write at the end of
+the body is unreachable in this case, so the slot retains its
+prior value. This bounds the drop-as-cancel race: the window
+is the duration of an explicit `cursor.refresh` invocation,
+not every variable reference, and the slot is always either
+fully updated or fully untouched (never half-written). Users
+who need transactional semantics across cancel should wrap the
+refresh in `try { cursor.refresh } catch (_) { }` and test for
+the prior-value case explicitly.
 
 ### .set — the mutator
 
@@ -951,6 +1019,17 @@ Each tag has the session type `Send<Req, Recv<Resp, End>>` —
 exactly one legal action at each step. The tag is a session
 identifier, not a reason to abandon session discipline.
 
+In parallel to the per-tag request-response sessions, the
+shell maintains one **admin session** on the same socketpair
+for cancellation: `Send<Cancel, Recv<Flush_Ack, End>>*`, a
+repeating shell-originated session carrying Tflush frames
+identifying tags the coprocess should discard. This mirrors
+9P's Tflush/Rflush transaction [9P, §flush]. Cancellation is
+strictly shell-initiated, preserving the asymmetric initiator
+discipline. The admin session is an implementation concern —
+users interact only with per-tag sessions via `print -p` /
+`read -p` and never see Tflush directly.
+
 This mirrors 9P's multiplexing: tags are transaction
 identifiers (one per outstanding request, like 9P's uint16
 tags), and each tag identifies an independent request-response
@@ -1008,14 +1087,36 @@ outstanding tag when its response arrives. `read -p -t N`
 removes tag N specifically when its response is read. Stale or
 invalid tags produce a nonzero status with a descriptive error.
 
-Internally, the shell tracks each outstanding tag with an
-affine obligation handle. When a handle is dropped without
-being consumed (the tag's response is never read), the shell
-sends a cancel frame (Tflush equivalent) on the channel,
-telling the coprocess to discard any pending work for that
-tag. This prevents stale responses from being delivered after
-the tag has been reused. The handle discipline is implementation
-detail — users see only the tag integers.
+Internally, the shell tracks each outstanding tag with a
+handle parameterised by a phantom session-state type. Rust's
+type system enforces at compile time that a handle can only be
+consumed in its `AwaitingReply` state and only once — the
+consume method moves `self` and returns a handle in the
+`Consumed` state. Compile-time use-site affinity, not a
+true linear type discipline (Rust disallows specialised `Drop`
+impls per `E0366`, so drop-as-cancel is a runtime invariant
+rather than a type-level guarantee).
+
+When a handle is dropped without being consumed (the tag's
+response is never read), the shell sends a Tflush frame on
+the admin session, telling the coprocess to discard any
+pending work for that tag. The tag then enters a **draining
+state**: it is still outstanding from the shell's perspective,
+but no user code owns it, and it is not available for
+reallocation. The tag leaves the outstanding set only when
+the coprocess acknowledges with an Rflush response on the
+admin session — 9P-style Tflush/Rflush pairing. Rresponse
+frames for a tag in draining state are discarded silently:
+they are the expected residual of a cancel race, not a
+protocol violation.
+
+Tag reuse is therefore gated on **session termination**, not
+on cancel dispatch. The sequence `allocated → sent → (response
+received | Tflush sent → Rflush received) → freed` is the
+only state machine the shell maintains per tag, and the `End`
+of the per-tag session corresponds to the free step. The
+handle discipline is implementation detail — users see only
+tag integers.
 
 ### Implementation
 
@@ -1035,15 +1136,25 @@ when the builtins are written.
 
 ### Wire format
 
-Length-prefixed frames (the 9P approach [9P]):
+Length-prefixed frames in the 9P style [9P] — length and tag
+headers, but without 9P's separate Tcode byte. Frame kind is
+recovered from the first payload byte on the receiver side:
 
-    frame = length[4 bytes, LE u32] tag[2 bytes, LE u16] payload[length - 2 bytes]
-    error = length[4 bytes, LE u32] tag[2 bytes, LE u16] '!' error_message
+    request    = length[4 bytes, LE u32] tag[2 bytes, LE u16] payload[length - 2 bytes]
+    response   = length[4 bytes, LE u32] tag[2 bytes, LE u16] payload[length - 2 bytes]
+    error      = length[4 bytes, LE u32] tag[2 bytes, LE u16] '!' error_message
+    tflush     = length[4 bytes, LE u32] tag[2 bytes, LE u16] '#'                         (length = 3)
+    rflush     = length[4 bytes, LE u32] tag[2 bytes, LE u16] '#'                         (length = 3)
 
+`'!'` marks an error response; `'#'` marks a flush transaction
+(Tflush from shell, Rflush back from coprocess). All other
+first-byte values are ordinary request/response payloads.
 Length-prefixed rather than newline-delimited because payloads
 may contain newlines (multi-line strings, command output,
 heredocs). The tag is binary u16 for efficiency; the payload
-is text (Display/FromStr).
+is text (Display/FromStr). An error frame with an empty
+`error_message` is a protocol violation; the shell tears down
+the session on receipt.
 
 ### Named coprocesses
 
@@ -1121,9 +1232,38 @@ status is a character string describing an error condition. On
 normal termination it is empty" [1, §Exit status]. psh preserves
 this. `Status::is_success()` checks emptiness.
 
-The ⊕/⅋ duality: `$status` is ⊕ (positive — caller inspects a
-tagged value). Traps are ⅋ (negative — callee invokes a
-continuation). Both are present.
+Linear logic gives two disjunction connectives — not two names
+for the same thing, but two genuinely different kinds of error
+handling [7, §"Linear Logic and the Duality of Exceptions"]:
+
+- **⊕ (plus, positive / data):** a tagged return value.
+  Constructors `Inl(t)` / `Inr(t)`; elimination by
+  `case{Inl(x) ⇒ s₁, Inr(y) ⇒ s₂}`. The caller inspects the
+  tag. Rust's `Result<T, E>` and Haskell's `Either` are this
+  shape. **psh's `$status` is ⊕**: every command returns a
+  tagged value, and `try { body } catch (e) { handler }`
+  pattern-matches on success/failure at step boundaries.
+  `$status` is data; `try` is the consuming case.
+
+- **⅋ (par, negative / codata):** a pair — more generally an
+  N-tuple — of continuations, one per outcome. The callee
+  decides which continuation to invoke. A cocase
+  `cocase{Par(α,β) ⇒ s}` binds two covariables and the body
+  `s` jumps to exactly one of them. **psh's `trap SIGNAL
+  { handler } { body }` is ⅋**: the body runs under a cocase
+  binding one continuation per installed handler, and signal
+  delivery is the callee (the shell's step-boundary dispatcher)
+  jumping to the chosen handler's α. `trap` is codata — the
+  same codata framing psh uses for discipline cells (§"The
+  codata model").
+
+The two are De Morgan duals: `(σ ⊕ τ)⁻ = σ⁻ ⅋ τ⁻`. Both styles
+are present in psh because both styles show up in shell
+programs. `try`/`catch` is the data/caller-inspects form;
+`trap` is the codata/callee-jumps form. They compose
+orthogonally (§"Signal interaction with try blocks") because
+they act on different sorts: `try` on command statuses in the
+positive Γ, `trap` on signal continuations in the negative Δ.
 
 ### try/catch — scoped ErrorT (⊕ discipline)
 
