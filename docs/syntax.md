@@ -71,6 +71,8 @@ Bindings extend the context Γ with a new name. They are
                   ('else' body)?       -- let-else for refutable patterns
     let_quals   = 'mut'? 'export'?
     def_binding = 'def' NAME def_params? (':' type_ann)? body
+    def_params  = '(' ')'                     -- explicit nullary
+                | /* empty */                  -- implicit (args via $1, $2, $*)
 
     struct_decl = 'struct' NAME type_params? '{' field_decl (';' field_decl)* ';'? '}'
     field_decl  = NAME ':' type_ann
@@ -80,7 +82,9 @@ Bindings extend the context Γ with a new name. They are
                 | NAME                     -- nullary variant
 
     type_params = '(' TYPE_NAME (',' TYPE_NAME)* ')'   -- uppercase type variables
-    type_ann    = TYPE_NAME                             -- e.g. Int, Str, Pos
+    type_ann    = fn_type
+    fn_type     = base_type ('->' base_type)*              -- function type (right-assoc)
+    base_type   = TYPE_NAME                                -- e.g. Int, Str, Pos
                 | TYPE_NAME '(' type_ann (',' type_ann)* ')'  -- type application
                 | '(' type_ann (',' type_ann)* ')'             -- bare tuple type
 
@@ -170,8 +174,8 @@ final body position.
     def origin : Pos { Pos { x = 0; y = 0 } }    # final expression is the return value
     def move : Pos -> Pos {                      # function type annotation
         |p| =>
-        let new_x = $p .x + 1
-        return Pos { x = $new_x; y = $p .y }     # explicit return
+        let new_x = $p.x + 1
+        return Pos { x = $new_x; y = $p.y }      # explicit return
     }
     def first_positive : List(Int) -> Option(Int) {
         |xs| =>
@@ -606,9 +610,8 @@ command that consumes them runs.
     arith_op    = '+' | '-' | '*' | '/' | '%'
                 | '>' | '<' | '>=' | '<=' | '==' | '!='
 
-    var_ref     = '$' VARNAME bracket_access* (ws dot_accessor)*
-    bracket_access = '[' (expr '..' expr | expr) ']'  -- range or single index
-                                          -- no space between VARNAME and '['
+    var_ref     = '$' VARNAME (bracket_access | dot_accessor)*
+    bracket_access = '[' (expr '..' expr | expr) ']'
     dot_accessor   = '.' NAME
     ws          = (' ' | '\t')+
 
@@ -618,7 +621,7 @@ than dot/bracket.
 
     $l[0] ?? 'default'       # value or default
     $m['key'] ?? ''          # value or empty string
-    $result .ok ?? 0         # Prism preview then coalesce
+    $result.ok ?? 0          # Prism preview then coalesce
 
 RHS is lazily evaluated. Sugar for
 `match(M) { some(x) => x; none => N }`.
@@ -799,7 +802,7 @@ representation via Display.
     NAME        = word_char+
     LITERAL     = word_char+
     QUOTED      = SQ_STRING | DQ_STRING
-    SQ_STRING   = "'" (any | "''")* "'"         -- literal, no expansion
+    SQ_STRING   = "'" (any | "''" | "\\'")* "'"  -- literal, no expansion; '' or \' for quote
     DQ_STRING   = '"' (dq_char | dq_expand)* '"' -- interpolating
     dq_char     = any except '$', '`', '"', '\'
                 | '\$' | '\"' | '\\' | '\`'     -- escaped specials
@@ -829,14 +832,14 @@ Two string forms: single quotes (literal) and double quotes
     'it\'s'            produces: it's (psh extension)
     '$x'               literal $x, no expansion
 
-**Double quotes** — `$var`, `$var[0]`, `$var .name`, and
+**Double quotes** — `$var`, `$var[i]`, and
 `` `{cmd} `` are expanded inside. Multi-element lists join
 with spaces (equivalent to `$"var`). Double-quoted strings
 always produce a single `Str` value.
 
     "hello $name"              interpolation
     "path: $HOME/bin"          $HOME expands, /bin is literal
-    "count: $items .length"    accessor expansion
+    "count: ${items.length}"   accessor via ${} in double quotes
     "files: `{ls *.txt}"       command substitution
     "literal \$dollar"         escaped $
     "she said \"hi\""          escaped quote
@@ -904,19 +907,25 @@ Perl/Ruby heritage for the `=~` infix syntax.
 
 ### Brace-delimited variable names
 
-`${name}` explicitly delimits a variable name. The name inside
-braces uses `word_char` (including `.`), not `var_char`. This
-is the escape hatch for variable names containing characters
-that would otherwise terminate a bare `$name` reference.
+`${name}` explicitly delimits a variable name. Outside double
+quotes, the name inside braces uses `word_char` (including `.`),
+not `var_char` — this is an escape hatch for variable names
+containing characters that would otherwise terminate a bare
+`$name` reference. Inside double quotes, `${name.accessor}`
+expands a dot accessor on the variable.
 
-    ${x.get}          looks up variable named literally "x.get"
+    ${longname}       explicit delimiting (outside quotes)
+    "${name.upper}"   dot accessor in double-quote interpolation
     $x.get            dot accessor: call the .get method on $x
     $x^.get           explicit caret: $x ^ .get (concatenation)
     $x[0]             bracket accessor: first element of $x
 
-Braces are NOT the accessor form. Dot accessors are postfix
-with required space; bracket accessors bind immediately after
-`$name` with no space (see §Accessor syntax above).
+Braces are NOT the accessor form outside double quotes.
+Both dot and bracket accessors bind tightly to `$name`
+(see §Accessor syntax). Inside double quotes, `${name.upper}`
+expands the dot accessor — this is the only way to use dot
+accessors in interpolation context (bare `"$name.txt"` treats
+`.txt` as literal text per `var_char` boundary).
 
 ### Variable expansion
 
@@ -928,7 +937,7 @@ with required space; bracket accessors bind immediately after
     $x[0]             first element (bracket projection, Lens on tuples)
     $x[n]             list/tuple element by index (AffineTraversal)
     $x['key']         map lookup by key (AffineTraversal)
-    $x .name          named accessor (struct field or type method)
+    $x.name           named accessor (struct field or type method)
 
 rc heritage for `$x`, `$#x`, `$"x`, and `${name}` [1,
 §Variables, §Indexing]. Bracket accessor is psh's addition,
@@ -947,8 +956,8 @@ from rc:
 Under the per-type accessor namespace model, these are sugar
 aliases for the canonical postfix forms:
 
-    $#x  ≡  $x .length
-    $"x  ≡  $x .join
+    $#x  ≡  $x.length
+    $"x  ≡  $x.join
 
 The canonical form is the accessor; the sigil form is rc-faithful
 ergonomic shorthand. These are the only two inherited from rc
@@ -1017,10 +1026,7 @@ wire format, named coprocesses).
 
 Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
-`return`, `struct`.
-
-Active: `enum` — user-declared coproduct types with parametric
-type constructors (see specification.md §Enums).
+`return`, `struct`, `enum`.
 
 Reserved for future use: `type` (type aliases, if parametric
 polymorphism on function signatures is ever reconsidered).

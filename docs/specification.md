@@ -416,8 +416,8 @@ partial value and produces an expanded value with possible
 effects. `eval_word` recurses through `Word` nodes before the
 command that consumes them has started.
 
-Pipeline execution is **demand-driven** (co-Kleisli in the
-execution strategy): `run_pipeline` forks all stages
+Pipeline execution is **demand-driven** (operationally analogous
+to co-Kleisli — not a VDC classification, see note below): `run_pipeline` forks all stages
 concurrently, and data flows on demand through `pipe(2)`
 endpoints. `yes | head -1` does not evaluate `yes` to
 completion — the pipe's blocking read is the demand. Note:
@@ -752,7 +752,7 @@ it must come from outside (continuation context, annotation).
 | Map literal `{'k': v, ...}` | [synth] | value types determine V; empty `{}` is [check] |
 | Bracket `$a[i]` | [synth] | result type from collection type in Γ |
 | Nil-coalescing `M ?? N` | [synth] | `Option(T) ?? T → T` — sugar for match |
-| Prism preview `$r .ok` | [synth] | `T → Option(Payload)` — discipline method |
+| Prism preview `$r.ok` | [synth] | `T → Option(Payload)` — discipline method |
 | Lambda `\|x\| => body` | [synth-if-pinned] | body operations pin params; [check] if unpinned |
 | Function call `f $arg` | [synth] | `f`'s signature in Θ determines result |
 | Match arm body | [check] | checked against match's expected type |
@@ -1374,13 +1374,13 @@ rather than a type-level guarantee).
 
 When a handle is dropped without being consumed (the tag's
 response is never read), the shell sends a Tflush frame on
-the admin session, telling the coprocess to discard any
-pending work for that tag. The tag then enters a **draining
-state**: it is still outstanding from the shell's perspective,
-but no user code owns it, and it is not available for
-reallocation. The tag leaves the outstanding set only when
-the coprocess acknowledges with an Rflush response on the
-admin session — 9P-style Tflush/Rflush pairing. Rresponse
+that tag, telling the coprocess to discard any pending work.
+The tag then enters a **draining state**: it is still
+outstanding from the shell's perspective, but no user code
+owns it, and it is not available for reallocation. The tag
+leaves the outstanding set only when the coprocess
+acknowledges with an Rflush response on the same tag —
+9P-style Tflush/Rflush pairing. Rresponse
 frames for a tag in draining state are discarded silently:
 they are the expected residual of a cancel race, not a
 protocol violation.
@@ -1485,7 +1485,7 @@ coprocess blocks on another coprocess.
 
 Carbone, Marin, and Schürmann's forwarder logic [CMS] provides
 the generalization path: their **MCutF admissibility theorem**
-(§5) proves that multiparty compatible compositions can be
+(§6) proves that multiparty compatible compositions can be
 mediated by a forwarder. The current design does not use CMS
 directly — the shell initiates and consumes, it does not
 forward between coprocesses — but if psh ever adds
@@ -1848,12 +1848,12 @@ named record fields).
     # return value
     def origin : Pos { Pos { x = 0; y = 0 } }
     def move : Pos -> Pos {
-        |p| => Pos { x = $p .x + 1; y = $p .y }
+        |p| => Pos { x = $p.x + 1; y = $p.y }
     }
 
     # function argument — type explicit at the call site
     def distance : Pos -> Pos -> Int {
-        |a b| => $(( abs($a .x - $b .x) + abs($a .y - $b .y) ))
+        |a b| => $(( abs($a.x - $b.x) + abs($a.y - $b.y) ))
     }
     distance Pos { x = 0; y = 0 } Pos { x = 3; y = 4 }
     distance Pos { 0, 0 } Pos { 3, 4 }
@@ -1877,18 +1877,18 @@ named record fields).
 Named accessors work on struct values:
 
     let p = Pos { x = 10; y = 20 }
-    echo $p .x               # 10
-    echo $p .y               # 20
+    echo $p.x                # 10
+    echo $p.y                # 20
 
 Generic traversal:
 
-    for (name, val) in $p .fields {
+    for (name, val) in $p.fields {
         echo $name '=' $val  # 'x = 10', 'y = 20'
     }
 
 Homogeneous typed iteration:
 
-    let vals = $p .values    # List(Int) = (10 20)
+    let vals = $p.values     # List(Int) = (10 20)
 
 There is no bracket positional access on structs — bracket
 `[i]` is for ordered/keyed collections (tuples, lists, maps).
@@ -1927,7 +1927,7 @@ names from a single destructuring:
 default; mutation takes the form of whole-struct replacement:
 
     let mut p = Pos { x = 10; y = 20 }
-    p = Pos { x = 30; y = $p .y }
+    p = Pos { x = 30; y = $p.y }
 
 No field-level mutation syntax (`p .x = 30`). Whole-struct
 replacement is consistent with the value model: structs are
@@ -2176,7 +2176,7 @@ does nothing on pattern mismatch.
 
     $l[0] ?? 'default'       # value or default
     $m['key'] ?? ''          # value or empty string
-    $result .ok ?? 0         # extract ok payload or default
+    $result.ok ?? 0          # extract ok payload or default
 
 Typing rule:
 
@@ -2196,16 +2196,16 @@ real logic, use `let-else` or `match`.
 **Enum Prism previews** — `.ok`, `.err`, and user-variant
 preview methods:
 
-    $result .ok              # some(v) or none
-    $result .err             # some(msg) or none
-    $opt .some               # some(v) or none (identity on Option)
+    $result.ok               # some(v) or none
+    $result.err              # some(msg) or none
+    $opt.some                # some(v) or none (identity on Option)
 
 These are `def Result.ok`, `def Result.err` etc. — discipline
 functions in the standard per-type namespace, returning
 `Option(PayloadType)`. They compose naturally with `??`:
 
-    $result .ok ?? 'fallback'   # extract ok or default
-    $result .err ?? 'unknown'   # extract error or default
+    $result.ok ?? 'fallback'    # extract ok or default
+    $result.err ?? 'unknown'    # extract error or default
 
 `match` remains the canonical form for multi-arm dispatch.
 Prism previews are for the common one-variant extraction
@@ -2329,7 +2329,7 @@ stabilizes.
   expression context (never glob); the index expression must
   be of type `Str`. **Insertion** via assignment —
   `m['key'] = v` on a `let mut` map desugars to
-  `m = $m .insert 'key' v` (discipline-transparent).
+  `m = $m.insert 'key' v` (discipline-transparent).
 
   **Accessors:** `.keys` returns `List(Str)`, `.values`
   returns `List(V)`. Key-indexed view (`$m['key']`) is an
@@ -2489,7 +2489,7 @@ determines how the optic is selected, not which class it is.
 | Lists (rc base) | `for x in $l` | Traversal (iteration) | Traversing (Applicative) |
 | Lists | `$l[n]` | Affine traversal (index) | Cartesian + Cocartesian |
 | Tuples (products) | `$t[i]` (literal index) | Lens (projection) | Cartesian |
-| Structs (named products) | `$s .field` | Lens (named) | Cartesian |
+| Structs (named products) | `$s.field` | Lens (named) | Cartesian |
 | Sums (coproducts) | `match` | Prism (case analysis) | Cocartesian |
 | Map(V), key lookup | `$m['key']` | Affine traversal (partial) | Cartesian + Cocartesian |
 | Map(V), all values | `.values` | Getter (read-only) | — |
@@ -2525,9 +2525,8 @@ is sufficient for user-facing classification.
 **Map type** gets two rows because the two views are
 structurally different: a single-key bracket lookup
 (`$m['key']`) is a partial projection — affine traversal, may
-or may not hit. Iteration over all values (`.values`) is an
-unconditional fold — a proper Traversal in the Applicative
-sense.
+or may not hit. `.values` is a Getter — it materializes a
+new `List(V)`, not a traversable focus into the map.
 
 **List element access** is an affine traversal, not a Lens,
 because the index may be out of bounds. `$l[n]` returns
