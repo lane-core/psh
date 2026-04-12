@@ -41,7 +41,8 @@ Heritage
 rc (Duff 1990) for the value model, quoting, and free carets.
 ksh93 for discipline functions, coprocesses, and bracket
 subscripts. The type theory draws on the λμμ̃-calculus, duploid
-semantics, profunctor optics, and session types.
+semantics, virtual double categories, profunctor optics,
+and session types.
 
 License
 -------
