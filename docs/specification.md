@@ -93,7 +93,8 @@ unnamed and unenforced:
 |---|---|---|
 | Words: literals, `$x`, `` `{cmd} ``, `a^b` | Producers | Eager evaluation. "Input is never scanned more than once" [1, §Design]. |
 | Pipe readers, redirect targets, continuations | Consumers | Implicit — waiting to receive a value. |
-| Simple commands, pipelines, `if`, `for` | Cuts ⟨t \| e⟩ | `echo hello`: producer `hello` meets consumer stdout. |
+| Simple commands, `if`, `for`, `match` | Consumers (coterms) | `echo`: consumes args, writes stdout. `if`: consumes status. |
+| Pipelines, redirections, fork/exec | Cuts ⟨t \| e⟩ | `echo hello`: producer `hello` meets consumer `echo`. |
 
 The shifts exist in rc but are unnamed:
 
@@ -288,15 +289,16 @@ are:
   ready to compute. They live on the left of the cut.
 - **Coterms** (consumers): contexts that are waiting to receive
   a value. They live on the right of the cut.
-- **Commands** (cuts): a term meeting a coterm — ⟨t | e⟩ — the
-  moment of interaction where computation happens.
+- **Commands** (consumers): contexts waiting to receive a value
+  — the coterm side. `echo` consumes arguments. `if` consumes
+  a status. `match` consumes a value and eliminates by tag.
+- **Expressions** (cuts): a term meeting a command — ⟨t | e⟩ —
+  the moment of interaction where computation happens. The
+  `Expr` layer wires up pipelines, redirections, and fork/exec.
 
-A cut is not a command definition. A cut is the *statement*
-that connects a producer to a consumer. `echo hello` is a cut:
-the producer `hello` meets the consumer (echo's I/O context —
-stdout, the continuation of the script). The `def` keyword
-defines a computation; the cut happens when the computation is
-invoked with arguments.
+`echo hello` is a cut: the producer `hello` meets the consumer
+`echo`. The `def` keyword defines a computation; the cut
+happens when the computation is invoked with arguments.
 
 ### Terms (producers) — Γ
 
@@ -345,58 +347,67 @@ computation might jump to. In psh, Δ is populated by:
   the try body. Semantically similar but triggered by status
   rather than signal.
 
-The evaluator function `run_expr` handles the coterm sort:
-pipelines (co-Kleisli — demand-driven) and redirections
-(profunctor transformations on the I/O context).
+The evaluator function `run_expr` handles the cut sort:
+pipelines (demand-driven) and redirections (profunctor
+transformations on the I/O context). `run_cmd` handles the
+consumer sort: dispatching on the command's consumer shape.
 
-### Commands (cuts) — ⟨t | e⟩
+### Commands (consumers) — Δ
 
-A command is a cut: a term meets a coterm and computation
-happens. The statement `echo $x` is the cut ⟨$x | echo-context⟩
-where the producer ($x, evaluated) meets the consumer (echo's
-stdout binding + the script continuation).
+A command is a consumer: it describes what expects to receive
+values and what it does with them. `echo` is a consumer —
+it takes arguments, writes them to stdout, and continues.
+`if` is a consumer — it takes a status and dispatches.
+`match` is a consumer — it takes a value and eliminates by
+tag. Assignment `x = _;` is a consumer — the μ̃-binder
+`μ̃x.rest` waits for a value to bind.
+
+| psh construct | Consumer shape | Notes |
+|---|---|---|
+| `echo` | stdout writer + continuation | Simple command consumer |
+| `x = _;` | μ̃x.⟨rest \| α⟩ | μ̃-binder: waits for a value |
+| `if(_) { A } else { B }` | case(A, B) | Coproduct elimination on status |
+| `match(_) { arms }` | case(arm₁, ..., armₙ) | Multi-way elimination |
+| `trap SIG { h } { _ }` | μα.⟨body \| α⟩ | μ-binder: names signal continuation |
+
+In psh's AST, commands are the consumer sort. `let`,
+assignment, `def`, `if`, `for`, `while`, `match`, `try`/`catch`,
+and `trap` are all `Command` nodes — each with a specific
+consumer shape (μ̃-binder, case dispatch, μ-binder). The
+evaluator dispatches on the shape via `run_cmd`.
+
+### Exprs (cuts) — ⟨t | e⟩
+
+An expression is a cut: the moment a term meets a command and
+computation happens. `echo hello` is the cut ⟨hello | echo⟩.
+`cmd1 | cmd2` composes two cuts via a pipe. The `Expr` layer
+is where producers meet consumers — pipeline wiring,
+redirection composition, fork/exec.
 
 | psh construct | Cut structure | Notes |
 |---|---|---|
-| `echo hello` | ⟨hello \| stdout + continuation⟩ | Simple command |
-| `cmd1 \| cmd2` | ⟨cmd1-stdout \| cmd2-stdin⟩ | Pipeline: cut via pipe |
-| `x = val` | ⟨val \| μ̃x.rest⟩ | Assignment: value cut against a binder |
-| `if(cond) { A } else { B }` | ⟨status \| case(A, B)⟩ | Coproduct elimination |
-| `match(v) { arms }` | ⟨v \| case(arm₁, ..., armₙ)⟩ | Multi-way elimination |
+| `echo hello` | ⟨hello \| echo-consumer⟩ | Simple: term meets command |
+| `cmd1 \| cmd2` | ⟨cmd1-out \| cmd2-in⟩ | Pipeline: cut via pipe fd |
+| `cmd > file` | redirect ∘ ⟨args \| cmd⟩ | Redirect wraps the cut |
+| `x = val; rest` | ⟨val \| μ̃x.⟨rest \| α⟩⟩ | Assignment: cut against binder |
 
-In psh's AST, assignments and let-bindings are *statements*
-whose consumer is a μ̃-binder: `x = val; rest` is the cut
-⟨val | μ̃x.⟨rest | α⟩⟩ where α is the outer continuation. The
-μ̃-binder is a consumer, not a separate sort — psh's AST does
-not have a dedicated `Binding` node type. Assignments, `let`,
-and `def` are `Command` nodes whose consumer side is μ̃-shaped,
-and the evaluator dispatches on the shape.
+The evaluator function `run_expr` handles the cut sort:
+pipeline setup (fd wiring, fork), redirect application
+(profunctor wrapping), and the connection of terms to
+commands.
 
-### The AST's three sorts (plus engineering layer)
+### The AST's three sorts
 
-psh's AST has three logical sorts matching Grokking's [7,
-§"Syntax"] three syntactic categories — producers, consumers,
-statements — plus one engineering layer:
+psh's AST has three sorts matching the λμμ̃ categories [5],
+[7, §2]:
 
-| psh node | λμμ̃ category | Role |
-|---|---|---|
-| `Term` | Producer (term) | Values, variable refs, command substitutions, lambdas — everything in Γ |
-| `Coterm` (synthesized) | Consumer | Evaluation contexts: pipe readers, redirect targets, μ̃-binders (let / assign), trap signal handlers, catch bindings |
-| `Command` | Statement (cut) | Every cut: simple commands, pipelines, assignments ⟨val \| μ̃x.rest⟩, if/for/match/try/trap |
-| `Expr` | engineering boundary | Wraps pipelines + redirections — consumer machinery grouped for evaluator organization, not a logical sort |
+| psh node | λμμ̃ category | Evaluator | Role |
+|---|---|---|---|
+| `Term` | Producer (term) | `eval_term` → Val | Values, literals, accessors, lambdas — Γ |
+| `Command` | Consumer (coterm) | `run_cmd` → dispatch | Command shapes: what expects to consume values — Δ |
+| `Expr` | Cut (statement) | `run_expr` → Status | Where producer meets consumer: pipelines, redirects, fork/exec |
 
-A `let x = M; rest` or `x = val; rest` is a *statement*, not a
-separate sort: desugared, it is the cut ⟨M | μ̃x.⟨rest | α⟩⟩
-[7, §2.1]. The μ̃-binder is a consumer alternative in Grokking's
-grammar `c ::= α | μ̃x.s | D(p̄;c̄) | case{...}`; it lives
-*inside* a statement as the consumer slot, not alongside the
-statement as a peer sort. psh synthesizes consumers implicitly
-from the statement's shape rather than storing them as
-first-class nodes — the same way rc's consumers are implicit,
-made just explicit enough for sort-directed evaluation.
-
-The `Expr` sort is an engineering choice, not a logical one —
-it separates the profunctor transformations (redirections,
+The `Expr` sort separates the profunctor transformations (redirections,
 pipelines) from the cut/control layer. Logically, `Expr`
 constructs are part of the consumer apparatus: pipelines build
 co-Kleisli contexts, redirections transform I/O contexts via
@@ -849,7 +860,7 @@ them in the `Namval_t` machinery.
 
 | | `def` | `let` + lambda (`|x|`) |
 |---|---|---|
-| Sort | Command (cut template) | Value (term) |
+| Sort | Command (consumer) | Value (term) |
 | Arguments | Variadic, positional ($1, $2, $*) | Fixed arity, named |
 | First-class | No — named computation in Θ | Yes — value in Γ, storable |
 | Scope | Dynamic (reads current scope) | Captures at definition |
@@ -874,7 +885,7 @@ expression in a body also checks against the declared return
 type. Every `return` in a body must agree on type — multiple
 return paths are checked against the same declared type.
 
-**`for`/`while` typing.** Both are commands (cuts). `for(x in
+**`for`/`while` typing.** Both are consumers. `for(x in
 list) { body }`: the list expression is a producer in synth-mode;
 the loop variable `x` is a μ̃-binder scoped to the body, typed as
 the list's element type; the body is a command sequence. The
@@ -882,7 +893,7 @@ result status is the last iteration's status (0 for empty
 iteration — rc convention). `while(cond) { body }`: the
 condition pipeline is a command producing a status that drives
 ⊕ coproduct elimination (continue on zero, stop on nonzero);
-the body is a command sequence. Both are standard cut forms —
+the body is a command sequence. Both are standard consumer forms —
 no polarity frame, no shift.
 
 
@@ -2154,7 +2165,7 @@ The else-body is a consumer in Δ (an error continuation).
 It must diverge — `return N`, `exit`, or an infinite loop.
 If it does not diverge, the bindings from `pat` would be
 uninitialized on the fall-through path, which is a type
-error. Sort: command (cut). The pattern match + else branch
+error. Sort: consumer (the pattern match + else branch
 is a single focused elimination with two arms.
 
 **`if let`** — refutable pattern match in branch position:

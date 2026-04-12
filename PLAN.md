@@ -65,9 +65,9 @@ Implement the grammar from `docs/syntax.md` using `combine`.
 
 ### Phase 2: AST, value model, type checker
 
-- [ ] AST: three-sort structure — `Term` (producers), `Expr`
-      (pipelines + redirections), `Command` (cuts). Consumers
-      synthesized implicitly.
+- [ ] AST: three-sort structure — `Term` (producers/terms),
+      `Command` (consumers/coterms — command shapes), `Expr`
+      (cuts — pipelines, redirections, fork/exec).
 - [ ] `Val` enum: `Str`, `Int`, `List`, `Tuple`, `Struct`,
       `Map`, `Sum` (enum values), `Lambda`, `Status`
 - [ ] Every variable is a list at the outer level

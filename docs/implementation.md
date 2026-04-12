@@ -114,13 +114,14 @@ dependency in a login shell that runs on every terminal open?
         job.rs      — job control, background processes
         signal.rs   — signal handling, self-pipe
 
-The AST has three sorts matching the spec: `Term` (producers),
-`Expr` (engineering layer — pipelines + redirections), `Command`
-(statements / cuts). Consumers are synthesized implicitly from
-the statement's shape, not stored as AST nodes. The evaluator
-enforces the sort boundary at the call-graph level: `eval_term`
-(CBV, value sort), `run_expr` (profunctor layer), `run_cmd`
-(cuts, command sort).
+The AST has three sorts matching the λμμ̃ categories: `Term`
+(producers — values, Γ side), `Command` (consumers — command
+shapes that expect to receive values, Δ side), `Expr` (cuts
+— where producers meet consumers: pipelines, redirections,
+fork/exec). The evaluator enforces the sort boundary:
+`eval_term` (CBV, produces Val), `run_cmd` (dispatches on
+consumer shape), `run_expr` (executes the cut — fd wiring,
+pipeline setup, redirect composition).
 
 
 ## Implementation principles
