@@ -45,8 +45,9 @@ the relevant agent and Lane.
 - **Two accessor forms: bracket and dot.** Bracket `$a[i]` for
   projection by runtime value (tuples, lists, maps). Returns
   `Option(T)`. Dot `$x .name` for named field/method/discipline
-  access with required leading space — space disambiguates from
-  free caret. `??` nil-coalescing: `$l[0] ?? 'default'`. Prism
+  access — both bind tight, no space required. `.` is always
+  accessor; concatenation uses explicit `^` (`$stem^.c`).
+  `??` nil-coalescing: `$l[0] ?? 'default'`. Prism
   previews: `$result .ok ?? 'fallback'`. `if let` for
   refutable pattern branches. Per-type accessor namespaces via
   `def Type.ident`.

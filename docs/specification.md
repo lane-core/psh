@@ -599,14 +599,16 @@ Key syntactic decisions with semantic grounding:
   (ML/Rust convention, unambiguous inside match arms). Pure
   guards via `if(cond)` after the pattern — restricted to
   side-effect-free expressions (comparisons, arithmetic).
-- **Two accessor forms: bracket and dot.** Bracket `$a[i]` is
+- **Two accessor forms: bracket and dot.** Both bind tightly
+  to `$name` with no space required. Bracket `$a[i]` is
   projection by runtime value — tuples (`$t[0]`), lists
   (`$l[n]`), maps (`$m['key']`). Returns `Option(T)`. Dot
-  `$x .name` is named field/method/discipline access with
-  required leading space — the space disambiguates from rc's
-  free caret (`$stem.c` = `$stem ^ .c`). Bracket binds
-  immediately after `$name` (no space); `$a [0]` with space
-  is a separate argument. See §Accessors.
+  `$x.name` is named field/method/discipline access.
+  Concatenation uses explicit `^` only (`$stem^.c`). The `.`
+  is always an accessor, never an implicit caret. Inside
+  double quotes, `"$name.txt"` works naturally — `$name`
+  terminates at `.` (not in `var_char`), and `.txt` is literal
+  text. See §Accessors.
 - **Uniform tagged construction.** `NAME(args)` with `NAME`
   immediately followed by `(` (no space) commits the parser to
   tagged construction. Args are space-delimited (list-style).
@@ -628,11 +630,16 @@ Key syntactic decisions with semantic grounding:
 - **Two string forms: single and double quotes.** Single quotes
   are literal (no expansion): `'hello $name'` is the literal
   text. Double quotes interpolate: `"hello $name"` expands
-  `$name`. Inside double quotes, `$var`, `$var[0]`,
-  `$var .name`, and `` `{cmd} `` are expanded; `\$` escapes
-  the dollar sign. Multi-element lists inside double quotes
-  join with spaces (equivalent to `$"var`). `\`-escapes work
-  in both forms. See syntax.md §Quoting and §Backslash escapes.
+  `$name`. Inside double quotes, `$var`, `$var[i]`, and
+  `` `{cmd} `` are expanded; `\$` escapes the dollar sign.
+  Dot accessors inside double quotes require explicit
+  delimiting: `"${name.upper}"` — bare `"$name.txt"` is
+  variable `$name` followed by literal `.txt` (`.` terminates
+  the variable reference inside double quotes, matching the
+  `var_char` boundary). Multi-element lists inside double
+  quotes join with spaces (equivalent to `$"var`). `\`-escapes
+  work in both forms. See syntax.md §Quoting and §Backslash
+  escapes.
 
   rc rejected double quotes because Bourne's double-quote rules
   were complex (interpolation of `$`, `` ` ``, `\`, `!` but not
@@ -787,7 +794,7 @@ to pin each parameter type from monomorphic operations in the
 body:
 
     let double = |x| => $((x * 2))    # x pinned to Int by *
-    let greet = |name| => "hello $name .upper"
+    let greet = |name| => "hello ${name.upper}"
                                        # name pinned to Str by .upper
 
 Each parameter gets a write-once slot. Operations with
@@ -1218,6 +1225,16 @@ a simpler pipeline:
 
 Each stage is a function `Word → Val` with possible effects.
 They compose by structural recursion over the `Word` AST.
+
+**Glob no-match behavior.** A glob pattern that matches no
+filenames stands for itself — it is not replaced by the empty
+list and is not an error. rc heritage [1, §Patterns]: "a
+pattern matching no names is not replaced by the empty list;
+rather it stands for itself." `ls *.xyz` passes the literal
+string `*.xyz` to `ls`, which prints its own error. This is
+the Plan 9 convention and avoids the zsh trap where
+`rm *.bak` in an empty directory is a shell error before `rm`
+ever runs.
 
 
 ## Coprocesses (9P-shaped discipline)
@@ -2195,6 +2212,17 @@ Prism previews are for the common one-variant extraction
 case. Profunctor constraint on the Prism structure:
 Cocartesian.
 
+**Option Display convention.** `some(v)` displays as `v`'s
+Display representation; `none` displays as the empty string.
+This is a Display/toString convention on the type, not a
+REPL special case — behavior is identical in scripts and at
+the REPL. `echo $l[0]` prints `hello`, not `some(hello)`.
+`echo $m['missing']` prints nothing. The typed value in the
+pipeline is still `some('hello')` or `none` — pattern
+matching, `??`, and conditionals see the full tagged value.
+Debug/inspect output shows the full `some(...)` wrapping.
+This parallels Rust's Display vs Debug distinction.
+
 **Guards** refine pattern arms with a pure condition:
 
     match($x) {
@@ -2447,8 +2475,9 @@ is not currently in the grammar.
 ### Optics activation
 
 The accessor system uses two syntactic forms: **bracket**
-`$a[i]` for projection by runtime value, and **dot** `$a .name`
-for named field/method/discipline access. This split reflects
+`$a[i]` for projection by runtime value, and **dot** `$a.name`
+for named field/method/discipline access. Both bind tightly
+to `$name` with no space required. This split reflects
 an optic selection boundary: bracket selects an optic by a
 runtime-valued index (the index is itself a producer), while
 dot selects by a static symbol resolved at parse/check time.

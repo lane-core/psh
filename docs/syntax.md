@@ -675,58 +675,54 @@ psh extension — rc had no maps or structs.
 ### Accessor syntax
 
 psh has **two accessor forms** for projecting into structured
-values:
+values. Both bind tightly to `$name` — no space required.
 
 **Bracket `$a[i]`** — projection by runtime value. Tuples,
-lists, maps. The bracket binds immediately after `$name` with
-no space (the no-space rule mirrors rc's `$path(2)` subscript
-convention, but with `[` instead of `(`).
+lists, maps.
 
-**Dot `$a .name`** — named field/method/discipline access with
-a required leading space. The space disambiguates from free
-caret concatenation.
+**Dot `$a.name`** — named field/method/discipline access.
+The dot is **always** an accessor, never an implicit free
+caret. Concatenation uses explicit `^` only: `$stem^.c`.
 
 Grammar:
 
-    accessed_word = '$' VARNAME bracket_access* (ws dot_accessor)*
-    bracket_access = '[' expr ']'
+    accessed_word = '$' VARNAME (bracket_access | dot_accessor)*
+    bracket_access = '[' (expr '..' expr | expr) ']'
     dot_accessor   = '.' NAME
-    ws             = (' ' | '\t')+
 
 Examples:
 
     $pos[0]              # tuple projection (0-based, Lens)
-    $pos[1]              # second element
     $pos[-1]             # last element (negative indexing)
     $list[n]             # list element by index (AffineTraversal)
     $list[1..3]          # slice (AffineFold, returns List)
     $m['key']            # map lookup (AffineTraversal, returns Option)
-    $name .upper         # string method
-    $items .length       # list length
-    $s .x                # struct field (Lens)
+    $name.upper          # string method
+    $items.length        # list length
+    $s.x                 # struct field (Lens)
+    $result.ok           # Prism preview (returns Option)
 
 Parsing rules:
 
-- `$x[0]` (no space before `[`) is a bracket accessor.
-- `$x [0]` (space before `[`) is a separate argument.
-- `$x .name` (space before `.`) is a dot accessor.
-- `$x.name` (no space before `.`) is free caret: `$x ^ .name`.
+- `$x[0]` — bracket accessor (binds tight).
+- `$x [0]` (space before `[`) — separate argument.
+- `$x.name` — dot accessor (binds tight).
+- `$x^.name` — explicit caret concatenation.
+
+Inside double quotes: `"$name.txt"` = variable `$name` +
+literal `.txt` (dot terminates the variable reference per
+`var_char` boundary). For dot accessors in double quotes, use
+explicit delimiting: `"${name.upper}"`.
 
 Inside brackets is **expression context** — never glob.
 `$a[0-9]` is arithmetic (evaluates to -9), not a character
-class. The bracket content is a full psh expression
-type-checked at the bracket site: `Int` for lists/tuples,
-`Str` for maps. Tuple bracket access requires a **literal**
-integer index (the return type depends on which position is
-accessed).
+class. Tuple bracket access requires a **literal** integer
+index (statically bounds-checked, returns `T`). List and map
+bracket access returns `Option(T)` — use `??` for defaults.
 
-All bracket accesses return `Option(T)` — `some(val)` or
-`none` on miss (out-of-bounds for lists/tuples, missing key
-for maps). Users pattern-match on the option or use `let-else`.
-
-Bracket and dot compose freely: `$t[0] .name` is Lens ∘ Lens
-= Lens. `$m['key'] .name` is AffineTraversal ∘ Lens =
-AffineTraversal. `$s .field[0]` is Lens ∘ Lens = Lens.
+Bracket and dot compose freely: `$t[0].name` is Lens ∘ Lens
+= Lens. `$m['key'].name` is AffineTraversal ∘ Lens =
+AffineTraversal. `$s.field[0]` is Lens ∘ Lens = Lens.
 
 The dot accessor namespace is per-type. `def Type.name { }`
 registers a new accessor on a type. Capitalization
@@ -735,8 +731,7 @@ discipline functions (`def x.set { }`).
 
 **No `[*]` or `[@]` inside brackets.** psh does not adopt
 ksh93's all-elements subscript forms. `$a` already gives the
-whole list (every variable is a list); iteration uses
-`for x in $list { ... }`.
+whole list (every variable is a list).
 
 See specification.md §Tuples, §Structs, §Map type, and
 §Optics activation for the full typing rules.
@@ -774,10 +769,17 @@ rc's concatenation rule [1, §Free Carets]: when two word atoms
 are adjacent with no intervening whitespace, an implicit `^`
 (concatenation) is inserted between them.
 
-    $stem.c           →  $stem ^ .c
     $home/bin         →  $home ^ /bin
     $user@$host       →  $user ^ @ ^ $host
     'hello'$name      →  'hello' ^ $name
+    $stem^.c          →  $stem ^ .c    (explicit ^ required before .)
+
+**`.` is NOT a free caret trigger.** Unlike rc, psh reserves
+`.` for dot accessors. `$stem.c` is a dot accessor (looks up
+`.c` on the type of `$stem`), not concatenation. Use explicit
+`^` for file extension concatenation: `$stem^.c`. Or use
+double quotes: `"$stem.c"` (inside double quotes, `$stem`
+terminates at `.` per `var_char`, and `.c` is literal text).
 
 Explicit `^` remains available and allows whitespace on either
 side: `a ^ b` concatenates `a` and `b`. Free carets require
@@ -908,8 +910,8 @@ is the escape hatch for variable names containing characters
 that would otherwise terminate a bare `$name` reference.
 
     ${x.get}          looks up variable named literally "x.get"
-    $x.get            free caret: $x ^ .get (rc heritage)
-    $x .get           dot accessor: call the .get method on $x
+    $x.get            dot accessor: call the .get method on $x
+    $x^.get           explicit caret: $x ^ .get (concatenation)
     $x[0]             bracket accessor: first element of $x
 
 Braces are NOT the accessor form. Dot accessors are postfix
