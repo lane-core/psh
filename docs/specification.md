@@ -824,6 +824,27 @@ did not make. `def` is neutral — it defines a named computation
 without claiming its role in a cut, which only happens at the
 invocation site.
 
+**`return` typing.** `return` is a μ-binding: `return v` =
+`μα.⟨v | α⟩` where α is the `def`'s outer continuation. In
+value-returning defs (`def name : ReturnType`), `return expr`
+checks `expr` against the declared return type (check-mode).
+In status-returning defs (no declared return type), `return N`
+checks N against `Int`. Implicit return from the final
+expression in a body also checks against the declared return
+type. Every `return` in a body must agree on type — multiple
+return paths are checked against the same declared type.
+
+**`for`/`while` typing.** Both are commands (cuts). `for(x in
+list) { body }`: the list expression is a producer in synth-mode;
+the loop variable `x` is a μ̃-binder scoped to the body, typed as
+the list's element type; the body is a command sequence. The
+result status is the last iteration's status (0 for empty
+iteration — rc convention). `while(cond) { body }`: the
+condition pipeline is a command producing a status that drives
+⊕ coproduct elimination (continue on zero, stop on nonzero);
+the body is a command sequence. Both are standard cut forms —
+no polarity frame, no shift.
+
 
 ## Discipline functions
 
@@ -1185,17 +1206,32 @@ enforced by runtime checks rather than compile-time types.
 psh extracts 9P's conversation shape (not its wire protocol):
 
 1. **Negotiate** — one round-trip confirming both sides speak
-   the same protocol. For same-binary coprocesses this is a
-   trivial handshake ("psh protocol v1"). The negotiate step
-   exists so that the protocol is self-describing from the
-   first byte — no out-of-band assumptions about the peer.
+   the same protocol. Uses the standard wire format with tag 0
+   (reserved for negotiate). The shell sends a request frame
+   with payload `"psh/1"` on tag 0; the coprocess responds on
+   tag 0 with `"psh/1"` (accept) or an error frame (reject).
+   Mismatch or error kills the coprocess channel. Session type:
+   `Send<Version, Recv<VersionAck, S>>` where S transitions to
+   the per-tag multiplexed protocol. The negotiate step exists
+   so that the protocol is self-describing from the first byte
+   — no out-of-band assumptions about the peer.
 2. **Request-response pairs** — every request gets a response.
    No fire-and-forget. No ambiguity about whose turn it is.
 3. **Error at any step** — failure is always a valid response,
    not a special case.
-4. **Orderly teardown** — explicit close, not just EOF/SIGPIPE.
-   EOF is the fallback for crashes; explicit close is for
-   graceful shutdown with a reason.
+4. **Orderly teardown** — explicit close via a close frame,
+   not just EOF/SIGPIPE. The close frame uses tag 0 (the
+   negotiate tag, repurposed after negotiate completes) with
+   payload `"close"`. The coprocess acknowledges with a
+   response on tag 0 and then closes its end of the
+   socketpair. Outstanding per-tag sessions are cancelled
+   (Tflush sent for each, responses drained) before the close
+   frame is sent. EOF without a preceding close frame is the
+   crash fallback — the shell treats it as an unclean death,
+   fails all outstanding tags with error status, and reaps the
+   coprocess. Channel state machine: negotiate → active →
+   draining (outstanding tags being flushed) → close-sent →
+   close-acked → closed.
 
 ### Per-tag binary sessions
 
@@ -1337,9 +1373,29 @@ first-byte values are ordinary request/response payloads.
 Length-prefixed rather than newline-delimited because payloads
 may contain newlines (multi-line strings, command output,
 heredocs). The tag is binary u16 for efficiency; the payload
-is text (Display/FromStr). An error frame with an empty
+is UTF-8 text (Display/FromStr). An error frame with an empty
 `error_message` is a protocol violation; the shell tears down
 the session on receipt.
+
+**MAX_FRAME_SIZE** is 16 MiB. Any frame whose length prefix
+exceeds this is a protocol violation: the channel is torn
+down, outstanding tags fail with error status, and the
+coprocess is killed. This is a defensive constant to bound
+memory use against buggy or hostile peers — not a semantic
+limit on legitimate payloads.
+
+**Reserved first-byte values.** `'!'` (0x21) marks error
+responses; `'#'` (0x23) marks flush transactions. Normal
+request/response payloads must not begin with these bytes.
+If a payload naturally starts with `!` or `#`, the sender
+must prefix it with a NUL byte (0x00) as an escape; the
+receiver strips a leading NUL. Direction (Tflush vs Rflush)
+is determined by which side of the socketpair the frame
+arrives on — the shell writes to its end and reads from the
+coprocess's end.
+
+**Tag 0 is reserved** for the negotiate and close protocols.
+User-visible tags start at 1.
 
 ### Named coprocesses
 
@@ -1366,18 +1422,21 @@ Rust's `Drop` on `Coproc` handles cleanup.
 
 **Topology.** The shell is the hub. No coprocess-to-coprocess
 communication — star topology. Each coprocess talks only to
-the shell. This is consistent with Carbone, Marin, and
-Schürmann's forwarder logic [CMS]: their **MCutF admissibility
-theorem** (§5) proves that any multiparty compatible
-composition of session-typed processes can be composed through
-a single forwarder, and that forwarders strictly generalize
-classical coherence proofs (§4). The shell-as-hub arrangement
-is therefore not a restriction psh accepts for engineering
-convenience — it is the general case of multiparty compatible
-composition. If N coprocesses with per-tag local session types
-are jointly multiparty compatible, then a shell that forwards
-messages according to their composition is a witness of that
-compatibility.
+the shell. Deadlock freedom follows from a simple per-channel
+argument: each shell-to-coprocess channel is an independent
+binary session with asymmetric initiative (shell always sends
+first), so deadlock freedom is immediate by duality per
+channel, and cross-channel deadlock is impossible because no
+coprocess blocks on another coprocess.
+
+Carbone, Marin, and Schürmann's forwarder logic [CMS] provides
+the generalization path: their **MCutF admissibility theorem**
+(§5) proves that multiparty compatible compositions can be
+mediated by a forwarder. The current design does not use CMS
+directly — the shell initiates and consumes, it does not
+forward between coprocesses — but if psh ever adds
+coprocess-to-coprocess routing, CMS provides the theoretical
+foundation for deadlock freedom of the mediated composition.
 
 Within this frame, psh restricts itself further: the shell
 always initiates and the coprocess always responds on each
@@ -2040,6 +2099,21 @@ patterns use `let-else`:
     }
     # path : Path, available below only if lookup succeeded
 
+**`let-else` typing rule** (refutable μ̃-binder):
+
+    Γ ⊢ M ⇒ A         (synth the RHS)
+    Γ ⊢ pat : A ⊣ Γ'   (pattern binds variables in Γ')
+    Γ ⊢ else-body diverges  (else-body must return or exit)
+    ─────────────────────────────────────────────────────
+    Γ' ⊢ rest            (bindings scoped below the let-else)
+
+The else-body is a consumer in Δ (an error continuation).
+It must diverge — `return N`, `exit`, or an infinite loop.
+If it does not diverge, the bindings from `pat` would be
+uninitialized on the fall-through path, which is a type
+error. Sort: command (cut). The pattern match + else branch
+is a single focused elimination with two arms.
+
 **Observation** uses `match` — variant names are constructors
 (`ok(42)`, `err('msg')`), not postfix accessors. There is no
 `$result .ok` Prism preview via dot; enum dispatch goes through
@@ -2057,9 +2131,12 @@ Cocartesian.
 Syntax: `pattern if(cond) => body`. The guard expression is
 restricted to **pure, side-effect-free expressions** —
 comparisons, arithmetic, boolean connectives, string equality.
-No commands, no command substitution, no effects. This
-restriction keeps guards in the positive subcategory P_t: the
-pattern binds variables (positive), the guard tests them
+No commands, no command substitution, no effects. The parser
+accepts the full expression grammar in guard position; the
+**checker** enforces the purity restriction by rejecting guard
+expressions containing command invocations, command substitution,
+or assignments. This keeps guards in the positive subcategory
+P_t: the pattern binds variables (positive), the guard tests them
 (positive-to-positive), no polarity boundary is crossed.
 
 Guard failure backtracks to the next arm. Desugaring to focused
@@ -2348,6 +2425,25 @@ because the index may be out of bounds. `$l[n]` returns
 lookup, which also returns `Option(V)`. The partiality is
 inherent: `Int` does not encode bounds, and psh has no
 dependent types to prove `0 ≤ n < len(l)` statically.
+
+**`.fields` and `.values` on structs** are Getters (read-only,
+always succeed, no update path) — not Lenses, because they
+produce a new list, not a focus into the struct's storage.
+Setting through `.fields` would not update the struct's
+fields; it would replace a list that happens to contain
+stringified field data. `.keys` and `.values` on maps are
+also Getters: `.values` returns a `List(V)`, not a traversable
+focus into the map. §8.5 classification: monadic (pure
+positive-to-positive Kleisli maps in W), thunkable, central,
+no polarity frame.
+
+**Discipline/bracket evaluation order.** When bracket access
+is applied to a disciplined variable — `$m['key']` where `m`
+has a `.get` discipline — the evaluation order is: `.get`
+fires on `$m` first (producing the Map value per CBV focusing
+/ Prop 8550), then bracket projects from that value. Bracket
+operates on the *value* produced by `.get`, not on the stored
+slot. The discipline is transparent to bracket composition.
 
 
 ## References
