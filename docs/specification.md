@@ -1796,14 +1796,6 @@ fields are present, types match field-by-field, field order
 in the literal does not matter. For positional form, arity
 matches the declaration, types match position-by-position.
 
-**Name-pun shorthand** (named form only). When the right-hand
-side of a field is a variable whose name matches the field,
-the `= NAME` part may be elided:
-
-    let x = 10
-    let y = 20
-    let p = Pos { x; y }         # equivalent to Pos { x = x; y = y }
-
 **Parser disambiguation.** The type name prefix resolves the
 brace ambiguity:
 
@@ -1887,14 +1879,12 @@ construction forms:
         Pos { x = 0; y = 0 }   => echo 'origin';
         Pos { x = _; y = 0 }   => echo 'on x-axis';
         Pos { x = 0; y = _ }   => echo 'on y-axis';
-        Pos { x; y }           => echo $x $y;        # name-pun
-        Pos { _, y }           => echo 'y=' $y        # positional
+        Pos { x = x; y = y }   => echo $x $y;        # named
+        Pos { _, y }            => echo 'y=' $y       # positional
     }
 
 All declared fields must appear in named patterns (wildcards
-`_` are fine for fields you don't care about). The name-pun
-shorthand `Pos { x; y }` is equivalent to `Pos { x = x; y = y }`
-and works in patterns as well as at construction sites.
+`_` are fine for fields you don't care about).
 
 **Pattern let** accepts struct patterns, binding multiple
 names from a single destructuring:
@@ -2109,8 +2099,8 @@ for payload-bearing variants, bare `tag` for nullary. The
 argument pattern `pat` can be a variable binding, a wildcard,
 a literal, a tuple pattern, a struct record pattern, or a
 nested enum pattern. Struct record patterns use the same
-brace form as struct construction with full support for the
-name-pun shorthand.
+type-prefixed brace form as struct construction (named and
+positional).
 
 **Pattern let** works on enum variants when the pattern is
 irrefutable (only one variant), which is rare. For refutable

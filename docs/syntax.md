@@ -96,8 +96,7 @@ Bindings extend the context Γ with a new name. They are
                 | NAME '(' pat ')'          -- enum payload variant pattern
                 | NAME                      -- enum nullary variant pattern (same production as variable binding; disambiguated by scope)
                 | literal                   -- literal pattern (Int, Str, Path, Bool)
-    field_pat   = NAME '=' pat              -- named field pattern
-                | NAME                      -- name-pun shorthand for NAME = NAME
+    field_pat   = NAME '=' pat              -- named field pattern (explicit)
 
 `rhs` is either a computation (a pipeline, which includes
 simple commands and builtin invocations) or a pure value. Both
@@ -335,8 +334,7 @@ a braced block or `=>` single-line form.
     tagged_pat  = NAME '(' pattern* ')'           -- enum variant destructure
     struct_pat  = TYPE_NAME '{' (named_field_pats | positional_pats) '}'
     named_field_pats = field_pat (';' field_pat)* ';'?
-    field_pat   = NAME '=' pattern                -- named field match
-                | NAME                            -- name-pun (binds NAME = NAME)
+    field_pat   = NAME '=' pattern                -- named field match (explicit)
     positional_pats  = pattern ',' pattern (',' pattern)*  -- positional, min 2
     tuple_pat   = '(' pattern (',' pattern)+ ')'  -- min 2 elements
     list_pat    = '(' ')'                          -- nil
@@ -609,8 +607,7 @@ command that consumes them runs.
     tuple       = '(' value ',' value (',' value)* ')'     -- minimum 2 elements
     struct_lit  = TYPE_NAME '{' (named_fields | positional_fields) '}'
     named_fields      = field_init (';' field_init)* ';'?
-    field_init        = NAME '=' value    -- named field
-                      | NAME             -- name-pun shorthand for NAME = NAME
+    field_init        = NAME '=' value    -- named field (explicit)
     positional_fields = value ',' value (',' value)*       -- minimum 2 values
     map_lit     = '{' map_entry (',' map_entry)* ','? '}'
     map_entry   = expr ':' expr           -- key (Str) : value
@@ -635,7 +632,6 @@ Disambiguated from blocks by the uppercase type prefix.
 
     Pos { x = 10; y = 20 }     # named — semicolons, field = value
     Pos { 10, 20 }              # positional — commas, declaration order
-    Pos { x; y }                # name-pun — x = $x, y = $y
 
 Named form uses `;` (sequential/named delimiter). Positional
 form uses `,` (structural product delimiter). Positional
