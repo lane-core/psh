@@ -50,21 +50,29 @@ The build sequence, in order. Each phase depends on the previous.
 - [ ] Fix `src/parse.rs` character predicates against the spec.
 - [ ] Implement the grammar from `docs/syntax.md` in layers:
   - [ ] Lexical primitives (already in the boilerplate)
-  - [ ] Word atoms: literals, quoted strings with backslash
-        escapes, variable references with postfix dot accessors,
-        bracket accessors, `$((...))`, command substitution
+  - [ ] Word atoms: literals, single-quoted and double-quoted
+        strings (with interpolation in double quotes), variable
+        references with tight-binding dot and bracket accessors,
+        `??` nil-coalescing, `$((...))`, command substitution
         `` `{} ``, process substitution `<{}`, tilde expansion,
         lambdas `|x| => body`
-  - [ ] Tuple literals `(a, b, c)` and list literals `(a b c)`
-  - [ ] Brace record literal `{ field = value; field = value }`
-        for struct construction; name-pun shorthand `{ x; y }`
-  - [ ] Tagged construction `NAME(args)` for enum variants and
-        Map; bare nullary variant names
+  - [ ] Tuple literals `(a, b, c)` (min 2) and list literals
+        `(a b c)`
+  - [ ] Type-prefixed struct literals: named `Pos { x = 10;
+        y = 20 }` and positional `Pos { 10, 20 }` (min 2)
+  - [ ] Map literals `{'key': v, 'key': v}` with string keys
+  - [ ] Tagged construction `NAME(args)` for enum variants;
+        bare nullary variant names
+  - [ ] Here documents (`<<EOF`, `<<'EOF'`, `<<-EOF`,
+        `<<[n]EOF`) and here-strings (`<<<`)
   - [ ] Type annotations with parametric constructors:
         `Result(Int, Str)`, `List(Int)`, `Option(Path)`
   - [ ] Expression precedence tower (or, and, pipeline, cmd_expr)
-  - [ ] Commands: `if(cond)`, `while(cond)`, `for(x in list)`,
-        `match(expr) { arms }`, `try { } catch (e) { }`,
+  - [ ] Pipe operators: `|`, `|[n]`, `|[n=m]` (fd-targeted)
+  - [ ] Commands: `if(cond)`, `if let pat = rhs`,
+        `while(cond)`, `for(x in list)`,
+        `match(expr) { arms }` with guards `if(cond)`,
+        `try { } catch (e) { }`,
         `trap SIGNAL (body body?)?`
   - [ ] Bindings: `let` with pattern LHS (wildcard, tuple
         destructuring, struct destructuring), `let-else` for
@@ -152,17 +160,24 @@ The build sequence, in order. Each phase depends on the previous.
       `.strip_suffix`, `.replace`, `.contains`
 - [ ] Sigil aliases: `$#x` for `.length`, `$"x` for `.join` on
       List (rc heritage)
-- [ ] Struct accessors auto-generated from declarations
-      (named `.field` and positional `.N`)
-- [ ] Enum Prism preview accessors `$v .variant` returning
-      `Option(Payload)`
+- [ ] Struct accessors auto-generated from declarations:
+      named `.field` (Lens), `.fields` (Getter, generic
+      traversal), `.values` (Getter, homogeneous structs only)
+- [ ] Enum Prism preview methods (`$v.ok`, `$v.err`)
+      returning `Option(Payload)`
+- [ ] Option Display convention: `some(v)` displays as `v`,
+      `none` displays as empty string
 
 ### Phase 7: Map type
 
-- [ ] `Map(K, V)` as a parametric type constructor
-- [ ] Construction form (under design discussion)
-- [ ] `.get`, `.set`, `.keys`, `.values` methods (key-indexed
-      view is affine traversal; iterate-all-values is traversal)
+- [ ] `Map(V)` with string keys as a parametric type constructor
+- [ ] Brace literal `{'key': v}`, `.insert` builder chain,
+      `Map.from_list : List((Str, V)) → Map(V)` bulk constructor
+- [ ] Bracket access `$m['key']` returning `Option(V)`
+- [ ] Bracket assignment `m['key'] = v` desugaring to
+      `m = $m.insert 'key' v`
+- [ ] `.keys` (Getter), `.values` (Getter), `.insert` (pure
+      functional update — distinct from discipline `.set`)
 
 ### Phase 8: job control and interactive features
 
@@ -187,9 +202,10 @@ The build sequence, in order. Each phase depends on the previous.
 
 ### Phase 10: polish
 
-- [ ] Error messages with source locations
-- [ ] Here-strings (`<<<`)
-- [ ] Heredocs (`<<EOF`)
+- [ ] Error messages with source locations (high investment,
+      critical for UX — Rust-quality diagnostics)
+- [ ] Per-command local variables (`VAR=val cmd`, rc heritage)
+- [ ] `$pipestatus : List(Int)` for pipeline diagnostics
 - [ ] `ulimit`, `umask`, `export` builtin (for listing;
       `let export` is the binding form)
 - [ ] `printf` (if fork cost matters for format strings)
