@@ -28,15 +28,17 @@ disambiguated by context and delimiters:
    the literal.
 
 3. **Tagged construction** — prefixed by a `NAME(` token with
-   **no space** between NAME and `(`. `ok(42)`, `Map(('k' 1))`.
+   **no space** between NAME and `(`. `ok(42)`, `some(v)`.
    Args inside the parens are a term expression whose form
    matches the constructor's declared shape. Used for enum
-   variants with payloads and for collection-shaped builtins like
-   Map. See `decision/tagged_construction_uniform`.
+   variants with payloads only. Map uses brace literal
+   `{'key': v}`, not tagged construction.
+   See `decision/tagged_construction_uniform`.
 
 Struct construction is **not** a fourth role of parens — structs
-use brace record literal `{ field = value; ... }`. Braces, not
-parens. See `decision/struct_record_literal_construction`.
+use type-prefixed brace literal `Pos { x = 10; y = 20 }` or
+positional `Pos { 10, 20 }`. Map uses brace literal
+`{'key': v}`. Both use braces, not parens.
 
 ## Why
 
@@ -63,20 +65,21 @@ The term-layer / type-layer symmetry:
 
 ## Consequences
 
-- `(a b c)` is a list; `(a, b, c)` is a tuple; `NAME(a b c)` (no
-  space after NAME) is tagged construction for coproducts or
-  collection builtins.
+- `(a b c)` is a list; `(a, b, c)` is a tuple (min 2 elements);
+  `NAME(a b c)` (no space after NAME) is tagged construction for
+  enum variants.
 - `NAME (a b c)` (with a space after NAME) is the command `NAME`
   invoked with a list argument.
-- Lists splice into tagged construction (`let xy = (10 20);
-  let m = Map($xy)`).
+- Lists splice into tagged construction (`let args = (42 'msg');
+  let r = err($args)`).
 - Tuples do not splice — `let t = (10, 20); f($t)` passes the
   tuple as a single arg.
 - The parser disambiguates all three roles with local context:
   whether there's a comma inside, and whether the `(` is preceded
   by a NAME token with no space.
-- Struct construction uses braces, not parens. Brace record
-  literal `{ field = value; ... }` is a separate grammar form.
+- Struct and map construction use braces, not parens. Type-
+  prefixed struct `Pos { ... }` and map literal `{'key': v}`
+  are separate grammar forms.
 
 ## Spec
 

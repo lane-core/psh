@@ -28,14 +28,16 @@ $list[1..3]    # slice — AffineFold
 $list[-1]      # last element — negative indexing
 ```
 
-**Dot `$x .name`** — named field/method/discipline access with
-required leading space. Disambiguates from rc's free caret
-(`$stem.c` = `$stem ^ .c`).
+**Dot `$x.name`** — named field/method/discipline access.
+Binds tightly to `$name` — no space required (space is
+optional). The `.` is always an accessor, never free caret.
+Concatenation uses explicit `^` only: `$stem^.c`.
 
 ```
-$s .x          # struct field — Lens
-$name .upper   # type method — Str.upper
-$count .get    # discipline function fire
+$s.x           # struct field — Lens
+$name.upper    # type method — Str.upper
+$count.get     # discipline function fire
+$result.ok     # Prism preview — returns Option
 ```
 
 Inside brackets is expression context (never glob). Tuple bracket
@@ -52,7 +54,12 @@ on an individual variable (`def count.set`).
 
 The postfix-dot form is **copattern-style** — a form from the sequent-calculus literature where codata observers are applied postfix to the value being observed. This matches psh's data/codata duality: accessors on positive types are Lens/Prism projections (data eliminators), and accessors on variables with disciplines are codata observers.
 
-The required leading space is a deliberate lexical rule that avoids parse-time type lookup. Without the space, `$stem.c` could be either a field access or a free caret concatenation, and disambiguating would need type information. With the space, `$stem .c` is unambiguously an accessor and `$stem.c` is unambiguously rc-style concatenation.
+As of 2026-04-12, the dot binds tightly — no space required.
+`.` is always an accessor; concatenation uses explicit `^`
+(`$stem^.c`). rc's free caret on `.` was an accident of the
+general rule, not a deliberate design choice (Duff: "user
+demand has dictated that rc insert carets"). psh claims `.`
+for accessors as a first-class language feature.
 
 Capitalization disambiguation for per-type namespace: `Type.name` vs `var.name` is a pattern from Smalltalk / ML tradition. Types are conventionally capitalized; variables conventionally lowercase; the parser uses the case of the identifier before the dot to decide which namespace the accessor lives in.
 
@@ -70,13 +77,12 @@ Capitalization disambiguation for per-type namespace: `Type.name` vs `var.name` 
   `List(T)` on homogeneous structs only). No bracket positional
   access on structs.
 - `m['key'] = v` on `let mut` maps desugars to
-  `m = $m .insert 'key' v` (discipline-transparent).
+  `m = $m.insert 'key' v` (discipline-transparent).
 - Discipline functions like `def count.get { ... }` define
   codata observers on the variable `count`.
 - Methods like `def Str.upper { ... }` extend the `Str` type
   uniformly across all Str-typed variables.
-- The free caret rule from rc is preserved — `$stem.c` (no
-  space) still concatenates.
+- `.` is never free caret. Concatenation uses `^` explicitly.
 
 Spec: `docs/specification.md` §"Two accessor forms: bracket and
 dot", §"Tuples", §"Structs", §"Map type", §"Optics activation".
