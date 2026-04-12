@@ -575,9 +575,11 @@ Key syntactic decisions with semantic grounding:
   are top-level commands in a list; psh's `match` uses structured
   `=>` arms with `;` separators. The operation is genuinely
   different. Patterns are constructor-shaped (`(h t)` for cons,
-  `(a, b, c)` for tuple, `ok(v)` for sum, `Pos(x y)` for struct
+  `(a, b, c)` for tuple, `ok(v)` for sum, `{ x; y }` for struct
   destructuring). Pattern alternation uses `|` between patterns
-  (ML/Rust convention, unambiguous inside match arms).
+  (ML/Rust convention, unambiguous inside match arms). Pure
+  guards via `if(cond)` after the pattern — restricted to
+  side-effect-free expressions (comparisons, arithmetic).
 - **Two accessor forms: bracket and dot.** Bracket `$a[i]` is
   projection by runtime value — tuples (`$t[0]`), lists
   (`$l[n]`), maps (`$m['key']`). Returns `Option(T)`. Dot
@@ -1498,13 +1500,46 @@ Tuples are products — fixed-size heterogeneous containers.
 They are the first connective psh adds beyond rc's list-of-
 strings base type.
 
-**Syntax.** Comma-separated values in parentheses.
-Space-separated values in parentheses remain lists (rc
-heritage). The comma is the disambiguator.
+**Syntax.** Parentheses in psh have three roles, distinguished
+by delimiter and prefix:
+
+| Form | Delimiter | Interpretation |
+|---|---|---|
+| `(a b c)` | space | List — splicable sequence, runtime arity |
+| `(a, b, c)` | comma | Tuple — single product value, fixed arity |
+| `NAME(a b c)` | space (after tag) | Tagged construction — enum variant |
+
+The comma is the list/tuple disambiguator. The tag prefix
+(`NAME` immediately followed by `(`, no space) commits the
+parser to enum variant construction.
 
     (a b c)         # list — rc heritage, space-separated
     (10, 20)        # tuple — comma-separated
     ('lane', '/home/lane', 1000)
+
+Under the "every variable is a list" model, both store as
+lists at the outer level, but the element types differ:
+
+- `let xy = (10 20)` stores `[Int, Int]` — a list of two ints.
+  `$#xy` is 2.
+- `let xy2 = (10, 20)` stores `[Tuple(Int, Int)]` — a list of
+  one tuple value. `$#xy2` is 1.
+
+**Lists splice, tuples do not.** Substitution splices lists
+into argument positions; tuples remain bundled as a single
+value. This is visible when constructing an enum variant:
+
+    let args = (42 'reason')   # list — two values
+    let r = err($args)         # works — list splices, 2 args
+
+    let pair = (42, 'reason')  # tuple — one bundled value
+    let r = err($pair)         # does NOT work — 1 arg (arity mismatch)
+    let r = err($pair[0] $pair[1])   # explicit destructure
+
+The friction reflects a real semantic difference: lists are for
+argument sequences (spliced, iterated, consumed positionally),
+tuples are for structured values (kept bundled, accessed by
+position via bracket `$t[0]`, `$t[1]`).
 
 **Typing rule** (product introduction, classical):
 
@@ -1921,6 +1956,49 @@ patterns use `let-else`:
 `$result .ok` Prism preview via dot; enum dispatch goes through
 `match` arms. Profunctor constraint on the Prism structure:
 Cocartesian.
+
+**Guards** refine pattern arms with a pure condition:
+
+    match($x) {
+        ok(v) if($v > 0) => handle_positive $v;
+        ok(v)            => handle_nonpositive $v;
+        err(msg)         => fail $msg
+    }
+
+Syntax: `pattern if(cond) => body`. The guard expression is
+restricted to **pure, side-effect-free expressions** —
+comparisons, arithmetic, boolean connectives, string equality.
+No commands, no command substitution, no effects. This
+restriction keeps guards in the positive subcategory P_t: the
+pattern binds variables (positive), the guard tests them
+(positive-to-positive), no polarity boundary is crossed.
+
+Guard failure backtracks to the next arm. Desugaring to focused
+core groups arms by constructor tag and nests the guard as a
+`case` on `Bool` inside the arm body:
+
+    ⟨$x | case{
+        ok(v) ⇒ ⟨$v > 0 | case{true ⇒ A, false ⇒ B}⟩,
+        err(msg) ⇒ C
+    }⟩
+
+Every case in the desugared form is focused — one constructor,
+one arm. Guards are surface sugar that does not disturb the
+core calculus.
+
+**Exhaustiveness:** guarded arms are non-exhaustive. The
+checker treats them conservatively — a constructor with only
+guarded arms requires a fallback (unguarded arm or wildcard).
+
+**Why pure-only:** effectful guards would create a (+,−)
+composition site inside case dispatch. A failed effectful
+guard has already committed its side effects, making
+"resume matching" unsound — the world has changed between
+arms. Pure guards are thunkable (central per Duploids
+Proposition 8550), compose freely, and backtrack safely
+because no state was modified. Effectful conditions belong
+in `if` inside the arm body, where the effect is explicit
+and no backtracking occurs.
 
 Enums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.

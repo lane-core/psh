@@ -324,14 +324,18 @@ a braced block or `=>` single-line form.
     try_cmd     = 'try' body 'catch' '(' NAME ')' body
     trap_cmd    = 'trap' SIGNAL (body body?)?
 
-    match_arm   = pattern ('|' pattern)* '=>' lambda_body
+    match_arm   = pattern ('|' pattern)* guard? '=>' lambda_body
+    guard       = 'if' '(' expr ')'       -- pure expression only (no effects)
     pattern     = glob_pat | structural_pat | literal_pat | wildcard_pat
 
     glob_pat    = GLOB              -- e.g. *.txt, [a-z]*
     literal_pat = NUM | QUOTED
     wildcard_pat = '_'
-    structural_pat = tagged_pat | tuple_pat | list_pat
-    tagged_pat  = NAME '(' pattern* ')'           -- sum or struct destructure
+    structural_pat = tagged_pat | tuple_pat | list_pat | record_pat
+    tagged_pat  = NAME '(' pattern* ')'           -- enum variant destructure
+    record_pat  = '{' field_pat (';' field_pat)* ';'? '}'  -- struct destructure
+    field_pat   = NAME '=' pattern                -- named field match
+                | NAME                            -- name-pun (binds NAME = NAME)
     tuple_pat   = '(' pattern (',' pattern)+ ','? ')'
     list_pat    = '(' ')'                          -- nil
                 | '(' pattern pattern ')'          -- cons (head, tail)
