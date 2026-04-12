@@ -53,11 +53,12 @@ the relevant agent and Lane.
 - **Three roles of `()`.** Space-delimited list, comma-delimited
   tuple, tag-prefixed tagged construction. Lists splice into
   tagged construction; tuples do not.
-- **Structs: brace record literal construction.** `{ x = 10; y = 20 }`.
-  Check-mode only (needs expected type). Named accessors (`.x`,
-  `.y`) auto-generated. `.fields` returns `List((Str, Str))` for
-  generic traversal; `.values` returns `List(T)` on homogeneous
-  structs.
+- **Structs: type-prefixed brace construction.** Named form
+  `Pos { x = 10; y = 20 }` (semicolons), positional form
+  `Pos { 10, 20 }` (commas, min 2 fields). Self-typing via
+  type prefix. Named accessors (`.x`, `.y`) auto-generated.
+  `.fields` returns `List((Str, Str))` for generic traversal;
+  `.values` returns `List(T)` on homogeneous structs.
 - **Codata discipline functions.** `.get` is the codata observer
   (computes the value seen by the accessor), `.set` is the codata
   constructor. Both are `def` cells in Kl(Ψ). CBV focusing is the

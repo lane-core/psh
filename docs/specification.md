@@ -575,8 +575,8 @@ Key syntactic decisions with semantic grounding:
   are top-level commands in a list; psh's `match` uses structured
   `=>` arms with `;` separators. The operation is genuinely
   different. Patterns are constructor-shaped (`(h t)` for cons,
-  `(a, b, c)` for tuple, `ok(v)` for sum, `{ x; y }` for struct
-  destructuring). Pattern alternation uses `|` between patterns
+  `(a, b, c)` for tuple, `ok(v)` for sum, `Pos { x, y }` for
+  struct destructuring). Pattern alternation uses `|` between patterns
   (ML/Rust convention, unambiguous inside match arms). Pure
   guards via `if(cond)` after the pattern — restricted to
   side-effect-free expressions (comparisons, arithmetic).
@@ -1511,10 +1511,12 @@ by delimiter and prefix:
 
 The comma is the list/tuple disambiguator. The tag prefix
 (`NAME` immediately followed by `(`, no space) commits the
-parser to enum variant construction.
+parser to enum variant construction. Tuples require at least
+two elements — a 1-tuple is isomorphic to its element and
+adds nothing. `(42)` is a one-element list.
 
     (a b c)         # list — rc heritage, space-separated
-    (10, 20)        # tuple — comma-separated
+    (10, 20)        # tuple — comma-separated, minimum 2
     ('lane', '/home/lane', 1000)
 
 Under the "every variable is a list" model, both store as
@@ -1561,15 +1563,23 @@ Tuple element access uses **bracket notation** `$t[i]` with a
 literal integer index. The bracket binds immediately after
 `$name` with no space — `$pos[0]` is a projection; `$pos [0]`
 (with space) is a separate argument. Bracket indices are
-0-based. Negative indices count from the end: `$t[-1]` is the
-last element. Out-of-bounds returns `none` (AffineTraversal).
+0-based. Negative indices resolve statically (the checker knows
+the tuple arity): `$t[-1]` on a 2-tuple is `$t[1]`.
 
-Tuple bracket access requires a **literal** index — the result
-type depends on which position is accessed (`$t[0]` on
-`(Int, Str)` has type `Option(Int)`; `$t[1]` has type
-`Option(Str)`). A runtime variable `$t[$n]` on a heterogeneous
-tuple is a type error because the return type cannot be
-determined statically.
+Tuple bracket access requires a **literal** index and is
+**statically bounds-checked** — out-of-bounds is a type error,
+not a runtime `none`. The result type is the field type
+directly: `$t[0]` on `(Int, Str)` has type `Int`; `$t[1]`
+has type `Str`. This makes tuple bracket a true **Lens**
+(total, Cartesian) — PutGet/GetPut/PutPut hold
+unconditionally. A runtime variable `$t[$n]` on a
+heterogeneous tuple is a type error because the return type
+cannot be determined statically.
+
+(Lists and maps return `Option(T)` because their indices are
+runtime values and partiality is inherent. Tuples are different:
+the index is a literal, the arity is static, and the checker
+can reject out-of-bounds at compile time.)
 
 Composition: `$nested[0][1]` = `first . second` — ordinary
 function composition of profunctor optics, chained
@@ -1615,68 +1625,73 @@ newline. The declaration is nominal — `Pos` and `Tuple(Int,
 Int)` are distinct types even though they share representation,
 and there is no coercion between them.
 
-**Construction** uses brace record literal with `name = value`
-entries:
+**Construction** uses the type name followed by a brace literal:
+`Type { fields }`. The type name at the construction site makes
+struct literals self-typing (synth-capable) and syntactically
+unambiguous against blocks and map literals.
 
-    let p : Pos = { x = 10; y = 20 }
-    let red : Rgb = { r = 255; g = 0; b = 0 }
+Two construction forms, distinguished by delimiter:
 
-The record literal is a check-mode expression under the
-bidirectional type checking rule: its type is determined by
-the expected type from context (annotation, parameter type,
-return type, match arm scrutinee). Without context, a bare
-record literal is a type error at the binding site — the user
-must supply an annotation. The checker verifies that the
-literal provides exactly the declared fields — no missing
-fields, no extras, types match field-by-field. Field order in
-the literal does not matter; the declaration order is carried
-by the nominal type.
+*Named form* — semicolons, `field = value` entries:
 
-The struct constructor is only reachable through the brace
-record literal. There is no `Pos(...)` tagged-construction form
-for structs, and there is no `Pos.mk(...)` auto-generated
-constructor function. The brace literal is the sole path from
-a collection of values to a nominal struct.
+    let p = Pos { x = 10; y = 20 }
+    let red = Rgb { r = 255; g = 0; b = 0 }
 
-List splicing does not apply to struct construction (the form
-takes named fields, not a positional list). A user who wants
-to construct a struct from a list of values must unpack
-positionally and name each field explicitly:
+*Positional form* — commas, values in declaration order:
 
-    let xy = (10, 20)            # a tuple
-    let p : Pos = { x = $xy[0]; y = $xy[1] }
+    let p = Pos { 10, 20 }
+    let red = Rgb { 255, 0, 0 }
 
-**Name-pun shorthand.** When the right-hand side of a field is
-a variable whose name matches the field, the `= NAME` part may
-be elided:
+Positional form requires at least two fields. Single-field
+structs use the named form only.
+
+The checker verifies: for named form, all and only declared
+fields are present, types match field-by-field, field order
+in the literal does not matter. For positional form, arity
+matches the declaration, types match position-by-position.
+
+**Name-pun shorthand** (named form only). When the right-hand
+side of a field is a variable whose name matches the field,
+the `= NAME` part may be elided:
 
     let x = 10
     let y = 20
-    let p : Pos = { x; y }       # equivalent to { x = x; y = y }
+    let p = Pos { x; y }         # equivalent to Pos { x = x; y = y }
+
+**Parser disambiguation.** The type name prefix resolves the
+brace ambiguity:
+
+- `NAME {` where NAME is uppercase → struct construction
+- `{ expr : expr, ... }` → map literal (colon + commas)
+- `{ cmd; cmd }` → block (commands + semicolons)
+
+This is the `,` vs `;` rule that runs through the language:
+commas delimit structural products (tuples, positional records,
+maps), semicolons delimit sequential operations (commands,
+named record fields).
 
 **Construction in various contexts:**
 
-    # annotation at binder
-    let p : Pos = { x = 10; y = 20 }
+    # self-typing — no annotation needed
+    let p = Pos { x = 10; y = 20 }
+    let p = Pos { 10, 20 }
 
-    # return-type context
-    def origin : Pos { { x = 0; y = 0 } }
+    # return value
+    def origin : Pos { Pos { x = 0; y = 0 } }
     def move : Pos -> Pos {
-        |p| => { x = $p .x + 1; y = $p .y }
+        |p| => Pos { x = $p .x + 1; y = $p .y }
     }
 
-    # parameter-type context
+    # function argument — type explicit at the call site
     def distance : Pos -> Pos -> Int {
         |a b| => $(( abs($a .x - $b .x) + abs($a .y - $b .y) ))
     }
-    distance { x = 0; y = 0 } { x = 3; y = 4 }
+    distance Pos { x = 0; y = 0 } Pos { x = 3; y = 4 }
+    distance Pos { 0, 0 } Pos { 3, 4 }
 
     # missing or extra fields are type errors
-    let p : Pos = { x = 10 }               # ERROR: missing field y
-    let p : Pos = { x = 10; y = 20; z = 5 } # ERROR: no field z on Pos
-
-    # no context is a type error
-    let p = { x = 10; y = 20 }             # ERROR: no context to determine struct type
+    let p = Pos { x = 10 }               # ERROR: missing field y
+    let p = Pos { x = 10; y = 20; z = 5 } # ERROR: no field z on Pos
 
 **Accessors** are auto-generated from the declaration. A
 `struct Pos { x: Int; y: Int }` declaration registers:
@@ -1692,7 +1707,7 @@ be elided:
 
 Named accessors work on struct values:
 
-    let p : Pos = { x = 10; y = 20 }
+    let p = Pos { x = 10; y = 20 }
     echo $p .x               # 10
     echo $p .y               # 20
 
@@ -1718,33 +1733,34 @@ auto-generated `def Type.fields` and `def Type.values`
 methods — computations that produce new lists, not lens
 projections into the struct's storage.
 
-**Pattern matching** uses a brace record pattern symmetric with
-construction:
+**Pattern matching** uses the type name prefix, symmetric with
+construction. Named and positional patterns mirror the two
+construction forms:
 
     match ($p) {
-        { x = 0; y = 0 }   => echo 'origin';
-        { x = _; y = 0 }   => echo 'on x-axis';
-        { x = 0; y = _ }   => echo 'on y-axis';
-        { x = x; y = y }   => echo 'elsewhere: '$x' '$y;
-        { x; y }           => echo 'name-pun form: '$x' '$y
+        Pos { x = 0; y = 0 }   => echo 'origin';
+        Pos { x = _; y = 0 }   => echo 'on x-axis';
+        Pos { x = 0; y = _ }   => echo 'on y-axis';
+        Pos { x; y }           => echo $x $y;        # name-pun
+        Pos { _, y }           => echo 'y=' $y        # positional
     }
 
-All declared fields must appear in the pattern (wildcards `_`
-are fine for fields you don't care about). The name-pun
-shorthand `{ x; y }` is equivalent to `{ x = x; y = y }` and
-works at patterns as well as at construction sites.
+All declared fields must appear in named patterns (wildcards
+`_` are fine for fields you don't care about). The name-pun
+shorthand `Pos { x; y }` is equivalent to `Pos { x = x; y = y }`
+and works in patterns as well as at construction sites.
 
-**Pattern let** accepts struct patterns too, binding multiple
+**Pattern let** accepts struct patterns, binding multiple
 names from a single destructuring:
 
-    let { x = px; y = py } = $p
-    let { x; y } = $p                # name-pun form
+    let Pos { x, y } = $p            # positional
+    let Pos { x = px; y = py } = $p  # named, explicit binding names
 
 **Mutation** requires `let mut`. Struct fields are immutable by
 default; mutation takes the form of whole-struct replacement:
 
-    let mut p : Pos = { x = 10; y = 20 }
-    p = { x = 30; y = $p .y }
+    let mut p = Pos { x = 10; y = 20 }
+    p = Pos { x = 30; y = $p .y }
 
 No field-level mutation syntax (`p .x = 30`). Whole-struct
 replacement is consistent with the value model: structs are
@@ -1753,26 +1769,35 @@ variable. Field-level mutation sugar can come later as the
 Lens `set` operation if a clear use case emerges.
 
 **No anonymous records.** Every record type requires a `struct`
-declaration. The brace literal `{ x = 10; y = 20 }` is a
-check-mode construction form — it needs an expected type from
-context to be meaningful. There is no free-standing "record
-type" that accepts arbitrary field names structurally; the
-type at construction is always a declared struct.
+declaration. There is no free-standing "record type" that
+accepts arbitrary field names structurally; the type at
+construction is always a declared struct, named at the
+construction site.
 
-**Typing rule** (named product introduction, check-mode):
+**Typing rules** (named product introduction):
+
+*Named form* — the type name `T` appears in the literal;
+fields are checked against the declaration:
 
     struct T { f₁:A₁; …; fₙ:Aₙ } ∈ Σ
-    Γ ⊢ e₁ ⇐ A₁  …  Γ ⊢ eₙ ⇐ Aₙ       (check each field against declared type)
-    { f₁, …, fₙ } = { π | (fπ = _) ∈ literal }  (all and only declared fields present)
-    ──────────────────────────────────────────────────────
-    Γ ⊢ { f₁ = e₁; …; fₙ = eₙ } ⇐ T
+    Γ ⊢ e₁ ⇐ A₁  …  Γ ⊢ eₙ ⇐ Aₙ
+    { f₁, …, fₙ } = { π | (fπ = _) ∈ literal }
+    ──────────────────────────────────────────────
+    Γ ⊢ T { f₁ = e₁; …; fₙ = eₙ } ⇒ T
 
-The double-arrow `⇐` denotes check-mode (the expected type `T`
-flows top-down from context into the judgment). There is no
-synth-mode rule for bare record literals because the literal
-carries no type-level information at its surface — the nominal
-type must come from context. This is the standard bidirectional
-treatment of check-only expressions.
+*Positional form* — values checked against declaration-order
+types:
+
+    struct T { f₁:A₁; …; fₙ:Aₙ } ∈ Σ     n ≥ 2
+    Γ ⊢ e₁ ⇐ A₁  …  Γ ⊢ eₙ ⇐ Aₙ
+    ──────────────────────────────────────────────
+    Γ ⊢ T { e₁, …, eₙ } ⇒ T
+
+Both rules synthesize the type `T` (the `⇒` arrow) — the type
+name is present in the literal, so no check-mode context is
+needed. The type name at the construction site is what makes
+struct literals self-typing, unlike the earlier check-only
+design.
 
 **In VDC terms:** a struct declaration specifies a cell with a
 fixed multi-source signature. `Pos : Int, Int → Pos` says the

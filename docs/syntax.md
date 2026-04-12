@@ -331,12 +331,14 @@ a braced block or `=>` single-line form.
     glob_pat    = GLOB              -- e.g. *.txt, [a-z]*
     literal_pat = NUM | QUOTED
     wildcard_pat = '_'
-    structural_pat = tagged_pat | tuple_pat | list_pat | record_pat
+    structural_pat = tagged_pat | tuple_pat | list_pat | struct_pat
     tagged_pat  = NAME '(' pattern* ')'           -- enum variant destructure
-    record_pat  = '{' field_pat (';' field_pat)* ';'? '}'  -- struct destructure
+    struct_pat  = TYPE_NAME '{' (named_field_pats | positional_pats) '}'
+    named_field_pats = field_pat (';' field_pat)* ';'?
     field_pat   = NAME '=' pattern                -- named field match
                 | NAME                            -- name-pun (binds NAME = NAME)
-    tuple_pat   = '(' pattern (',' pattern)+ ','? ')'
+    positional_pats  = pattern ',' pattern (',' pattern)*  -- positional, min 2
+    tuple_pat   = '(' pattern (',' pattern)+ ')'  -- min 2 elements
     list_pat    = '(' ')'                          -- nil
                 | '(' pattern pattern ')'          -- cons (head, tail)
 
@@ -592,17 +594,19 @@ command that consumes them runs.
     ws          = (' ' | '\t')+
 
     value       = '(' word* ')'            -- list (homogeneous, runtime arity)
-                | tuple                   -- anonymous product (comma-delim, static arity)
-                | record_lit              -- struct construction (named fields, check-mode)
+                | tuple                   -- anonymous product (comma-delim, min 2)
+                | struct_lit              -- struct construction (type-prefixed)
                 | map_lit                 -- map construction (string keys, synth-capable)
                 | variant_val             -- enum construction (tagged)
                 | nullary_variant         -- enum nullary variant (bare name)
                 | lambda
                 | word
-    tuple       = '(' word ',' (word ',')* word? ')'
-    record_lit  = '{' field_init (';' field_init)* ';'? '}'
-    field_init  = NAME '=' value          -- named field
-                | NAME                    -- name-pun shorthand for NAME = NAME
+    tuple       = '(' value ',' value (',' value)* ')'     -- minimum 2 elements
+    struct_lit  = TYPE_NAME '{' (named_fields | positional_fields) '}'
+    named_fields      = field_init (';' field_init)* ';'?
+    field_init        = NAME '=' value    -- named field
+                      | NAME             -- name-pun shorthand for NAME = NAME
+    positional_fields = value ',' value (',' value)*       -- minimum 2 values
     map_lit     = '{' map_entry (',' map_entry)* ','? '}'
     map_entry   = expr ':' expr           -- key (Str) : value
     variant_val = NAME '(' value ')'      -- enum construction with payload
@@ -616,10 +620,29 @@ space-separated (rc heritage). The comma disambiguates.
     ('lane', '/home/lane', 1000)
 
 A trailing comma is permitted: `(10, 20,)` = `(10, 20)`.
-A single-element tuple requires a trailing comma: `(42,)`.
-Without the comma, `(42)` is a one-element list.
+Tuples require at least 2 elements. `(42)` is a one-element
+list — a 1-tuple is isomorphic to its element and adds nothing.
 
 psh extension — rc had no tuples.
+
+**Struct literals.** Type name followed by brace fields.
+Disambiguated from blocks by the uppercase type prefix.
+
+    Pos { x = 10; y = 20 }     # named — semicolons, field = value
+    Pos { 10, 20 }              # positional — commas, declaration order
+    Pos { x; y }                # name-pun — x = $x, y = $y
+
+Named form uses `;` (sequential/named delimiter). Positional
+form uses `,` (structural product delimiter). Positional
+requires at least 2 fields. Single-field structs use named
+form only.
+
+**Map literals.** Bare braces with colon key-value separator.
+Disambiguated from blocks by the `:` after the first key.
+
+    { 'name': 1, 'age': 2 }    # map — colon + commas
+
+psh extension — rc had no maps or structs.
 
 ### Accessor syntax
 
