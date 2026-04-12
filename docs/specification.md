@@ -611,6 +611,143 @@ Key syntactic decisions with semantic grounding:
   escapes.
 
 
+## Bidirectional type checking
+
+psh's typechecker is bidirectional — types flow through
+expressions in two directions without unification variables
+and without cross-expression inference. The algorithm is
+strictly weaker than Hindley-Milner and strictly stronger
+than monomorphic surface-form checking; it is the well-studied
+"bottom-up synth plus top-down check" pattern [Pierce-Turner,
+Dunfield].
+
+### The two modes
+
+Every expression is checked in one of two modes:
+
+- **Synth mode** (`Γ ⊢ e ⇒ T`): the expression `e` is given
+  and the checker computes ("synthesizes") a type `T` from
+  its surface form. Literals, typed variables, and expressions
+  with sufficient type information at the leaves synth their
+  type bottom-up.
+
+- **Check mode** (`Γ ⊢ e ⇐ T`): the expression `e` and an
+  expected type `T` are both given, and the checker verifies
+  that `e` inhabits `T`. Record literals, enum construction
+  with under-determined type parameters, and expressions whose
+  type is determined by context are checked top-down against
+  the expected type.
+
+Which mode an expression is in depends on where it appears:
+
+- **Synth-site**: a position where no expected type is supplied
+  by context. A `let x = e` binding without an annotation is a
+  synth site for `e`.
+- **Check-site**: a position where the expected type is known
+  from context. `let x : T = e`, function argument positions,
+  `def` return type, match arm scrutinee binding, pattern let
+  binders — all are check sites for the expression they contain.
+
+### Three structural rules
+
+**(Check from synth) — the bridge rule.** If an expression can
+synth a type and the context expects a type, the checker
+verifies the two agree:
+
+    Γ ⊢ e ⇒ T'    T' = T
+    ─────────────────────
+    Γ ⊢ e ⇐ T
+
+Type equality is nominal (`Pos` and `Tuple(Int, Int)` are
+distinct) and structural within a type (tuple arities and
+element types must match position-by-position).
+
+**(Annotation) — the synth-from-check rule.** If the user
+provides an annotation, the annotated expression synths to
+the annotated type after checking in check-mode against it:
+
+    Γ ⊢ e ⇐ T
+    ──────────────────
+    Γ ⊢ (e : T) ⇒ T
+
+This is how the user supplies type information that the
+expression alone cannot provide.
+
+**(Ambiguity is error) — the rule without deferral.** If an
+expression has no synth rule applicable to its form and no
+check-site context to supply a type, the binding is a type
+error at the binding site. The checker does NOT defer by
+leaving a type hole and waiting for a later use to pin it.
+Users must supply an annotation explicitly when the
+expression carries no type information:
+
+    let r = none                         # ERROR: no synth rule for nullary enum constructor; no context
+    let r : Option(Str) = none           # OK: annotation provides context
+
+This is rule (a) from the polymorphism deliberation: under-
+determined bindings are rejected at their site rather than
+carried as open obligations. The consequence is a simpler
+checker and clearer errors, at the cost of requiring
+annotations in the narrow cases where synth gives nothing.
+
+### Expressions by mode
+
+| Expression | Mode | Rule |
+|---|---|---|
+| Literal (`42`, `'str'`, `/path`) | Synth | bottom-up from literal form |
+| Variable `$x` | Synth | from binding in scope |
+| Tuple literal `(a, b, c)` | Synth | each component synth-checked |
+| List literal `(a b c)` | Synth | each component must share type |
+| Tagged construction `ok(42)` | Synth-if-all-params-pinned, Check otherwise | type parameter pinning from payload |
+| Struct record literal `{ x = 10; y = 20 }` | Check-only | no synth rule; needs expected struct type |
+| Nullary enum `none` | Check-only | no synth rule; needs expected enum type |
+| Match arm body | Check (against match's expected type) | each arm checked against same type |
+| `def` body tail expression | Check (against declared return type) | bidirectional flow from return annotation |
+| Lambda `\|x\| => body` | Check against expected function type | parameter types from context |
+| Function call `f $arg` | Synth if `f` is annotated/declared | args checked against declared parameter types |
+
+Expressions not listed fall back to synth when their form
+determines a type.
+
+### Type parameter pinning for parametric types
+
+Parametric type constructors (`Option(T)`, `Result(T, E)`,
+`List(T)`, `Map(K, V)`, user-declared `MyEnum(A, B)`) have
+type parameters that must be pinned at the construction site
+via a combination of synth and check:
+
+- **Pinned bottom-up (synth)** — a typed argument position
+  pins the corresponding parameter. `some(42)` synthesizes
+  `Option(Int)` because `42 : Int` pins `T = Int`.
+- **Pinned top-down (check)** — the expected type at the
+  construction site pins any parameter not pinned bottom-up.
+  `let r : Option(Str) = none` pins `T = Str` from the
+  annotation because `none` has no argument to synth from.
+- **Both, reconciled** — if both directions pin the same
+  parameter, they must agree or it is a type error.
+  `let r : Option(Int) = some('x')` is rejected because synth
+  gives `T = Str` and check gives `T = Int`.
+
+If any parameter remains unpinned after both directions run,
+the binding is an error per the ambiguity rule above.
+
+### Why not Hindley-Milner?
+
+The bidirectional algorithm has no unification variables, no
+constraint solver, no let-generalization, and no inference
+across expression boundaries. It terminates in linear time
+on the AST size with no backtracking. The implementation
+footprint is ~300-600 lines of Rust with readable error
+messages (vs ~1200+ for HM with comparable ergonomics).
+
+HM's additional power — full rank-1 let-polymorphism on
+function signatures — is deliberately out of scope (see
+§Non-goals). The bidirectional algorithm covers every
+psh construct that actually exists, including parametric
+type constructors on user-declared types, without paying
+for machinery psh will never use.
+
+
 ## Two kinds of callable
 
 ksh93's compound variables [SPEC, §Compound variables] were its
@@ -1413,91 +1550,180 @@ postfix dot with a space (`$x .field`).
 
 ## Structs (named products, ×)
 
-Structs are named product types — tagged tuples with declared
-field types and named accessors. A struct declaration does two
-things: registers a constructor for tagged construction, and
-auto-generates named and positional accessors on the declared
-type.
+Structs are named product types — nominal records with
+declared field types and named accessors. A struct declaration
+does two things: registers a nominal type whose values have
+the declared shape, and auto-generates named and positional
+accessors on the declared type.
 
 **Declaration:**
 
     struct Pos {
-        x: Int
+        x: Int;
         y: Int
     }
 
     struct Rgb {
-        r: Int
-        g: Int
+        r: Int;
+        g: Int;
         b: Int
     }
 
-**Construction** uses the uniform tagged-construction rule —
-`NAME(args)` with args as a space-delimited word list:
+Fields are declared with `name: Type` form separated by `;` or
+newline. The declaration is nominal — `Pos` and `Tuple(Int,
+Int)` are distinct types even though they share representation,
+and there is no coercion between them.
 
-    let p = Pos(10 20)
-    let red = Rgb(255 0 0)
+**Construction** uses brace record literal with `name = value`
+entries:
 
-Construction is **positional only**, bound by declaration
-order. `Pos(10 20)` binds `x=10`, `y=20` because `x` is
-declared first. Arity mismatch is a binding-time error. There
-is no named construction form (`Pos(x: 10, y: 20)`) — now or
-in the future. The uniform tagged-construction rule is the
-only constructor syntax.
+    let p : Pos = { x = 10; y = 20 }
+    let red : Rgb = { r = 255; g = 0; b = 0 }
 
-List splicing works uniformly because `NAME(args)` is a word
-list:
+The record literal is a check-mode expression under the
+bidirectional type checking rule: its type is determined by
+the expected type from context (annotation, parameter type,
+return type, match arm scrutinee). Without context, a bare
+record literal is a type error at the binding site — the user
+must supply an annotation. The checker verifies that the
+literal provides exactly the declared fields — no missing
+fields, no extras, types match field-by-field. Field order in
+the literal does not matter; the declaration order is carried
+by the nominal type.
 
-    let xy = (10 20)
-    let p = Pos($xy)         # splices — Pos receives 2 args
+The struct constructor is only reachable through the brace
+record literal. There is no `Pos(...)` tagged-construction form
+for structs, and there is no `Pos.mk(...)` auto-generated
+constructor function. The brace literal is the sole path from
+a collection of values to a nominal struct.
 
-**Accessors** are auto-generated. A `struct Pos { x: Int; y:
-Int }` declaration registers:
+List splicing does not apply to struct construction (the form
+takes named fields, not a positional list). A user who wants
+to construct a struct from a list of values must unpack
+positionally and name each field explicitly:
+
+    let xy = (10, 20)            # a tuple
+    let p : Pos = { x = $xy .0; y = $xy .1 }
+
+**Name-pun shorthand.** When the right-hand side of a field is
+a variable whose name matches the field, the `= NAME` part may
+be elided:
+
+    let x = 10
+    let y = 20
+    let p : Pos = { x; y }       # equivalent to { x = x; y = y }
+
+**Construction in various contexts:**
+
+    # annotation at binder
+    let p : Pos = { x = 10; y = 20 }
+
+    # return-type context
+    def origin : Pos { { x = 0; y = 0 } }
+    def move : Pos -> Pos {
+        |p| => { x = $p .x + 1; y = $p .y }
+    }
+
+    # parameter-type context
+    def distance : Pos -> Pos -> Int {
+        |a b| => $(( abs($a .x - $b .x) + abs($a .y - $b .y) ))
+    }
+    distance { x = 0; y = 0 } { x = 3; y = 4 }
+
+    # missing or extra fields are type errors
+    let p : Pos = { x = 10 }               # ERROR: missing field y
+    let p : Pos = { x = 10; y = 20; z = 5 } # ERROR: no field z on Pos
+
+    # no context is a type error
+    let p = { x = 10; y = 20 }             # ERROR: no context to determine struct type
+
+**Accessors** are auto-generated from the declaration. A
+`struct Pos { x: Int; y: Int }` declaration registers:
 
 - `.x` and `.y` — named accessors (Lens projections on the
   `Pos` type)
-- `.0` and `.1` — positional accessors (indexed by declaration
-  order)
+- `.0` and `.1` — positional accessors indexed by declaration
+  order (for generic programming that iterates over fields by
+  index)
 
 Both forms work on struct values:
 
-    let p = Pos(10 20)
+    let p : Pos = { x = 10; y = 20 }
     echo $p .x               # 10 — named
     echo $p .0               # 10 — positional (same field)
     echo $p .y               # 20
     echo $p .1               # 20
 
-Named accessors are the primary form; positional accessors are
-for generic programming that iterates over fields by index.
 The struct declaration is a batch registration in the per-type
 accessor namespace, equivalent to writing `def Pos.x { }` and
-`def Pos.y { }` (plus the numeric fallbacks) by hand.
+`def Pos.y { }` (plus numeric fallbacks) by hand.
+
+**Pattern matching** uses a brace record pattern symmetric with
+construction:
+
+    match ($p) {
+        { x = 0; y = 0 }   => echo 'origin';
+        { x = _; y = 0 }   => echo 'on x-axis';
+        { x = 0; y = _ }   => echo 'on y-axis';
+        { x = x; y = y }   => echo 'elsewhere: '$x' '$y;
+        { x; y }           => echo 'name-pun form: '$x' '$y
+    }
+
+All declared fields must appear in the pattern (wildcards `_`
+are fine for fields you don't care about). The name-pun
+shorthand `{ x; y }` is equivalent to `{ x = x; y = y }` and
+works at patterns as well as at construction sites.
+
+**Pattern let** accepts struct patterns too, binding multiple
+names from a single destructuring:
+
+    let { x = px; y = py } = $p
+    let { x; y } = $p                # name-pun form
 
 **Mutation** requires `let mut`. Struct fields are immutable by
 default; mutation takes the form of whole-struct replacement:
 
-    let mut p = Pos(10 20)
-    p = Pos(30 $p .1)        # rebind with new value
+    let mut p : Pos = { x = 10; y = 20 }
+    p = { x = 30; y = $p .y }
 
-No field-level mutation syntax (`p .x = 30`) in v1. Whole-struct
+No field-level mutation syntax (`p .x = 30`). Whole-struct
 replacement is consistent with the value model: structs are
 positive data, Clone, and mutation means rebinding the
-variable. Field-level mutation sugar can come later as the Lens
-`set` operation.
+variable. Field-level mutation sugar can come later as the
+Lens `set` operation if a clear use case emerges.
 
 **No anonymous records.** Every record type requires a `struct`
-declaration. `(10, 20)` (tuple, anonymous) handles the "quick
-pair" case; named structs handle the "real record" case. No
-middle ground — the appendix's proposed `(x 3 y 4)` anonymous
-record syntax is not adopted.
+declaration. The brace literal `{ x = 10; y = 20 }` is a
+check-mode construction form — it needs an expected type from
+context to be meaningful. There is no free-standing "record
+type" that accepts arbitrary field names structurally; the
+type at construction is always a declared struct.
 
-**Typing rule** (named product introduction):
+**Typing rule** (named product introduction, check-mode):
 
-    Γ ⊢ t₁ : A₁ | Δ    ...    Γ ⊢ tₙ : Aₙ | Δ
-    ────────────────────────────────────────────
-    Γ ⊢ Pos(t₁ ... tₙ) : Pos | Δ
+    struct T { f₁:A₁; …; fₙ:Aₙ } ∈ Σ
+    Γ ⊢ e₁ ⇐ A₁  …  Γ ⊢ eₙ ⇐ Aₙ       (check each field against declared type)
+    { f₁, …, fₙ } = { π | (fπ = _) ∈ literal }  (all and only declared fields present)
+    ──────────────────────────────────────────────────────
+    Γ ⊢ { f₁ = e₁; …; fₙ = eₙ } ⇐ T
 
-where `struct Pos { f₁: A₁; ... ; fₙ: Aₙ }` is in scope.
+The double-arrow `⇐` denotes check-mode (the expected type `T`
+flows top-down from context into the judgment). There is no
+synth-mode rule for bare record literals because the literal
+carries no type-level information at its surface — the nominal
+type must come from context. This is the standard bidirectional
+treatment of check-only expressions.
+
+**Historical note.** An earlier draft of this spec committed to
+positional tagged construction (`Pos(10 20)`) with a "no named
+construction form, now or in the future" rule. That commitment
+has been reversed — brace record literal with named fields is
+the canonical form. The reversal is motivated by (a) the
+consistency of using the same brace/`;`/named-field grammar at
+declaration and construction sites, (b) the "don't lie with
+syntax" principle applied to the structural heterogeneity of
+struct fields, and (c) the bidirectional type checking
+discipline making check-mode record literals a clean fit.
 
 **In VDC terms:** a struct declaration specifies a cell with a
 fixed multi-source signature. `Pos : Int, Int → Pos` says the
@@ -1506,120 +1732,354 @@ one `Pos` horizontal arrow on the bottom. The named accessors
 are destructor invocations — the codata view of the struct,
 dual to the constructor's data view. The `struct` keyword is
 the syntactic form that batches the two views together:
-registering the constructor (positive introduction) and the
-projections (negative destructors) at once, unifying the
-data/codata duality in a single declaration.
+registering the constructor (positive introduction, realized
+as the brace record literal under check-mode) and the
+projections (negative destructors, realized as the `.x`/`.0`
+accessors) at once, unifying the data/codata duality in a
+single declaration.
 
 
-## Sums (coproducts, +)
+## Enums (coproducts, +)
 
-Sums are coproducts — tagged values representing alternatives.
-They are the second connective psh adds beyond rc's base types.
+Enums are nominal coproducts — user-declared tagged unions
+with a fixed set of named variants. Each variant has an
+optional payload type, and construction uses tagged form
+`variant(payload)` for variants that carry a payload, bare
+`variant` for nullary variants.
 
-**Syntax.** `tag(payload)` constructs a tagged value. `tag` is
-a bare word, immediately followed by `(` (no space). The
-payload is a value inside the parens.
+**Declaration:**
 
-    let result = ok(42)
-    let e = err('not found')
-    let opt = some('/tmp/file')
-    let empty = none()
+    enum Option(T) {
+        some(T);
+        none
+    }
 
-In command position, `ok 42` (with space) is a command named
-`ok` with argument `42` — not sum construction. The `NAME(`
-token (no space) commits the parser to sum construction.
+    enum Result(T, E) {
+        ok(T);
+        err(E)
+    }
 
-**Typing rule** (coproduct introduction, classical):
+    enum CompileResult {
+        success(Path);
+        warning(Str);
+        error(ErrorInfo)
+    }
 
-    Γ ⊢ t : Aᵢ | Δ
-    ──────────────────────
-    Γ ⊢ injᵢ(t) : A₁ + A₂ | Δ
+    struct ErrorInfo { message: Str; line: Int }
 
-**Elimination** via `match` with structural arms:
+The form is `enum Name(TypeParams) { variant₁(Type₁);
+variant₂(Type₂); …; variantₙ }` where:
 
-    match($result) {
+- `Name` is the enum type name (uppercase, psh capitalization
+  rule).
+- `(TypeParams)` is an optional parameter list with comma-
+  delimited type variables (uppercase, Rust convention). Omit
+  the parens entirely for non-parametric enums.
+- The body is a brace-delimited, `;`-separated list of variant
+  declarations.
+- Each variant declaration is either `name(PayloadType)` for a
+  variant carrying a payload or bare `name` for a nullary
+  variant. Variant names are lowercase (value-namespace,
+  psh capitalization rule).
+- `PayloadType` is any type in scope: a base type, a tuple, a
+  struct, or another enum (including a parametric instance).
+
+Multi-field payloads use a separate `struct` declaration
+referenced from the variant. There is no inline record syntax
+inside enum variants — if a variant needs named fields, declare
+a struct and reference it.
+
+**Construction** mirrors declaration: tagged form for variants
+with payloads, bare name for nullary variants.
+
+    let r : Result(Int, Str) = ok(42)
+    let r : Result(Int, Str) = err('not found')
+    let o : Option(Path)     = some(/tmp/file)
+    let o : Option(Path)     = none
+    let c : CompileResult    = success(/tmp/a.out)
+    let c : CompileResult    = warning('deprecated syntax')
+    let c : CompileResult    = error({ message = 'syntax error'; line = 42 })
+
+In the last case, `error(...)` is tagged construction with an
+argument of type `ErrorInfo`, and the argument is a brace
+record literal (struct construction). The expected type
+`ErrorInfo` flows top-down through `error`'s payload into the
+literal via the bidirectional check. Tagged construction and
+brace record literals compose naturally.
+
+**Bare `none` vs parenthesized `none()`.** Nullary variants
+are bare — no parens at construction. `()` is reserved for
+the empty list. `none()` is not valid syntax under this
+rule.
+
+**Command-position ambiguity.** In command position, `ok 42`
+(with space) is a command named `ok` with argument `42`, not
+enum construction. The `NAME(` token (no space before `(`)
+commits the parser to enum construction. For nullary variants,
+the bare form `none` in command position is a command call —
+enum construction of a nullary variant requires a value
+context (annotation, function argument, return, etc.) to
+signal that it should be interpreted as construction rather
+than as a command. In practice this is rarely ambiguous
+because nullary variants are almost always bound via
+annotation.
+
+**Type-parameter determination at construction.** An enum
+value's type parameters are pinned bidirectionally:
+
+- **Bottom-up (synth)** — a construction site with a typed
+  argument pins any type parameter that appears in the
+  argument's position. `some(42)` synthesizes `Option(Int)`.
+- **Top-down (check)** — the expected type at the construction
+  site pins any type parameter not pinned by argument types.
+  `none` inside `let o : Option(Str) = none` pins `T = Str`
+  from the annotation.
+
+If all type parameters are pinned by one or both directions,
+construction is well-typed. If any parameter is left
+unpinned, the binding is a type error at the binding site —
+the user must supply an annotation. The rule has no
+unification variables and no cross-expression inference.
+
+Worked cases:
+
+    let r = some(42)                     # OK: T=Int synthesized, r : Option(Int)
+    let r : Option(Str) = none           # OK: T=Str from annotation
+    let r = none                         # ERROR: T unpinned, annotation required
+    let r = ok(42)                       # ERROR: T=Int synthesized but E unpinned
+    let r : Result(Int, Str) = ok(42)    # OK: E=Str from annotation
+    def o : Option(Path) { none }        # OK: T=Path from return type
+    def o : Option(Int)  { some('x') }   # ERROR: Str vs Int mismatch
+
+**Typing rule** (coproduct introduction, check-mode):
+
+    enum T(Ᾱ) { …; variantᵢ(Bᵢ); … } ∈ Σ    Γ ⊢ e ⇐ Bᵢ[τ̄/Ᾱ]
+    ──────────────────────────────────────────────────────────
+    Γ ⊢ variantᵢ(e) ⇐ T(τ̄)
+
+    enum T(Ᾱ) { …; variantᵢ; … } ∈ Σ        (nullary case)
+    ──────────────────────────────────────────────────
+    Γ ⊢ variantᵢ ⇐ T(τ̄)
+
+The τ̄ are instantiation choices for the enum's type
+parameters, pinned by the combination of argument synthesis
+and context check as described above.
+
+**Elimination** via `match` with tagged patterns symmetric to
+construction:
+
+    match ($r) {
         ok(val)  => echo 'got '$val;
         err(msg) => echo 'failed: '$msg
     }
 
-Structural arms use `tag(binding) =>` — the same parens syntax
-as construction. The binding is a μ̃-binder scoped to the arm
-body. The variable does not escape the arm.
+    match ($c) {
+        success(p)                        => echo 'built: '$p;
+        warning(w)                        => echo 'warning: '$w;
+        error({ message = msg; line = ln }) => echo 'error: '$msg' at '$ln;
+        error({ message; line })          => echo 'error: '$message' at '$line
+    }
+
+    match ($o) {
+        some(x) => echo $x;
+        none    => echo 'nothing'
+    }
+
+Variant patterns use the same form as construction: `tag(pat)`
+for payload-bearing variants, bare `tag` for nullary. The
+argument pattern `pat` can be a variable binding, a wildcard,
+a literal, a tuple pattern, a struct record pattern, or a
+nested enum pattern. Struct record patterns use the same
+brace form as struct construction with full support for the
+name-pun shorthand.
+
+**Pattern let** works on enum variants when the pattern is
+irrefutable (only one variant), which is rare. For refutable
+patterns use `let-else`:
+
+    let some(path) = lookup key else {
+        echo 'not found'; return 1
+    }
+    # path : Path, available below only if lookup succeeded
 
 **Accessor syntax** (coproduct elimination — Prism preview):
 
-    echo $result .ok        # Prism preview: some(42) or none()
-    echo $result .err       # Prism preview: none() or some('not found')
+    echo $result .ok        # Prism preview: some(42) or none
+    echo $result .err       # Prism preview: none or some('not found')
 
-`$x .tag` is a Prism preview — partial projection that returns
-`some(payload)` if the tag matches, `none()` otherwise.
+`$x .variant` is a Prism preview — a partial projection that
+returns `some(payload)` if the variant matches and `none`
+otherwise. The return type is always an `Option(PayloadType)`.
 Profunctor constraint: Cocartesian. Composition across products
-and coproducts yields AffineTraversal (Cartesian +
+and coproducts yields an affine traversal (Cartesian +
 Cocartesian): `$result .ok .0` is Prism then Lens, returning
-`some(v)` or `none()` depending on whether the outer tag
-matches. Users pattern-match on the option.
+`some(v)` or `none` depending on whether the outer tag matches.
 
-Sums are positive (value sort), admit all structural rules.
+Enums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.
 
+**Historical note.** Earlier drafts of this spec offered only
+four built-in sum tags (`ok`, `err`, `some`, `none`) and
+deferred user-declared enums as future work. That restriction
+has been lifted: users declare their own enums with `enum
+Name(T) { … }`, and the built-in tags are now just the
+variants of two standard-library enums `Result(T, E)` and
+`Option(T)`. Deferring user-declared enums was motivated by
+an over-coupling with parametric polymorphism on function
+signatures; on re-examination, user enums with type
+parameters on the declaration (but monomorphic at function
+signatures) are a small, clean extension that does not
+require function-level polymorphism.
 
-## Extension path
 
-The type system is extensible along several axes. Some
-extensions are planned and will land in the base shell (v1);
-others are genuinely future work. The framework is designed so
-that extensions compose without reshaping the foundation.
+## Features and non-goals
 
-### Planned for v1 (designed, not yet fully documented)
+psh is conceived as a unified totality, not a staged roadmap.
+Every feature is either in the design or explicitly out of
+scope with reasoning. There is no "v1/v2" split; the spec
+describes the shell as a whole.
 
-These types and features are resolved in the deliberations
-docs and will appear in the base shell. The restructured spec
-should add dedicated sections for each.
+### Features beyond the rc base
 
-- **`Map` type** — associative arrays with O(1) lookup.
-  Constructor: `Map(('k1' 'v1') ('k2' 'v2'))` using the uniform
-  tagged construction rule. Accessors: `.get` (returns
-  `some(v)` or `none()`), `.set`, `.keys`, `.values`. Optic:
-  AffineTraversal.
+The following types and features are load-bearing members of
+psh's type system beyond what rc had. Each is in the design;
+full spec sections will be added or refined as the design
+stabilizes.
+
+- **Map type** — associative arrays with O(1) lookup.
+  Parametric type constructor `Map(K, V)`. Constructor:
+  `Map(('k1', 1) ('k2', 2))` with a space-delimited list of
+  comma-delimited key-value tuples. Accessors: `.get` (returns
+  `some(v)` or `none`), `.set`, `.keys`, `.values`. Key-indexed
+  view is an affine traversal; iterate-all-values is a
+  traversal. (The construction form is under review; see
+  §"Tagged construction rule" discussion.)
 
 - **String methods on `Str`** — fork-free string operations
   registered as `def Str.name { }` accessor methods. `.length`,
-  `.upper`, `.lower`, `.split`, `.strip_prefix`, `.strip_suffix`,
-  `.replace`, `.contains`. Partial operations return option
-  sums; predicates return status. Replaces ksh93's
-  `${var#pat}`/`${var%pat}` parameter expansion.
+  `.upper`, `.lower`, `.split`, `.strip_prefix`,
+  `.strip_suffix`, `.replace`, `.contains`. Partial operations
+  return `Option(T)`; predicates return status. Replaces
+  ksh93's `${var#pat}`/`${var%pat}` parameter expansion.
 
 - **Job control builtins** — `fg`, `bg`, `jobs`, `wait` (with
   `-n` for any-child), `kill`. Job IDs as a new word form:
   `%N` expands to the PID of job N.
 
-- **Here-string `<<<`** — `cmd <<< 'input'` creates a pipe with
-  the string as content, avoiding the fork for `echo`. A cell
-  with an embedded constant horizontal arrow on stdin.
+- **Here-string `<<<`** — `cmd <<< 'input'` creates a pipe
+  with the string as content, avoiding the fork for `echo`. A
+  cell with an embedded constant horizontal arrow on stdin.
 
-- **`$((...))` arithmetic** — already documented; in-process
-  pure expression evaluation returning an `Int`.
+- **`$((...))` arithmetic** — documented in §"rc's execution
+  model"; in-process pure expression evaluation returning an
+  `Int`, shaped as `μα.⊙(e₁, e₂; α)` per [7, §3.2].
 
-### Future (deferred)
+- **Parametric type constructors on user declarations.**
+  Users may declare parametric struct and enum types with
+  uppercase type parameters in the declaration header:
+  `enum Result(T, E) { ok(T); err(E) }`,
+  `struct Pair(A, B) { first: A; second: B }`. Type
+  parameters live on type declarations only; `def` signatures
+  reference fully-instantiated ground types
+  (`def parse : Str -> Result(Int, Str)`), never polymorphic
+  ones. This is strictly weaker than rank-1 prenex
+  polymorphism on function signatures (see §Non-goals) and
+  does not require Hindley-Milner machinery — only structural
+  monomorphization at each use site.
 
-- **Polymorphism.** Parametric type abbreviations — syntax and
-  semantics undecided. The reserved `type` keyword is held for
-  this.
+### Non-goals
 
-- **User-defined sum types (`enum`).** The `enum` keyword is
-  reserved but not implemented in v1. Built-in sum tags (`ok`,
-  `err`, `some`, `none`) cover the common cases. User-defined
-  enums with named variants are a future extension.
+The following are explicitly out of scope. Adding them would
+distort the type theory or bloat the implementation without
+serving the focused shell psh is designed to be.
 
-- **Typed session channels on pipes.** A pipe carrying
-  structured messages with a compile-time session type is a
-  natural extension — the VDC framework accommodates it
-  directly. Today's pipes are byte streams.
+- **Parametric polymorphism on `def` signatures.** Rank-1
+  prenex `∀` at function boundaries — `def map(T, U) : (T ->
+  U) -> List(T) -> List(U)` or similar — is not part of the
+  design. The rationale, established by the polymorphism
+  roundtable across five agent seats (vdc-theory, psh-sequent-
+  calculus, psh-optics-theorist, psh-session-type-agent,
+  plan9-systems-engineer), is that function-level
+  polymorphism requires either VETT's hyperdoctrine semantics
+  (which abandons FVDblTT's single-VDC home and in-language
+  protype-isomorphism reasoning) or the unpublished
+  dependent-FVDblTT extension. The rank-1 free-theorem
+  benefit (`∀α. α → α` is uniquely identity) is too weak to
+  justify elaborator complexity, annotation burden, and the
+  categorical commitments required. Init-script robustness
+  is delivered instead by rich ground-typed builtins and the
+  polarity discipline that already carries Reynolds-style
+  parametricity internally at the phase boundary [Sterling-
+  Harper, logical-relations-as-types §4226-4243]. Generic
+  combinators (`map`, `filter`, `fold`) are shell builtins
+  whose types live at the Rust implementation layer and are
+  never surfaced to the shell user. Parametric type
+  *constructors* on type declarations (see Features above)
+  are permitted because they require only monomorphization
+  at use sites, which is structurally different from rank-1
+  prenex `∀` at function signatures. The `type` keyword
+  remains reserved for possible future reconsideration if a
+  concrete shell-level use case emerges that monomorphic
+  ground types cannot serve; the current design commits to
+  the bidirectional ground-type discipline as the ceiling.
 
-- **Pipeline fusion (Segal condition).** When a sequence of
-  pipeline stages has a composite, the shell can fuse them
-  into a single cell. This is an optimization opportunity the
-  VDC framework makes precise; not a correctness requirement.
+- **Typed session channels on pipes.** Pipes are byte
+  streams and remain byte streams permanently. The typed-IPC
+  case is served entirely by coprocesses (§Coprocesses),
+  which have session-type discipline per tag. Typing pipes
+  would force every pipeline stage to commit to a protocol —
+  breaking rc's text-stream pipeline ergonomics and
+  conflating two different IPC mechanisms. The
+  session-type agent confirmed in the polymorphism roundtable
+  that there is no binding site at `|` to pin session types,
+  because pipe producers and consumers are separately
+  compiled processes with no compile-time link. The rc/Plan
+  9 heritage supports the stronger commitment: pipes will
+  remain byte streams, and all typed IPC goes through
+  coprocesses.
+
+- **Refinement session types on coprocess payloads.** Das et
+  al. ("Practical Refinement Session Type Inference") prove
+  that refinement session type checking is undecidable even
+  for simple linear arithmetic refinements; practical
+  implementations require SMT-solver integration (Rast ships
+  Z3). The phantom-session-type substrate psh uses for
+  coprocess protocols gets its guarantees from Rust's own
+  type checker and does not compose with solver-based
+  refinement checking. Base-type refinements on payload
+  values (`NonEmpty(Str)`, `Positive(Int)`) are a value-layer
+  question that could ride on a future refinement-types
+  addition if psh ever acquires one; that is orthogonal to
+  session types.
+
+- **Pipeline fusion as a user-visible feature.** The Segal
+  condition (fcmonads §5) gives the categorical account of
+  when a sequence of pipeline stages has a composite. This is
+  an implementation-level optimization opportunity — the
+  evaluator may fuse adjacent stages for performance when
+  their composite exists — not a user-facing construct.
+  Exposing fusion as a user feature would require committing
+  to the pseudo-double-category equations that a VDC
+  instance may not satisfy in general, and would force users
+  to reason about composite existence at sites where they
+  should just be writing shell. Fusion stays in the
+  implementation notes.
+
+- **Parametric polymorphism on pipes.** See above. Both the
+  "typed pipes" and the "parametric polymorphism" non-goals
+  are self-reinforcing — the former requires type variables
+  at pipeline stages, the latter rules out user-visible type
+  variables in function signatures, and together they pin
+  pipes at byte streams.
+
+### Reserved keywords
+
+`type` is reserved for possible future use if parametric
+polymorphism on function signatures is ever reconsidered. It
+is not currently in the grammar.
+
+`enum` is active — user-declared enums land under the
+"Features beyond the rc base" section above.
 
 ### Optics activation
 

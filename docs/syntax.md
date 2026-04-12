@@ -64,18 +64,40 @@ Bindings extend the context Γ with a new name. They are
 §The three sorts).
 
     binding     = assignment | let_binding | def_binding
-                | struct_decl | ref_def
+                | struct_decl | enum_decl | ref_def
 
     assignment  = NAME '=' rhs
-    let_binding = 'let' let_quals NAME (':' type_ann)? '=' rhs
+    let_binding = 'let' let_quals pat (':' type_ann)? '=' rhs
+                  ('else' body)?       -- let-else for refutable patterns
     let_quals   = 'mut'? 'export'?
-    def_binding = 'def' NAME def_params? body
-    struct_decl = 'struct' NAME '{' field_decl (';' field_decl)* ';'? '}'
+    def_binding = 'def' NAME def_params? (':' type_ann)? body
+
+    struct_decl = 'struct' NAME type_params? '{' field_decl (';' field_decl)* ';'? '}'
     field_decl  = NAME ':' type_ann
+
+    enum_decl   = 'enum' NAME type_params? '{' variant (';' variant)* ';'? '}'
+    variant     = NAME '(' type_ann ')'    -- payload variant
+                | NAME                     -- nullary variant
+
+    type_params = '(' TYPE_NAME (',' TYPE_NAME)* ')'   -- uppercase type variables
+    type_ann    = TYPE_NAME                             -- e.g. Int, Str, Pos
+                | TYPE_NAME '(' type_ann (',' type_ann)* ')'  -- type application
+                | '(' type_ann (',' type_ann)* ')'             -- bare tuple type
+
     ref_def     = 'ref' NAME '=' NAME
 
     rhs         = pipeline | value
-    type_ann    = NAME       -- element type of the list-valued binding
+
+    -- patterns: used in let, match, let-else
+    pat         = NAME                      -- variable binding
+                | '_'                       -- wildcard
+                | '(' pat (',' pat)* ')'    -- tuple pattern
+                | '{' field_pat (';' field_pat)* ';'? '}'   -- struct record pattern
+                | NAME '(' pat ')'          -- enum payload variant pattern
+                | NAME                      -- enum nullary variant pattern (same production as variable binding; disambiguated by scope)
+                | literal                   -- literal pattern (Int, Str, Path, Bool)
+    field_pat   = NAME '=' pat              -- named field pattern
+                | NAME                      -- name-pun shorthand for NAME = NAME
 
 `rhs` is either a computation (a pipeline, which includes
 simple commands and builtin invocations) or a pure value. Both
@@ -130,11 +152,40 @@ deliberately, but psh draws a distinction between commands
 (cuts) and functions (morphisms) that rc did not make. `def`
 names the sort.
 
-Three forms:
+Three forms for status-returning defs (rc-style, body is a
+sequence of commands, return status is the last command's
+status):
 
     def name { body }           # positional params: $1, $2, $*
     def name() { body }         # nullary: takes no arguments
     def name(a b c) { body }    # named params: $a, $b, $c
+
+For **value-returning defs**, an optional return type
+annotation after the parameter list specifies the value type.
+The body still parses as a sequence of commands, but the final
+item is the return value (either a bare expression of the
+declared type, or an explicit `return expr` statement). The
+bidirectional check flows the declared return type into the
+final body position.
+
+    def origin : Pos { { x = 0; y = 0 } }       # final expression is the return value
+    def move : Pos -> Pos {                      # function type annotation
+        |p| =>
+        let new_x = $p .x + 1
+        return { x = $new_x; y = $p .y }         # explicit return
+    }
+    def first_positive : List(Int) -> Option(Int) {
+        |xs| =>
+        for (x in $xs) {
+            if ($x > 0) { return some($x) }      # early return
+        }
+        none                                     # implicit tail return
+    }
+
+The `return` keyword also works in status-returning defs to
+set an explicit exit status (`return N` where N is an Int).
+rc heritage: `return` in rc is the explicit status-setting
+form.
 
 Without parentheses, the command uses rc-style positional
 parameters (`$1`, `$2`, `$*`, `$#*`). With parentheses, the
@@ -535,13 +586,19 @@ command that consumes them runs.
     accessor    = '.' (NUM | NAME)
     ws          = (' ' | '\t')+
 
-    value       = '(' word* ')'
-                | tuple
-                | sum_val
+    value       = '(' word* ')'            -- list (homogeneous, runtime arity)
+                | tuple                   -- anonymous product (comma-delim, static arity)
+                | record_lit              -- struct construction (named fields, check-mode)
+                | variant_val             -- enum construction (tagged)
+                | nullary_variant         -- enum nullary variant (bare name)
                 | lambda
                 | word
     tuple       = '(' word ',' (word ',')* word? ')'
-    sum_val     = NAME '(' value ')'
+    record_lit  = '{' field_init (';' field_init)* ';'? '}'
+    field_init  = NAME '=' value          -- named field
+                | NAME                    -- name-pun shorthand for NAME = NAME
+    variant_val = NAME '(' value ')'      -- enum construction with payload
+    nullary_variant = NAME                -- bare variant name (context-determined)
 
 **Tuples.** Comma-separated values in parentheses. Lists are
 space-separated (rc heritage). The comma disambiguates.
