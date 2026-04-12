@@ -317,6 +317,7 @@ a braced block or `=>` single-line form.
                 | match_cmd | try_cmd | trap_cmd
 
     if_cmd      = 'if' '(' pipeline ')' body ('else' (if_cmd | body))?
+                | 'if' 'let' pat '=' rhs body ('else' body)?   -- refutable pattern branch
     for_cmd     = 'for' '(' NAME 'in' value ')' body
     while_cmd   = 'while' '(' pipeline ')' body
     match_cmd   = 'match' '(' value ')' '{' match_arm (';' match_arm)* ';'? '}'
@@ -372,6 +373,20 @@ syntactic clause of the `if` node.
 **`else if` chaining.** `if(cond1) { A } else if(cond2) { B }
 else { C }` — the parser checks for `if` after `else` and
 recursively parses.
+
+**`if let` — refutable pattern branch.**
+
+    if let ok(v) = $result { echo "got $v" }
+    if let some(path) = $m['config'] {
+        source $path
+    } else {
+        echo 'no config'
+    }
+
+Bound variables are scoped to the success body only. The else
+body is optional. `if let` is the branching complement of
+`let-else`: `if let` branches on success, `let-else` branches
+on failure.
 
 ### for
 
@@ -568,7 +583,8 @@ heritage.
 Words are positive (CBV) — evaluated eagerly before the
 command that consumes them runs.
 
-    word        = word_atom ('^' word_atom)*
+    word        = coalesce_expr ('^' coalesce_expr)*
+    coalesce_expr = word_atom ('??' word_atom)*   -- nil-coalescing, right-assoc
     word_atom   = LITERAL | QUOTED
                 | var_ref
                 | '$#' VARNAME | '$"' VARNAME
@@ -595,6 +611,17 @@ command that consumes them runs.
                                           -- no space between VARNAME and '['
     dot_accessor   = '.' NAME
     ws          = (' ' | '\t')+
+
+**`??` nil-coalescing.** Extracts from `Option(T)` with a
+default. Right-associative, binds tighter than caret, looser
+than dot/bracket.
+
+    $l[0] ?? 'default'       # value or default
+    $m['key'] ?? ''          # value or empty string
+    $result .ok ?? 0         # Prism preview then coalesce
+
+RHS is lazily evaluated. Sugar for
+`match(M) { some(x) => x; none => N }`.
 
     value       = '(' word* ')'            -- list (homogeneous, runtime arity)
                 | tuple                   -- anonymous product (comma-delim, min 2)

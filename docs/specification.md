@@ -744,6 +744,8 @@ it must come from outside (continuation context, annotation).
 | Nullary enum `none` | [check] | no payload, no bottom-up info |
 | Map literal `{'k': v, ...}` | [synth] | value types determine V; empty `{}` is [check] |
 | Bracket `$a[i]` | [synth] | result type from collection type in Γ |
+| Nil-coalescing `M ?? N` | [synth] | `Option(T) ?? T → T` — sugar for match |
+| Prism preview `$r .ok` | [synth] | `T → Option(Payload)` — discipline method |
 | Lambda `\|x\| => body` | [synth-if-pinned] | body operations pin params; [check] if unpinned |
 | Function call `f $arg` | [synth] | `f`'s signature in Θ determines result |
 | Match arm body | [check] | checked against match's expected type |
@@ -2138,10 +2140,59 @@ uninitialized on the fall-through path, which is a type
 error. Sort: command (cut). The pattern match + else branch
 is a single focused elimination with two arms.
 
-**Observation** uses `match` — variant names are constructors
-(`ok(42)`, `err('msg')`), not postfix accessors. There is no
-`$result .ok` Prism preview via dot; enum dispatch goes through
-`match` arms. Profunctor constraint on the Prism structure:
+**`if let`** — refutable pattern match in branch position:
+
+    if let ok(v) = $result {
+        echo "got $v"
+    } else {
+        echo 'failed'
+    }
+
+The complement of `let-else`: `if let` branches on pattern
+match success, `let-else` branches on failure. The bound
+variables are scoped to the success body only. The else body
+is optional — without it, the `if let` is a conditional that
+does nothing on pattern mismatch.
+
+**`??` nil-coalescing operator** — extracts a value from
+`Option(T)` with a default:
+
+    $l[0] ?? 'default'       # value or default
+    $m['key'] ?? ''          # value or empty string
+    $result .ok ?? 0         # extract ok payload or default
+
+Typing rule:
+
+    Γ ⊢ M : Option(T) | Δ     Γ ⊢ N : T | Δ      [synth]
+    ─────────────────────────────────────────
+    Γ ⊢ M ?? N : T | Δ
+
+Sugar for `match(M) { some(x) => x; none => N }`. Sort:
+producer. RHS `N` is lazily evaluated (only when `M` is
+`none`). Precedence: bracket > dot > `??` > caret. So
+`$l[0] ?? 'default' .upper` = `$l[0] ?? ('default' .upper)`.
+
+`??` is the primary ergonomic tool for the common "access
+or default" pattern. For cases where the failure path needs
+real logic, use `let-else` or `match`.
+
+**Enum Prism previews** — `.ok`, `.err`, and user-variant
+preview methods:
+
+    $result .ok              # some(v) or none
+    $result .err             # some(msg) or none
+    $opt .some               # some(v) or none (identity on Option)
+
+These are `def Result.ok`, `def Result.err` etc. — discipline
+functions in the standard per-type namespace, returning
+`Option(PayloadType)`. They compose naturally with `??`:
+
+    $result .ok ?? 'fallback'   # extract ok or default
+    $result .err ?? 'unknown'   # extract error or default
+
+`match` remains the canonical form for multi-arm dispatch.
+Prism previews are for the common one-variant extraction
+case. Profunctor constraint on the Prism structure:
 Cocartesian.
 
 **Guards** refine pattern arms with a pure condition:

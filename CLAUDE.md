@@ -46,7 +46,10 @@ the relevant agent and Lane.
   projection by runtime value (tuples, lists, maps). Returns
   `Option(T)`. Dot `$x .name` for named field/method/discipline
   access with required leading space — space disambiguates from
-  free caret. Per-type accessor namespaces via `def Type.ident`.
+  free caret. `??` nil-coalescing: `$l[0] ?? 'default'`. Prism
+  previews: `$result .ok ?? 'fallback'`. `if let` for
+  refutable pattern branches. Per-type accessor namespaces via
+  `def Type.ident`.
 - **Uniform tagged construction.** `NAME(args)` with `NAME`
   immediately followed by `(` — space-delimited args. Covers
   enum variant construction (`ok(42)`, `err('msg')`).
