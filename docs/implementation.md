@@ -105,20 +105,20 @@ dependency in a login shell that runs on every terminal open?
 
     src/
         main.rs     — entry point, argument parsing, REPL loop
-        ast.rs      — three-sort AST (Word, Expr, Command)
+        ast.rs      — three-sort AST (Term, Expr, Command)
         parse.rs    — combine-based parser matching syntax.md
         check.rs    — bidirectional type checker (~500-900 lines)
-        exec.rs     — evaluator (eval_word, run_expr, run_cmd)
+        exec.rs     — evaluator (eval_term, run_expr, run_cmd)
         env.rs      — scope chain, variable store, discipline dispatch
         value.rs    — Val enum, Display/FromStr
         job.rs      — job control, background processes
         signal.rs   — signal handling, self-pipe
 
-The AST has three sorts matching the spec: `Word` (producers),
+The AST has three sorts matching the spec: `Term` (producers),
 `Expr` (engineering layer — pipelines + redirections), `Command`
 (statements / cuts). Consumers are synthesized implicitly from
 the statement's shape, not stored as AST nodes. The evaluator
-enforces the sort boundary at the call-graph level: `eval_word`
+enforces the sort boundary at the call-graph level: `eval_term`
 (CBV, value sort), `run_expr` (profunctor layer), `run_cmd`
 (cuts, command sort).
 

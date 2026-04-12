@@ -302,10 +302,10 @@ invoked with arguments.
 
 Terms are values: literals, variable references, command
 substitution results, lists, lambdas, concatenations. They are
-evaluated eagerly (CBV) by `eval_word` before the command that
+evaluated eagerly (CBV) by `eval_term` before the command that
 consumes them runs. Terms inhabit the context Γ.
 
-In psh's AST, terms are the `Word`/`Value` sort.
+In psh's AST, terms are the `Term` sort.
 
 | psh construct | Term type | Notes |
 |---|---|---|
@@ -380,7 +380,7 @@ statements — plus one engineering layer:
 
 | psh node | λμμ̃ category | Role |
 |---|---|---|
-| `Word` / `Value` | Producer (term) | Values, variable refs, command substitutions, lambdas — everything in Γ |
+| `Term` | Producer (term) | Values, variable refs, command substitutions, lambdas — everything in Γ |
 | `Coterm` (synthesized) | Consumer | Evaluation contexts: pipe readers, redirect targets, μ̃-binders (let / assign), trap signal handlers, catch bindings |
 | `Command` | Statement (cut) | Every cut: simple commands, pipelines, assignments ⟨val \| μ̃x.rest⟩, if/for/match/try/trap |
 | `Expr` | engineering boundary | Wraps pipelines + redirections — consumer machinery grouped for evaluator organization, not a logical sort |
@@ -413,7 +413,7 @@ The CBV/CBN split follows the duploid's two subcategories [2,
 §2.1]. Word expansion is Kleisli composition: each stage
 (`$x` lookup, concatenation, command substitution) takes a
 partial value and produces an expanded value with possible
-effects. `eval_word` recurses through `Word` nodes before the
+effects. `eval_term` recurses through `Term` nodes before the
 command that consumes them has started.
 
 Pipeline execution is **demand-driven** (operationally analogous
@@ -1208,7 +1208,7 @@ activates when products and coproducts are added.
 
 ksh93's `macro.c` expansion pipeline (tilde → parameter →
 command sub → arithmetic → field split → glob) is Kleisli
-composition [SPEC, §"The monadic side"]. psh's `eval_word` has
+composition [SPEC, §"The monadic side"]. psh's `eval_term` has
 a simpler pipeline:
 
 1. **Literal** → identity (pure, no effects)
@@ -1224,7 +1224,7 @@ a simpler pipeline:
 5. **Concat** → rc's `^` (pairwise or broadcast join)
 
 Each stage is a function `Word → Val` with possible effects.
-They compose by structural recursion over the `Word` AST.
+They compose by structural recursion over the `Term` AST.
 
 **Glob no-match behavior.** A glob pattern that matches no
 filenames stands for itself — it is not replaced by the empty
