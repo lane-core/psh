@@ -168,11 +168,11 @@ declared type, or an explicit `return expr` statement). The
 bidirectional check flows the declared return type into the
 final body position.
 
-    def origin : Pos { { x = 0; y = 0 } }       # final expression is the return value
+    def origin : Pos { Pos { x = 0; y = 0 } }    # final expression is the return value
     def move : Pos -> Pos {                      # function type annotation
         |p| =>
         let new_x = $p .x + 1
-        return { x = $new_x; y = $p .y }         # explicit return
+        return Pos { x = $new_x; y = $p .y }     # explicit return
     }
     def first_positive : List(Int) -> Option(Int) {
         |xs| =>
@@ -593,7 +593,8 @@ command that consumes them runs.
                 | '>' | '<' | '>=' | '<=' | '==' | '!='
 
     var_ref     = '$' VARNAME bracket_access* (ws dot_accessor)*
-    bracket_access = '[' expr ']'         -- no space between VARNAME and '['
+    bracket_access = '[' (expr '..' expr | expr) ']'  -- range or single index
+                                          -- no space between VARNAME and '['
     dot_accessor   = '.' NAME
     ws          = (' ' | '\t')+
 

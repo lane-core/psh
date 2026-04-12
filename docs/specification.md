@@ -114,7 +114,7 @@ forking, runs a full shell statement whose effects include
 subprocess creation and I/O, and captures the byte-valued
 return; the inner computation straddles CBV/CBN because the
 forked pipeline is itself co-Kleisli. `$((...))` has neither
-polarity straddle nor subprocess. Per [7, §3.2] "Arithmetic
+polarity straddle nor subprocess. Per [7, §2.1] "Arithmetic
 Expressions," arithmetic binop in λμμ̃ is a **statement**
 shaped `⊙(p₁, p₂; c)` taking two producers and a consumer;
 the surface form `e₁ + e₂` translates as `μα.⊙(⟦e₁⟧, ⟦e₂⟧; α)`
@@ -385,7 +385,7 @@ statements — plus one engineering layer:
 
 A `let x = M; rest` or `x = val; rest` is a *statement*, not a
 separate sort: desugared, it is the cut ⟨M | μ̃x.⟨rest | α⟩⟩
-[7, §3.2]. The μ̃-binder is a consumer alternative in Grokking's
+[7, §2.1]. The μ̃-binder is a consumer alternative in Grokking's
 grammar `c ::= α | μ̃x.s | D(p̄;c̄) | case{...}`; it lives
 *inside* a statement as the consumer slot, not alongside the
 statement as a peer sort. psh synthesizes consumers implicitly
@@ -414,10 +414,17 @@ partial value and produces an expanded value with possible
 effects. `eval_word` recurses through `Word` nodes before the
 command that consumes them has started.
 
-Pipeline execution is co-Kleisli: `run_pipeline` forks all
-stages concurrently, and data flows on demand through `pipe(2)`
+Pipeline execution is **demand-driven** (co-Kleisli in the
+execution strategy): `run_pipeline` forks all stages
+concurrently, and data flows on demand through `pipe(2)`
 endpoints. `yes | head -1` does not evaluate `yes` to
-completion. The pipe's blocking read is the demand.
+completion — the pipe's blocking read is the demand. Note:
+the VDC framework §8.1 classifies pipeline *composition
+structure* as Kleisli/monadic (the data on the pipe is the
+positive intermediary). The execution strategy (demand-driven)
+and the composition structure (data-on-pipe) are different
+readings of the same pipeline — one describes how it runs,
+the other how it types.
 
 **fd-targeted pipes** (rc heritage, rc.ms lines 881-903):
 `cmd |[2] cmd2` pipes fd 2 (stderr) of the left command to
@@ -505,8 +512,8 @@ The classical control is tamed by lexical scope, not eliminated.
 A **polarity frame** is the operational mechanism for a `↓→↑`
 shift — forcing a negative (computation-mode) term to produce a
 positive (value-mode) result. Structurally, a frame is a
-cartesian cell in the VDC of shell programs (fcmonads §7,
-virtual equipments / restrictions): it saves the positive-mode
+restriction-like cell in the VDC of shell programs (cf.
+fcmonads §7, virtual equipments): it saves the positive-mode
 state (the expansion context — splice positions, CBV-focused
 values, partial word accumulators), runs the negative computation,
 and restores the positive-mode state on exit with the produced
@@ -529,7 +536,7 @@ Polarity frames are invoked in three places in psh:
 - **Arithmetic expansion** `$((…))` — frame is operationally
   trivial (pure in-process computation, no effects to guard), but
   the shift is still type-theoretic: the expression is `μα.⊙(e₁,
-  e₂;α)` in [7, §3.2]'s arithmetic translation, a statement
+  e₂;α)` in [7, §2.1]'s arithmetic translation, a statement
   wrapped in a μ-binder to produce a positive value. The frame
   mechanism is the same; its save/restore steps simplify to no-ops.
 - **Discipline refresh** `.refresh` and **mutation** `.set`
@@ -704,22 +711,34 @@ nothing.
 
 ### Expressions by mode
 
-| Expression | Mode | Rule |
-|---|---|---|
-| Literal (`42`, `'str'`, `/path`) | Synth | bottom-up from literal form |
-| Variable `$x` | Synth | from binding in scope |
-| Tuple literal `(a, b, c)` | Synth | each component synth-checked |
-| List literal `(a b c)` | Synth | each component must share type |
-| Tagged construction `ok(42)` | Synth-if-all-params-pinned, Check otherwise | type parameter pinning from payload |
-| Struct literal `Pos { x = 10; y = 20 }` | Synth | type name at construction site |
-| Struct literal `Pos { 10, 20 }` | Synth | type name at construction site |
-| Nullary enum `none` | Check-only | no synth rule; needs expected enum type |
-| Match arm body | Check (against match's expected type) | each arm checked against same type |
-| `def` body tail expression | Check (against declared return type) | bidirectional flow from return annotation |
-| Lambda `\|x\| => body` | Synth-if-all-params-pinned, Check otherwise | parameter types from body operations or context |
-| Function call `f $arg` | Synth if `f` is annotated/declared | args checked against declared parameter types |
+All typing rules use classical sequent notation
+`Γ ⊢ t : A | Δ` (matching psh's λμμ̃ foundation — Grokking
+[7, §2], Curien-Herbelin [5]). Each rule carries a **mode
+annotation** `[synth]` or `[check]` indicating the
+implementation strategy in the bidirectional checker. The mode
+is **derived** from the rule structure: [synth] when the
+conclusion type is determined by premises or Σ; [check] when
+it must come from outside (continuation context, annotation).
 
-Expressions not listed fall back to synth when their form
+| Expression | Mode | Why |
+|---|---|---|
+| Literal (`42`, `'str'`) | [synth] | type fixed by literal form |
+| Variable `$x` | [synth] | type from `(x : A) ∈ Γ` |
+| Tuple `(a, b)` | [synth] | component types assemble the product |
+| List `(a b c)` | [synth] | element types agree; empty `()` is [check] |
+| Struct `Pos { x = 10; y = 20 }` | [synth] | type name `T` in syntax + `T ∈ Σ` |
+| Struct `Pos { 10, 20 }` | [synth] | same — type name at construction site |
+| Enum variant `ok(42)` | [synth-if-pinned] | payload pins params; [check] if unpinned |
+| Nullary enum `none` | [check] | no payload, no bottom-up info |
+| Map literal `{'k': v, ...}` | [synth] | value types determine V; empty `{}` is [check] |
+| Bracket `$a[i]` | [synth] | result type from collection type in Γ |
+| Lambda `\|x\| => body` | [synth-if-pinned] | body operations pin params; [check] if unpinned |
+| Function call `f $arg` | [synth] | `f`'s signature in Θ determines result |
+| Match arm body | [check] | checked against match's expected type |
+| `def` body tail | [check] | checked against α's type in Δ (return type) |
+| `return expr` | [check] | checked against declared return type |
+
+Expressions not listed fall back to [synth] when their form
 determines a type.
 
 ### Type parameter pinning for parametric types
@@ -746,8 +765,9 @@ the binding is an error per the ambiguity rule above.
 
 ### Lambda parameter pinning
 
-Lambda parameter types use the same pinning mechanism as
-parametric type constructors. When a lambda appears at a synth
+Lambda parameter types use the same write-once slot discipline
+as parametric type constructors, with a different information
+source (body operations instead of positional arguments). When a lambda appears at a synth
 site (e.g., bare `let` without annotation), the checker tries
 to pin each parameter type from monomorphic operations in the
 body:
@@ -817,12 +837,11 @@ them in the `Namval_t` machinery.
 | rc analog | `fn name { body }` [1, §Functions] | (no rc analog — extension) |
 | Invocation | `name arg1 arg2` | `name arg1 arg2` (bare word forces the lambda) |
 
-The `def` keyword replaces rc's `fn`. Duff chose `fn`
-deliberately, but psh renames it because psh draws a distinction
-between named computations and first-class functions that rc
-did not make. `def` is neutral — it defines a named computation
-without claiming its role in a cut, which only happens at the
-invocation site.
+The `def` keyword replaces rc's `fn`. psh renames it because
+psh draws a distinction between named computations and
+first-class functions that rc did not make. `def` is neutral
+— it defines a named computation without claiming its role
+in a cut, which only happens at the invocation site.
 
 **`return` typing.** `return` is a μ-binding: `return v` =
 `μα.⟨v | α⟩` where α is the `def`'s outer continuation. In
@@ -973,7 +992,7 @@ variable" ergonomics wrap the pair in their own function — the
 rc `fn cd` pattern [1, §Functions] applied to discipline
 invocation:
 
-    fn show_cursor { cursor.refresh; echo $cursor }
+    def show_cursor { cursor.refresh; echo $cursor }
 
 `.refresh` is the site of the ↓→↑ polarity shift. The body runs
 in computation mode inside a polarity frame that saves the
@@ -1240,16 +1259,20 @@ Each tag has the session type `Send<Req, Recv<Resp, End>>` —
 exactly one legal action at each step. The tag is a session
 identifier, not a reason to abandon session discipline.
 
-In parallel to the per-tag request-response sessions, the
-shell maintains one **admin session** on the same socketpair
-for cancellation: `Send<Cancel, Recv<Flush_Ack, End>>*`, a
-repeating shell-originated session carrying Tflush frames
-identifying tags the coprocess should discard. This mirrors
-9P's Tflush/Rflush transaction [9P, §flush]. Cancellation is
+**Cancellation** extends each per-tag session type with an
+internal choice (⊕) on the shell side after Send: the shell
+may either await the response or cancel. Cancellation uses
+a Tflush frame **on the same tag** being cancelled, and the
+coprocess acknowledges with an Rflush on that tag. The
+extended per-tag session type is:
+
+    Send<Req, (Recv<Resp, End> ⊕ Cancel<Recv<Flush_Ack, End>>)>
+
+The shell chooses one branch per tag. This mirrors 9P's
+Tflush/Rflush transaction [9P, §flush]. Cancellation is
 strictly shell-initiated, preserving the asymmetric initiator
-discipline. The admin session is an implementation concern —
-users interact only with per-tag sessions via `print -p` /
-`read -p` and never see Tflush directly.
+discipline. Users interact only with per-tag sessions via
+`print -p` / `read -p` and never see Tflush directly.
 
 This mirrors 9P's multiplexing: tags are transaction
 identifiers (one per outstanding request, like 9P's uint16
@@ -1666,9 +1689,9 @@ argument sequences (spliced, iterated, consumed positionally),
 tuples are for structured values (kept bundled, accessed by
 position via bracket `$t[0]`, `$t[1]`).
 
-**Typing rule** (product introduction, classical):
+**Typing rule** (product introduction):
 
-    Γ ⊢ t₁ : A₁ | Δ    Γ ⊢ t₂ : A₂ | Δ
+    Γ ⊢ t₁ : A₁ | Δ    Γ ⊢ t₂ : A₂ | Δ              [synth]
     ─────────────────────────────────────────
     Γ ⊢ (t₁, t₂) : A₁ × A₂ | Δ
 
@@ -1899,28 +1922,26 @@ construction site.
 
 **Typing rules** (named product introduction):
 
-*Named form* — the type name `T` appears in the literal;
-fields are checked against the declaration:
+*Named form:*
 
     struct T { f₁:A₁; …; fₙ:Aₙ } ∈ Σ
-    Γ ⊢ e₁ ⇐ A₁  …  Γ ⊢ eₙ ⇐ Aₙ
+    Γ ⊢ eᵢ : Aᵢ | Δ   (for each i)                   [synth]
     { f₁, …, fₙ } = { π | (fπ = _) ∈ literal }
     ──────────────────────────────────────────────
-    Γ ⊢ T { f₁ = e₁; …; fₙ = eₙ } ⇒ T
+    Γ ⊢ T { f₁ = e₁; …; fₙ = eₙ } : T | Δ
 
-*Positional form* — values checked against declaration-order
-types:
+*Positional form:*
 
-    struct T { f₁:A₁; …; fₙ:Aₙ } ∈ Σ     n ≥ 2
-    Γ ⊢ e₁ ⇐ A₁  …  Γ ⊢ eₙ ⇐ Aₙ
+    struct T { f₁:A₁; …; fₙ:Aₙ } ∈ Σ     n ≥ 2      [synth]
+    Γ ⊢ eᵢ : Aᵢ | Δ   (for each i)
     ──────────────────────────────────────────────
-    Γ ⊢ T { e₁, …, eₙ } ⇒ T
+    Γ ⊢ T { e₁, …, eₙ } : T | Δ
 
-Both rules synthesize the type `T` (the `⇒` arrow) — the type
-name is present in the literal, so no check-mode context is
-needed. The type name at the construction site is what makes
-struct literals self-typing, unlike the earlier check-only
-design.
+Both rules are [synth]: the type `T` appears in the term
+syntax and in Σ, so the conclusion type is determined by
+premises. Field sub-expressions are checked against Σ's
+declared types (the premises constrain `eᵢ : Aᵢ`), but the
+overall struct type flows bottom-up.
 
 **In VDC terms:** a struct declaration specifies a cell with a
 fixed multi-source signature. `Pos : Int, Int → Pos` says the
@@ -1930,10 +1951,10 @@ are destructor invocations — the codata view of the struct,
 dual to the constructor's data view. The `struct` keyword is
 the syntactic form that batches the two views together:
 registering the constructor (positive introduction, realized
-as the brace record literal under check-mode) and the
-projections (negative destructors, realized as the `.x`
-named accessors) at once, unifying the data/codata duality
-in a single declaration.
+as the type-prefixed brace literal) and the projections
+(negative destructors, realized as the `.x` named accessors)
+at once, unifying the data/codata duality in a single
+declaration.
 
 
 ## Enums (coproducts, +)
@@ -1995,7 +2016,7 @@ with payloads, bare name for nullary variants.
     let o : Option(Path)     = none
     let c : CompileResult    = success(/tmp/a.out)
     let c : CompileResult    = warning('deprecated syntax')
-    let c : CompileResult    = error({ message = 'syntax error'; line = 42 })
+    let c : CompileResult    = error(ErrorInfo { message = 'syntax error'; line = 42 })
 
 In the last case, `error(...)` is tagged construction with an
 argument of type `ErrorInfo`, and the argument is a brace
@@ -2048,15 +2069,16 @@ Worked cases:
     def o : Option(Path) { none }        # OK: T=Path from return type
     def o : Option(Int)  { some('x') }   # ERROR: Str vs Int mismatch
 
-**Typing rule** (coproduct introduction, check-mode):
+**Typing rule** (coproduct introduction):
 
-    enum T(Ᾱ) { …; variantᵢ(Bᵢ); … } ∈ Σ    Γ ⊢ e ⇐ Bᵢ[τ̄/Ᾱ]
+    enum T(Ᾱ) { …; variantᵢ(Bᵢ); … } ∈ Σ
+    Γ ⊢ e : Bᵢ[τ̄/Ᾱ] | Δ                     [synth-if-pinned, check otherwise]
     ──────────────────────────────────────────────────────────
-    Γ ⊢ variantᵢ(e) ⇐ T(τ̄)
+    Γ ⊢ variantᵢ(e) : T(τ̄) | Δ
 
-    enum T(Ᾱ) { …; variantᵢ; … } ∈ Σ        (nullary case)
+    enum T(Ᾱ) { …; variantᵢ; … } ∈ Σ        [check]
     ──────────────────────────────────────────────────
-    Γ ⊢ variantᵢ ⇐ T(τ̄)
+    Γ ⊢ variantᵢ : T(τ̄) | Δ                  (nullary — τ̄ from context)
 
 The τ̄ are instantiation choices for the enum's type
 parameters, pinned by the combination of argument synthesis
@@ -2073,8 +2095,8 @@ construction:
     match ($c) {
         success(p)                        => echo 'built: '$p;
         warning(w)                        => echo 'warning: '$w;
-        error({ message = msg; line = ln }) => echo 'error: '$msg' at '$ln;
-        error({ message; line })          => echo 'error: '$message' at '$line
+        error(ErrorInfo { message = msg; line = ln }) => echo 'error: '$msg' at '$ln;
+        error(ErrorInfo { message; line })            => echo 'error: '$message' at '$line
     }
 
     match ($o) {
@@ -2101,11 +2123,11 @@ patterns use `let-else`:
 
 **`let-else` typing rule** (refutable μ̃-binder):
 
-    Γ ⊢ M ⇒ A         (synth the RHS)
-    Γ ⊢ pat : A ⊣ Γ'   (pattern binds variables in Γ')
-    Γ ⊢ else-body diverges  (else-body must return or exit)
+    Γ ⊢ M : A | Δ                           [synth on RHS]
+    Γ ⊢ pat : A ⊣ Γ'                        (pattern binds Γ')
+    Γ | else-body diverges ⊢ Δ              (else must return/exit)
     ─────────────────────────────────────────────────────
-    Γ' ⊢ rest            (bindings scoped below the let-else)
+    Γ' ⊢ rest : (Γ' ⊢ Δ)                   (bindings scoped below)
 
 The else-body is a consumer in Δ (an error continuation).
 It must diverge — `return N`, `exit`, or an infinite loop.
@@ -2148,9 +2170,9 @@ core groups arms by constructor tag and nests the guard as a
         err(msg) ⇒ C
     }⟩
 
-Every case in the desugared form is focused — one constructor,
-one arm. Guards are surface sugar that does not disturb the
-core calculus.
+Every case in the desugared form is focused — the scrutinee
+is a value when the case fires (not a computation). Guards
+are surface sugar that does not disturb the core calculus.
 
 **Exhaustiveness:** guarded arms are non-exhaustive. The
 checker treats them conservatively — a constructor with only
@@ -2198,10 +2220,16 @@ stabilizes.
 
       let m : Map(Int) = {'name': 1, 'age': 2}
 
-  Map literals can synthesize their type from entries (unlike
-  struct literals which are check-only). Empty `{}` is
-  check-only — the expected type resolves whether it is an
-  empty map or an empty struct.
+  Map literals can synthesize their type from entries
+  (value types must agree). Empty `{}` is [check] — the
+  expected type resolves whether it is an empty map or an
+  empty struct.
+
+  **Typing rule** (map introduction):
+
+      Γ ⊢ vᵢ : V | Δ    (for each entry 'kᵢ': vᵢ)    [synth]
+      ─────────────────────────────────────────────
+      Γ ⊢ {'k₁': v₁, …, 'kₙ': vₙ} : Map(V) | Δ
 
   *Builder chain* — `.insert` is a pure functional update
   method on Map values (distinct from the discipline `.set`
@@ -2263,7 +2291,7 @@ stabilizes.
 
 - **`$((...))` arithmetic** — documented in §"rc's execution
   model"; in-process pure expression evaluation returning an
-  `Int`, shaped as `μα.⊙(e₁, e₂; α)` per [7, §3.2].
+  `Int`, shaped as `μα.⊙(e₁, e₂; α)` per [7, §2.1].
 
 - **Parametric type constructors on user declarations.**
   Users may declare parametric struct and enum types with
@@ -2382,8 +2410,8 @@ determines how the optic is selected, not which class it is.
 | Structs (named products) | `$s .field` | Lens (named) | Cartesian |
 | Sums (coproducts) | `match` | Prism (case analysis) | Cocartesian |
 | Map(V), key lookup | `$m['key']` | Affine traversal (partial) | Cartesian + Cocartesian |
-| Map(V), all values | `.values` | Traversal | Traversing (Applicative) |
-| List slice | `$l[a..b]` | Affine fold (read-only) | Cartesian + Cocartesian |
+| Map(V), all values | `.values` | Getter (read-only) | — |
+| List slice | `$l[a..b]` | Affine fold (read-only) | (read-only restriction of AffineTraversal) |
 | fd table (save/restore) | (internal) | Lens | Cartesian |
 | Redirections | (wrapping) | Adapter | Profunctor |
 
