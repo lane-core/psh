@@ -419,6 +419,16 @@ stages concurrently, and data flows on demand through `pipe(2)`
 endpoints. `yes | head -1` does not evaluate `yes` to
 completion. The pipe's blocking read is the demand.
 
+**fd-targeted pipes** (rc heritage, rc.ms lines 881-903):
+`cmd |[2] cmd2` pipes fd 2 (stderr) of the left command to
+stdin of the right. The general form `cmd |[n=m] cmd2`
+connects fd n of the left to fd m of the right. Standard `|`
+is sugar for `|[1=0]`. This selects which horizontal arrow of
+the left cell connects to the right cell's input — the same
+cell composition structure, different source arrow. Without
+fd-targeted pipes, piping stderr while keeping stdout separate
+requires process substitution gymnastics.
+
 Cross-polarity composition — a pipeline stage that expands a
 variable (CBV) and writes to a pipe (CBN) — is non-associative
 in the duploid sense. Specifically: among the four cases
@@ -701,11 +711,12 @@ nothing.
 | Tuple literal `(a, b, c)` | Synth | each component synth-checked |
 | List literal `(a b c)` | Synth | each component must share type |
 | Tagged construction `ok(42)` | Synth-if-all-params-pinned, Check otherwise | type parameter pinning from payload |
-| Struct record literal `{ x = 10; y = 20 }` | Check-only | no synth rule; needs expected struct type |
+| Struct literal `Pos { x = 10; y = 20 }` | Synth | type name at construction site |
+| Struct literal `Pos { 10, 20 }` | Synth | type name at construction site |
 | Nullary enum `none` | Check-only | no synth rule; needs expected enum type |
 | Match arm body | Check (against match's expected type) | each arm checked against same type |
 | `def` body tail expression | Check (against declared return type) | bidirectional flow from return annotation |
-| Lambda `\|x\| => body` | Check against expected function type | parameter types from context |
+| Lambda `\|x\| => body` | Synth-if-all-params-pinned, Check otherwise | parameter types from body operations or context |
 | Function call `f $arg` | Synth if `f` is annotated/declared | args checked against declared parameter types |
 
 Expressions not listed fall back to synth when their form
@@ -732,6 +743,41 @@ via a combination of synth and check:
 
 If any parameter remains unpinned after both directions run,
 the binding is an error per the ambiguity rule above.
+
+### Lambda parameter pinning
+
+Lambda parameter types use the same pinning mechanism as
+parametric type constructors. When a lambda appears at a synth
+site (e.g., bare `let` without annotation), the checker tries
+to pin each parameter type from monomorphic operations in the
+body:
+
+    let double = |x| => $((x * 2))    # x pinned to Int by *
+    let greet = |name| => 'hello '$name .upper
+                                       # name pinned to Str by .upper
+
+Each parameter gets a write-once slot. Operations with
+monomorphic signatures (arithmetic operators, string methods,
+`.insert` on typed maps, comparisons) write the expected type
+into the slot when they encounter a slot-typed argument. After
+the body returns:
+
+- All slots filled → lambda synths to
+  `(ParamTypes...) -> BodyType`
+- Any slot unfilled → error: "cannot infer type of parameter
+  x; add annotation"
+
+This is NOT unification — slots are write-once cells, not
+unification variables. No backtracking, no occurs check, no
+constraint propagation through parametric types. A slot that
+appears only in parametric position (e.g., `|x| => some(x)`)
+stays unfilled because `some` doesn't constrain `T` to a
+ground type.
+
+When a lambda appears in check-mode position (function
+argument, annotated `let`), the expected function type pins
+all parameters top-down as before — body-pinning is the
+fallback for synth sites only.
 
 ### Why not Hindley-Milner?
 
@@ -1361,6 +1407,15 @@ The namespace grows; the language does not. This is Plan 9's
 principle: `/env` was a filesystem [1, §Environment]; psh
 extends the scope chain into the filesystem honestly.
 
+**Per-command local variables** (rc heritage, rc.ms lines
+1045-1066): `VAR=value cmd` scopes the assignment to the
+duration of a single command. The variable reverts after the
+command completes. This is the terse per-command form for
+environment setup — `PATH='/custom/bin' make install` — and
+is distinct from `let` block scoping. Both compose: block
+scoping covers compound blocks, per-command scoping covers
+the common single-command case.
+
 
 ## Error model
 
@@ -1383,6 +1438,15 @@ handling [7, §"Linear Logic and the Duality of Exceptions"]:
   tagged value, and `try { body } catch (e) { handler }`
   pattern-matches on success/failure at step boundaries.
   `$status` is data; `try` is the consuming case.
+
+  **Pipeline status.** `$status : Int` holds the exit code of
+  the last command (or the last pipeline component). For full
+  pipeline diagnostics, `$pipestatus : List(Int)` holds the
+  exit codes of all pipeline components in order. Two variables,
+  two types — `$status` never changes type. For a simple
+  command (not a pipeline), `$pipestatus` is a single-element
+  list equal to `($status)`. This follows bash/zsh convention
+  (`$PIPESTATUS` / `$pipestatus`) with psh's native list type.
 
 - **⅋ (par, negative / codata):** a pair — more generally an
   N-tuple — of continuations, one per outcome. The callee
@@ -2097,9 +2161,28 @@ stabilizes.
   `-n` for any-child), `kill`. Job IDs as a new word form:
   `%N` expands to the PID of job N.
 
-- **Here-string `<<<`** — `cmd <<< 'input'` creates a pipe
-  with the string as content, avoiding the fork for `echo`. A
-  cell with an embedded constant horizontal arrow on stdin.
+- **Here documents and here-strings** — rc heritage (rc.ms
+  lines 906-973). Six forms from three orthogonal toggles:
+
+  | Form | Expansion | Tab strip | fd |
+  |---|---|---|---|
+  | `<<EOF` | yes | no | stdin |
+  | `<<'EOF'` | no (literal) | no | stdin |
+  | `<<-EOF` | yes | tabs stripped | stdin |
+  | `<<-'EOF'` | no | tabs stripped | stdin |
+  | `<<[n]EOF` | yes | no | fd n |
+  | `<<-[n]EOF` | yes | tabs stripped | fd n |
+
+  Quoted marker (`'EOF'`) suppresses variable expansion. `<<-`
+  strips leading tabs from body and closing marker (ksh93
+  heritage, sh.1 line 3867). fd-targeted form `<<[n]` directs
+  to fd n instead of stdin (rc heritage, rc.ms line 959).
+  Here-string `<<<` is the degenerate case: `cmd <<< 'input'`
+  is a one-line here document with no closing marker.
+
+  In VDC terms: a cell with a constant (or expansion-computed)
+  horizontal arrow on the specified fd. §8.5 classification:
+  monadic (positive-to-positive), same as string literals.
 
 - **`$((...))` arithmetic** — documented in §"rc's execution
   model"; in-process pure expression evaluation returning an

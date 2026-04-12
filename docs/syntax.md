@@ -537,14 +537,18 @@ redirections, pipelines, and operators.
     or_expr     = and_expr ('||' and_expr)*
     and_expr    = match_expr ('&&' match_expr)*
     match_expr  = pipeline ('=~' value)?
-    pipeline    = cmd_expr ('|' cmd_expr)*
+    pipeline    = cmd_expr (pipe_op cmd_expr)*
                 | cmd_expr '|&' NAME?
+    pipe_op     = '|'                         -- stdout → stdin
+                | '|[' NUM ']'                -- fd N → stdin (rc heritage)
+                | '|[' NUM '=' NUM ']'        -- fd N → fd M (rc general form)
     cmd_expr    = '!' cmd_expr
                 | body
                 | '@' body
                 | simple_cmd redirect*
 
-    simple_cmd  = WORD+
+    simple_cmd  = cmd_prefix* WORD+
+    cmd_prefix  = NAME '=' value              -- per-command local variable (rc heritage)
 
 **`|&` coprocess.** `cmd |&` starts a coprocess with a
 9P-shaped bidirectional protocol. See specification.md
@@ -915,6 +919,13 @@ as new sigils.
                 | '<' WORD
                 | '>[' NUM '=' NUM ']'
                 | '<[' NUM '=' NUM ']'
+                | here_doc
+                | '<<<' WORD                  -- here-string
+    here_doc    = '<<' '-'? ('[' NUM ']')? MARKER
+                                              -- body follows on next line(s)
+                                              -- terminated by MARKER alone on a line
+                                              -- quoted MARKER ('EOF') suppresses expansion
+                                              -- '-' strips leading tabs from body + marker
 
 Redirections are profunctor maps — transformations on the I/O
 context. See specification.md §Profunctor structure for the
@@ -963,9 +974,11 @@ Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
 `return`, `struct`.
 
-Reserved for future use: `type` (type aliases), `enum` (named
-coproduct types generalizing sums — built-in sum tags like
-`ok`/`err`/`some`/`none` suffice for v1).
+Active: `enum` — user-declared coproduct types with parametric
+type constructors (see specification.md §Enums).
+
+Reserved for future use: `type` (type aliases, if parametric
+polymorphism on function signatures is ever reconsidered).
 
 Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
 `^`, `>`, `>>`, `<`, `>[`, `<[`.
