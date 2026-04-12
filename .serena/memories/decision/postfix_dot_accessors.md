@@ -4,27 +4,49 @@ status: current
 created: 2026-04-10
 last_updated: 2026-04-11
 importance: high
-keywords: [postfix-dot, accessor, copattern, space-disambiguation, per-type-namespace, capitalization, lens, prism]
+keywords: [bracket-accessor, postfix-dot, accessor, copattern, space-disambiguation, per-type-namespace, capitalization, lens, affine-traversal, bracket-dot-split]
 agents: [psh-architect, psh-optics-theorist, psh-sequent-calculus]
 related: [decision/tagged_construction_uniform, decision/codata_discipline_functions, analysis/monadic_lens, analysis/data_vs_codata]
 ---
 
-# Decision: postfix dot accessors with required leading space, per-type namespace
+# Decision: two accessor forms — bracket and dot
 
 ## Decision
 
-psh's accessor syntax is **postfix dot with a required leading space**:
+psh has **two accessor forms** for projecting into values:
+
+**Bracket `$a[i]`** — projection by runtime value. Tuples
+(`$t[0]`), lists (`$l[n]`), maps (`$m['key']`). Returns
+`Option(T)`. Binds immediately after `$name` with no space
+(no-space rule mirrors rc's `$path(2)` subscript convention).
 
 ```
-$pos .0        # tuple projection — Lens
+$pos[0]        # tuple projection — Lens (literal index only)
+$list[n]       # list element — AffineTraversal
+$m['key']      # map lookup — AffineTraversal
+$list[1..3]    # slice — AffineFold
+$list[-1]      # last element — negative indexing
+```
+
+**Dot `$x .name`** — named field/method/discipline access with
+required leading space. Disambiguates from rc's free caret
+(`$stem.c` = `$stem ^ .c`).
+
+```
+$s .x          # struct field — Lens
 $name .upper   # type method — Str.upper
-$result .ok    # sum preview — Prism
 $count .get    # discipline function fire
 ```
 
-The leading space is the disambiguator against rc's free caret concatenation (`$stem.c` with no space is `$stem ^ .c`).
+Inside brackets is expression context (never glob). Tuple bracket
+requires literal `Int` index (result type varies by position).
+No `[*]`/`[@]` — psh's "every variable is a list" makes them
+unnecessary.
 
-Per-type namespaces via `def Type.ident { body }`. Capitalization disambiguates: **uppercase Type** registers a method on the type (`def Str.length`); **lowercase variable** registers a discipline on an individual variable (`def count.set`).
+Per-type namespaces via `def Type.ident { body }`. Capitalization
+disambiguates: **uppercase Type** registers a method on the type
+(`def Str.length`); **lowercase variable** registers a discipline
+on an individual variable (`def count.set`).
 
 ## Why
 
@@ -36,11 +58,26 @@ Capitalization disambiguation for per-type namespace: `Type.name` vs `var.name` 
 
 ## Consequences
 
-- `$pos .0 .1` = `first . second` left-to-right — ordinary function composition of profunctor optics.
-- Struct declarations auto-generate both named accessors (`.x`, `.y`) and numeric accessors (`.0`, `.1`).
-- Partial accessors return option sums: `$result .ok` gives `some(v)` or `none()` depending on whether the outer tag matches.
-- Discipline functions like `def count.get { ... }` define codata observers on the variable `count`.
-- Methods like `def Str.upper { ... }` extend the `Str` type uniformly across all Str-typed variables.
-- The free caret rule from rc is preserved — `$stem.c` (no space) still concatenates.
+- Bracket and dot compose freely: `$t[0] .name` (Lens ∘ Lens),
+  `$m['key'] .name` (AffineTraversal ∘ Lens). Standard Tambara
+  module composition across the bracket/dot boundary.
+- The bracket/dot split mirrors an index-vs-symbol selection
+  boundary, not an optic class boundary. Both sides produce
+  standard profunctor optics; the syntax determines how the
+  optic is *selected* (runtime value vs static symbol).
+- Struct declarations auto-generate named accessors (`.x`, `.y`),
+  `.fields` (generic `List((Str, Str))`), and `.values` (typed
+  `List(T)` on homogeneous structs only). No bracket positional
+  access on structs.
+- `m['key'] = v` on `let mut` maps desugars to
+  `m = $m .insert 'key' v` (discipline-transparent).
+- Discipline functions like `def count.get { ... }` define
+  codata observers on the variable `count`.
+- Methods like `def Str.upper { ... }` extend the `Str` type
+  uniformly across all Str-typed variables.
+- The free caret rule from rc is preserved — `$stem.c` (no
+  space) still concatenates.
 
-Spec: `docs/specification.md` §"Syntax §Postfix dot accessors with required leading space", §"Tuples", §"Structs", §"Sums", §"Discipline functions". Ledger: `docs/deliberations.md` §"Accessor notation: copattern-style postfix dot".
+Spec: `docs/specification.md` §"Two accessor forms: bracket and
+dot", §"Tuples", §"Structs", §"Map type", §"Optics activation".
+Grammar: `docs/syntax.md` §"Accessor syntax".

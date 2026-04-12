@@ -195,25 +195,22 @@ master.
 These are design discussions Lane paused mid-flight. Each is
 live:
 
-- **Map construction form.** Currently `Map(('k1', 1) ('k2', 2))`
-  — a space-delimited list of comma-delimited tuples. Lane
-  observed that this is effectively "a list of structs" and
-  wants to discuss whether the form should change. Worth
-  picking up before implementation work begins.
+- **Map construction form — RESOLVED.** Map literal uses brace
+  syntax `{'key': 1, 'age': 2}` (colon, comma). Map is `Map(V)`
+  with string keys. Old `Map(...)` tagged form dropped. Builder
+  via `.insert` chain, bulk via `Map.from_list`. Access via
+  bracket `$m['key']` returning `Option(V)`. Landed in spec.
 
 - **psh-architect's checker sketch.** The bidirectional type
   checker has a spec but no Rust sketch. The ~300-600 line
   footprint estimate is unverified against a published
   implementation.
 
-- **Serena memory updates lagging the spec.** Several serena
-  decision memos still reference the pre-consolidation design:
-  `decision/struct_positional_only_forever` (the commitment is
-  reversed — named brace construction is the form),
-  `decision/tagged_construction_uniform` (narrowed to
-  coproducts and builtin parametric constructors; structs use
-  brace record literal), and possibly others. These should be
-  rewritten to match the current spec on the next pass.
+- **Serena memory updates — RESOLVED (2026-04-12).** Updated
+  `decision/tagged_construction_uniform` (narrowed to coproducts
+  only, Map removed), `decision/postfix_dot_accessors` (rewritten
+  for bracket/dot split). `decision/struct_positional_only_forever`
+  was already deleted.
 
 - **Pipe construction under Lane's "list of structs" framing.**
   Tangentially related to Map. Not actively in discussion but

@@ -48,7 +48,7 @@ Concrete consequences:
   structural substitution discipline, unchanged.
 - Tuples, sums, and structs are distinct types at the **element**
   level — they can appear inside the list. `let pos : Tuple = (10,
-  20)` holds a list of one tuple. `$#pos` is 1. `$pos .0` is
+  20)` holds a list of one tuple. `$#pos` is 1. `$pos[0]` is
   `10`.
 - No scalar/list distinction means no `"$var"` quoting ceremony
   is ever needed. Variables always splice structurally.
@@ -578,16 +578,18 @@ Key syntactic decisions with semantic grounding:
   `(a, b, c)` for tuple, `ok(v)` for sum, `Pos(x y)` for struct
   destructuring). Pattern alternation uses `|` between patterns
   (ML/Rust convention, unambiguous inside match arms).
-- **Postfix dot accessors with required leading space.** `$pos .0`
-  is tuple projection, `$x .upper` is a type method, `$result .ok`
-  is a sum preview. The space disambiguates from rc's free caret
-  (`$stem.c` = `$stem ^ .c`). Partial accessors return option
-  sums. See §Constructors and destructors.
+- **Two accessor forms: bracket and dot.** Bracket `$a[i]` is
+  projection by runtime value — tuples (`$t[0]`), lists
+  (`$l[n]`), maps (`$m['key']`). Returns `Option(T)`. Dot
+  `$x .name` is named field/method/discipline access with
+  required leading space — the space disambiguates from rc's
+  free caret (`$stem.c` = `$stem ^ .c`). Bracket binds
+  immediately after `$name` (no space); `$a [0]` with space
+  is a separate argument. See §Accessors.
 - **Uniform tagged construction.** `NAME(args)` with `NAME`
   immediately followed by `(` (no space) commits the parser to
   tagged construction. Args are space-delimited (list-style).
-  Covers sums (`ok(42)`), structs (`Pos(10 20)`), and maps
-  (`Map(('k' 'v') ...)`) uniformly.
+  Covers enum variant construction (`ok(42)`, `err('msg')`).
 - **`try`/`catch`** — scoped ErrorT. Changes the sequencing
   combinator inside `try` from unconditional `;` to monadic `;ₜ`
   that checks status after each command; on nonzero status,
@@ -710,7 +712,7 @@ determines a type.
 ### Type parameter pinning for parametric types
 
 Parametric type constructors (`Option(T)`, `Result(T, E)`,
-`List(T)`, `Map(K, V)`, user-declared `MyEnum(A, B)`) have
+`List(T)`, `Map(V)`, user-declared `MyEnum(A, B)`) have
 type parameters that must be pinned at the construction site
 via a combination of synth and check:
 
@@ -1513,37 +1515,43 @@ heritage). The comma is the disambiguator.
 **Accessor syntax** (product elimination — Lens projection):
 
     let pos = (10, 20)
-    echo $pos .0           # 10
-    echo $pos .1           # 20
+    echo $pos[0]           # 10
+    echo $pos[1]           # 20
 
     let record = ('lane', '/home/lane', 1000)
-    echo $record .0        # lane
-    echo $record .2        # 1000
+    echo $record[0]        # lane
+    echo $record[2]        # 1000
 
-Accessors `.0`, `.1`, `.2` etc. are Lens projections — the
-`first`, `second` etc. of the Cartesian profunctor class.
-**Accessor syntax is postfix dot with a required leading
-space.** `$pos .0` is an accessor; `$pos.0` (no space) is a
-free caret concatenation `$pos ^ .0` (rc heritage). The space
-is the disambiguator; it makes the parser unambiguous without
-type-level lookup.
+Tuple element access uses **bracket notation** `$t[i]` with a
+literal integer index. The bracket binds immediately after
+`$name` with no space — `$pos[0]` is a projection; `$pos [0]`
+(with space) is a separate argument. Bracket indices are
+0-based. Negative indices count from the end: `$t[-1]` is the
+last element. Out-of-bounds returns `none` (AffineTraversal).
 
-Composition: `$nested .0 .1` = `first . second` — ordinary
+Tuple bracket access requires a **literal** index — the result
+type depends on which position is accessed (`$t[0]` on
+`(Int, Str)` has type `Option(Int)`; `$t[1]` has type
+`Option(Str)`). A runtime variable `$t[$n]` on a heterogeneous
+tuple is a type error because the return type cannot be
+determined statically.
+
+Composition: `$nested[0][1]` = `first . second` — ordinary
 function composition of profunctor optics, chained
-left-to-right.
+left-to-right. Bracket and dot accessors compose freely:
+`$t[0] .name` is Lens then Lens (= Lens).
 
 Tuples are positive (value sort), admit all structural rules
 (weakening, contraction, exchange). They are inert data —
 Clone, no embedded effects.
 
-**ksh93 lineage.** ksh93's compound variables (`typeset -C`)
-were its struct system. `${x.field}` accessed named fields;
-disciplines mediated access. psh's tuples with positional
-accessors (and structs with named+numeric accessors) are the
-typed version — same functionality, explicit in the type system
-rather than implicit in the `Namval_t` machinery. The syntactic
-form differs: ksh93 required braces (`${x.field}`), psh uses
-postfix dot with a space (`$x .field`).
+**ksh93 lineage.** ksh93 used `${a[n]}` for array subscripting
+(sh.1 lines 1117-1131) with braces required around subscripted
+variables (sh.1 lines 1289-1291). psh's bracket notation
+follows the same convention: `$a[i]` for positional access.
+The distinction: ksh93 required braces (`${a[0]}`); psh uses
+bare `$a[0]` with the no-space rule disambiguating from
+separate arguments.
 
 
 ## Structs (named products, ×)
@@ -1601,7 +1609,7 @@ to construct a struct from a list of values must unpack
 positionally and name each field explicitly:
 
     let xy = (10, 20)            # a tuple
-    let p : Pos = { x = $xy .0; y = $xy .1 }
+    let p : Pos = { x = $xy[0]; y = $xy[1] }
 
 **Name-pun shorthand.** When the right-hand side of a field is
 a variable whose name matches the field, the `= NAME` part may
@@ -1640,21 +1648,40 @@ be elided:
 
 - `.x` and `.y` — named accessors (Lens projections on the
   `Pos` type)
-- `.0` and `.1` — positional accessors indexed by declaration
-  order (for generic programming that iterates over fields by
-  index)
+- `.fields` — returns `List((Str, Str))` of `(name, value)`
+  pairs in declaration order, with values coerced to strings
+  (serialization boundary for generic traversal)
+- `.values` — returns `List(T)` of field values in declaration
+  order, **only when all fields share a single type T**
+  (checker-gated; heterogeneous structs do not get `.values`)
 
-Both forms work on struct values:
+Named accessors work on struct values:
 
     let p : Pos = { x = 10; y = 20 }
-    echo $p .x               # 10 — named
-    echo $p .0               # 10 — positional (same field)
+    echo $p .x               # 10
     echo $p .y               # 20
-    echo $p .1               # 20
+
+Generic traversal:
+
+    for (name, val) in $p .fields {
+        echo $name '=' $val  # 'x = 10', 'y = 20'
+    }
+
+Homogeneous typed iteration:
+
+    let vals = $p .values    # List(Int) = (10 20)
+
+There is no bracket positional access on structs — bracket
+`[i]` is for ordered/keyed collections (tuples, lists, maps).
+Struct field access is dot-only, reflecting that struct fields
+are named observers, not indexed projections.
 
 The struct declaration is a batch registration in the per-type
 accessor namespace, equivalent to writing `def Pos.x { }` and
-`def Pos.y { }` (plus numeric fallbacks) by hand.
+`def Pos.y { }` by hand. `.fields` and `.values` are
+auto-generated `def Type.fields` and `def Type.values`
+methods — computations that produce new lists, not lens
+projections into the struct's storage.
 
 **Pattern matching** uses a brace record pattern symmetric with
 construction:
@@ -1721,9 +1748,9 @@ dual to the constructor's data view. The `struct` keyword is
 the syntactic form that batches the two views together:
 registering the constructor (positive introduction, realized
 as the brace record literal under check-mode) and the
-projections (negative destructors, realized as the `.x`/`.0`
-accessors) at once, unifying the data/codata duality in a
-single declaration.
+projections (negative destructors, realized as the `.x`
+named accessors) at once, unifying the data/codata duality
+in a single declaration.
 
 
 ## Enums (coproducts, +)
@@ -1889,18 +1916,11 @@ patterns use `let-else`:
     }
     # path : Path, available below only if lookup succeeded
 
-**Accessor syntax** (coproduct elimination — Prism preview):
-
-    echo $result .ok        # Prism preview: some(42) or none
-    echo $result .err       # Prism preview: none or some('not found')
-
-`$x .variant` is a Prism preview — a partial projection that
-returns `some(payload)` if the variant matches and `none`
-otherwise. The return type is always an `Option(PayloadType)`.
-Profunctor constraint: Cocartesian. Composition across products
-and coproducts yields an affine traversal (Cartesian +
-Cocartesian): `$result .ok .0` is Prism then Lens, returning
-`some(v)` or `none` depending on whether the outer tag matches.
+**Observation** uses `match` — variant names are constructors
+(`ok(42)`, `err('msg')`), not postfix accessors. There is no
+`$result .ok` Prism preview via dot; enum dispatch goes through
+`match` arms. Profunctor constraint on the Prism structure:
+Cocartesian.
 
 Enums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.
@@ -1921,13 +1941,47 @@ full spec sections will be added or refined as the design
 stabilizes.
 
 - **Map type** — associative arrays with O(1) lookup.
-  Parametric type constructor `Map(K, V)`. Constructor:
-  `Map(('k1', 1) ('k2', 2))` with a space-delimited list of
-  comma-delimited key-value tuples. Accessors: `.get` (returns
-  `some(v)` or `none`), `.set`, `.keys`, `.values`. Key-indexed
-  view is an affine traversal; iterate-all-values is a
-  traversal. (The construction form is under review; see
-  §"Tagged construction rule" discussion.)
+  Parametric type constructor `Map(V)`. Keys are always
+  strings — matching the unanimous convention of bash, zsh,
+  ksh93, nushell, and ysh. Integer-keyed collections use
+  lists; string-keyed associative lookup uses maps.
+
+  **Construction** has three paths:
+
+  *Map literal* — brace syntax with colon key-value separator
+  and comma delimiter, syntactically distinct from struct
+  record literals (`=` and `;`):
+
+      let m : Map(Int) = {'name': 1, 'age': 2}
+
+  Map literals can synthesize their type from entries (unlike
+  struct literals which are check-only). Empty `{}` is
+  check-only — the expected type resolves whether it is an
+  empty map or an empty struct.
+
+  *Builder chain* — `.insert` is a pure functional update
+  method on Map values (distinct from the discipline `.set`
+  on variables), returning a new Map:
+
+      let m : Map(Int) = Map.empty .insert 'name' 1 .insert 'age' 2
+
+  *Bulk constructor* — `Map.from_list : List((Str, V)) → Map(V)`
+  constructs from a list of key-value tuples:
+
+      let pairs = (('name', 1) ('age', 2))
+      let m : Map(Int) = Map.from_list $pairs
+
+  **Access** uses bracket notation — `$m['key']` returns
+  `Option(V)` (`some(v)` or `none`). Inside brackets is
+  expression context (never glob); the index expression must
+  be of type `Str`. **Insertion** via assignment —
+  `m['key'] = v` on a `let mut` map desugars to
+  `m = $m .insert 'key' v` (discipline-transparent).
+
+  **Accessors:** `.keys` returns `List(Str)`, `.values`
+  returns `List(V)`. Key-indexed view (`$m['key']`) is an
+  affine traversal; iterate-all-values (`.values`) is a
+  traversal.
 
 - **String methods on `Str`** — fork-free string operations
   registered as `def Str.name { }` accessor methods. `.length`,
@@ -2048,22 +2102,40 @@ is not currently in the grammar.
 
 ### Optics activation
 
-| Type | Optic | Profunctor constraint |
-|---|---|---|
-| Lists (rc base) | Traversal (iteration) | Traversing (Applicative) |
-| Tuples (products) | Lens (projection) | Cartesian |
-| Structs (named products) | Lens (named and positional) | Cartesian |
-| Sums (coproducts) | Prism (preview) | Cocartesian |
-| Products × Coproducts | Affine traversal | Cartesian + Cocartesian |
-| Map[k,v], key-indexed view | Affine traversal (partial lookup) | Cartesian + Cocartesian |
-| Map[k,v], iterate all values | Traversal | Traversing (Applicative) |
-| fd table (save/restore) | Lens | Cartesian |
-| Redirections | Adapter | Profunctor |
+The accessor system uses two syntactic forms: **bracket**
+`$a[i]` for projection by runtime value, and **dot** `$a .name`
+for named field/method/discipline access. This split reflects
+an optic selection boundary: bracket selects an optic by a
+runtime-valued index (the index is itself a producer), while
+dot selects by a static symbol resolved at parse/check time.
+Both sides produce standard profunctor optics; the syntax
+determines how the optic is selected, not which class it is.
+
+| Type | Access form | Optic | Profunctor constraint |
+|---|---|---|---|
+| Lists (rc base) | `for x in $l` | Traversal (iteration) | Traversing (Applicative) |
+| Lists | `$l[n]` | Affine traversal (index) | Cartesian + Cocartesian |
+| Tuples (products) | `$t[i]` (literal index) | Lens (projection) | Cartesian |
+| Structs (named products) | `$s .field` | Lens (named) | Cartesian |
+| Sums (coproducts) | `match` | Prism (case analysis) | Cocartesian |
+| Map(V), key lookup | `$m['key']` | Affine traversal (partial) | Cartesian + Cocartesian |
+| Map(V), all values | `.values` | Traversal | Traversing (Applicative) |
+| List slice | `$l[a..b]` | Affine fold (read-only) | Cartesian + Cocartesian |
+| fd table (save/restore) | (internal) | Lens | Cartesian |
+| Redirections | (wrapping) | Adapter | Profunctor |
 
 Discipline-equipped variables are not listed here — they are
 mixed monadic lenses per `def:monadiclens`, orthogonal to the
 type-shape classification above. See §"Mixed-optic structure"
 in §Discipline functions.
+
+**Bracket/dot partition.** The table partitions cleanly — no
+row needs both accessor forms. Bracket covers indexed/keyed
+access (tuples, lists, maps); dot covers named observers
+(struct fields, type methods, discipline functions). Optic
+composition across the boundary follows standard Tambara
+module composition: `$t[0] .name` (Lens ∘ Lens = Lens),
+`$m['key'] .name` (AffineTraversal ∘ Lens = AffineTraversal).
 
 **Traversing / Applicative** is the Tambara-module class
 corresponding to Clarke's power-series action [Clarke,
@@ -2078,18 +2150,18 @@ satisfied; the "Cartesian + Cocartesian" profunctor constraint
 is sufficient for user-facing classification.
 
 **Map type** gets two rows because the two views are
-structurally different: a single-key view (`m .get(k)` or
-`$m .k`) is a partial lookup — affine traversal, may or may
-not hit. Iteration over all entries is an unconditional fold
-over every stored value — a proper Traversal in the Applicative
+structurally different: a single-key bracket lookup
+(`$m['key']`) is a partial projection — affine traversal, may
+or may not hit. Iteration over all values (`.values`) is an
+unconditional fold — a proper Traversal in the Applicative
 sense.
 
-The accessor syntax `$x .N` (tuples/lists) and `$x .tag`
-(sums/struct fields) is stable. The postfix-dot-with-space
-form works for any type with registered accessors. What changes
-is whether the accessor is a Lens (product), Prism (coproduct),
-or affine traversal (mixed), determined by the type at the
-access point.
+**List element access** is an affine traversal, not a Lens,
+because the index may be out of bounds. `$l[n]` returns
+`Option(T)` — `some(value)` or `none`. This matches map key
+lookup, which also returns `Option(V)`. The partiality is
+inherent: `Int` does not encode bounds, and psh has no
+dependent types to prove `0 ≤ n < len(l)` statically.
 
 
 ## References

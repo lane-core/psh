@@ -582,13 +582,15 @@ command that consumes them runs.
     arith_op    = '+' | '-' | '*' | '/' | '%'
                 | '>' | '<' | '>=' | '<=' | '==' | '!='
 
-    var_ref     = '$' VARNAME (ws accessor)*
-    accessor    = '.' (NUM | NAME)
+    var_ref     = '$' VARNAME bracket_access* (ws dot_accessor)*
+    bracket_access = '[' expr ']'         -- no space between VARNAME and '['
+    dot_accessor   = '.' NAME
     ws          = (' ' | '\t')+
 
     value       = '(' word* ')'            -- list (homogeneous, runtime arity)
                 | tuple                   -- anonymous product (comma-delim, static arity)
                 | record_lit              -- struct construction (named fields, check-mode)
+                | map_lit                 -- map construction (string keys, synth-capable)
                 | variant_val             -- enum construction (tagged)
                 | nullary_variant         -- enum nullary variant (bare name)
                 | lambda
@@ -597,6 +599,8 @@ command that consumes them runs.
     record_lit  = '{' field_init (';' field_init)* ';'? '}'
     field_init  = NAME '=' value          -- named field
                 | NAME                    -- name-pun shorthand for NAME = NAME
+    map_lit     = '{' map_entry (',' map_entry)* ','? '}'
+    map_entry   = expr ':' expr           -- key (Str) : value
     variant_val = NAME '(' value ')'      -- enum construction with payload
     nullary_variant = NAME                -- bare variant name (context-determined)
 
@@ -615,52 +619,72 @@ psh extension — rc had no tuples.
 
 ### Accessor syntax
 
-Accessors project into structured values via **postfix dot
-notation with a required leading space**. The space is the
-disambiguator from free caret concatenation.
+psh has **two accessor forms** for projecting into structured
+values:
 
-    accessed_word = var_ref (ws accessor)*
-    accessor      = '.' (NUM | NAME)
-    ws            = (' ' | '\t')+
+**Bracket `$a[i]`** — projection by runtime value. Tuples,
+lists, maps. The bracket binds immediately after `$name` with
+no space (the no-space rule mirrors rc's `$path(2)` subscript
+convention, but with `[` instead of `(`).
+
+**Dot `$a .name`** — named field/method/discipline access with
+a required leading space. The space disambiguates from free
+caret concatenation.
+
+Grammar:
+
+    accessed_word = '$' VARNAME bracket_access* (ws dot_accessor)*
+    bracket_access = '[' expr ']'
+    dot_accessor   = '.' NAME
+    ws             = (' ' | '\t')+
 
 Examples:
 
-    $pos .0              # tuple projection (0-based)
-    $pos .1              # second element
-    $record .0           # first field
+    $pos[0]              # tuple projection (0-based, Lens)
+    $pos[1]              # second element
+    $pos[-1]             # last element (negative indexing)
+    $list[n]             # list element by index (AffineTraversal)
+    $list[1..3]          # slice (AffineFold, returns List)
+    $m['key']            # map lookup (AffineTraversal, returns Option)
     $name .upper         # string method
     $items .length       # list length
-    $result .ok          # sum preview (Prism)
+    $s .x                # struct field (Lens)
 
-Parsing rule:
+Parsing rules:
 
-- `$x .0` (with whitespace before the dot) is an accessor.
-- `$x.0` (no whitespace before the dot) is a free caret
-  concatenation: `$x ^ .0`. rc heritage.
+- `$x[0]` (no space before `[`) is a bracket accessor.
+- `$x [0]` (space before `[`) is a separate argument.
+- `$x .name` (space before `.`) is a dot accessor.
+- `$x.name` (no space before `.`) is free caret: `$x ^ .name`.
 
-The space is load-bearing. It makes the parser unambiguous
-without type-level disambiguation — the rule is purely
-syntactic. Users who want concatenation write `$x.c` or
-`$x^.c` (explicit caret); users who want accessor access write
-`$x .field` (with space).
+Inside brackets is **expression context** — never glob.
+`$a[0-9]` is arithmetic (evaluates to -9), not a character
+class. The bracket content is a full psh expression
+type-checked at the bracket site: `Int` for lists/tuples,
+`Str` for maps. Tuple bracket access requires a **literal**
+integer index (the return type depends on which position is
+accessed).
 
-Accessors chain: `$nested .0 .1` is "projection into element
-0, then projection into element 1 of that" (Lens ∘ Lens =
-Lens). `$result .ok .0` is Prism then Lens (AffineTraversal).
+All bracket accesses return `Option(T)` — `some(val)` or
+`none` on miss (out-of-bounds for lists/tuples, missing key
+for maps). Users pattern-match on the option or use `let-else`.
 
-Partial accessors (list indexing beyond length, sum preview on
-wrong tag) return option sums: `some(val)` or `none()`. Users
-pattern-match on the option.
+Bracket and dot compose freely: `$t[0] .name` is Lens ∘ Lens
+= Lens. `$m['key'] .name` is AffineTraversal ∘ Lens =
+AffineTraversal. `$s .field[0]` is Lens ∘ Lens = Lens.
 
-The accessor namespace is per-type. `def Type.name { }`
+The dot accessor namespace is per-type. `def Type.name { }`
 registers a new accessor on a type. Capitalization
 disambiguates type methods (`def List.length { }`) from
 discipline functions (`def x.set { }`).
 
-See specification.md §Constructors and destructors and the
-"Three roles of `()`" section in deliberations.md for the full
-typing rules and the list/tuple/tagged-construction
-distinction.
+**No `[*]` or `[@]` inside brackets.** psh does not adopt
+ksh93's all-elements subscript forms. `$a` already gives the
+whole list (every variable is a list); iteration uses
+`for x in $list { ... }`.
+
+See specification.md §Tuples, §Structs, §Map type, and
+§Optics activation for the full typing rules.
 
 ### Arithmetic (`$((...))`)
 
@@ -811,10 +835,12 @@ that would otherwise terminate a bare `$name` reference.
 
     ${x.get}          looks up variable named literally "x.get"
     $x.get            free caret: $x ^ .get (rc heritage)
-    $x .get           accessor: call the .get method on $x
+    $x .get           dot accessor: call the .get method on $x
+    $x[0]             bracket accessor: first element of $x
 
-Braces are NOT the accessor form. Accessors are postfix dot
-with required space (see §Accessor syntax above).
+Braces are NOT the accessor form. Dot accessors are postfix
+with required space; bracket accessors bind immediately after
+`$name` with no space (see §Accessor syntax above).
 
 ### Variable expansion
 
@@ -823,15 +849,17 @@ with required space (see §Accessor syntax above).
     $"x               stringify: join elements with spaces — list join destructor
     ${name}           explicit variable name delimiting (escape hatch only)
 
-    $x .0             first element (tuple projection, Lens)
+    $x[0]             first element (bracket projection, Lens on tuples)
+    $x[n]             list/tuple element by index (AffineTraversal)
+    $x['key']         map lookup by key (AffineTraversal)
     $x .name          named accessor (struct field or type method)
-    $x .ok            sum preview (Prism)
 
 rc heritage for `$x`, `$#x`, `$"x`, and `${name}` [1,
-§Variables, §Indexing]. Postfix-dot accessor is psh's addition,
-modeled on Agda copatterns. rc's `$x(n)` 1-based list indexing
-is replaced by `$x .0` (0-based), consistent with tuple
-accessors.
+§Variables, §Indexing]. Bracket accessor is psh's addition,
+following ksh93's `${a[n]}` convention with simplified syntax.
+rc's `$x(n)` 1-based list indexing is replaced by `$x[0]`
+(0-based). Dot accessor is modeled on Agda copatterns for
+named field/method/discipline access.
 
 **Parameter expansion sigils are sugar aliases.** `$#x` and
 `$"x` are prefix-sigil parameter expansion operators inherited

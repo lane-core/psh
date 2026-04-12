@@ -43,21 +43,22 @@ the relevant agent and Lane.
   are a trivial special case. Builtins return values directly.
 - **`def` for named computations (Θ), `let` + lambda for values
   (Γ).** Lambda syntax is `|x| => expr` or `|x| { block }`.
-- **Postfix dot accessors with required leading space.** `$pos .0`,
-  `$name .upper`, `$result .ok`. Space disambiguates from free
-  caret. Per-type accessor namespaces via `def Type.ident` (uppercase
-  type, lowercase variable = capitalization convention).
+- **Two accessor forms: bracket and dot.** Bracket `$a[i]` for
+  projection by runtime value (tuples, lists, maps). Returns
+  `Option(T)`. Dot `$x .name` for named field/method/discipline
+  access with required leading space — space disambiguates from
+  free caret. Per-type accessor namespaces via `def Type.ident`.
 - **Uniform tagged construction.** `NAME(args)` with `NAME`
-  immediately followed by `(` — space-delimited args. Covers sums
-  (`ok(42)`), structs (`Pos(10 20)`), and maps (`Map(('k' 'v')
-  ...)`).
+  immediately followed by `(` — space-delimited args. Covers
+  enum variant construction (`ok(42)`, `err('msg')`).
 - **Three roles of `()`.** Space-delimited list, comma-delimited
   tuple, tag-prefixed tagged construction. Lists splice into
   tagged construction; tuples do not.
-- **Structs: positional construction only, forever.** No
-  `Pos(x: 10, y: 20)` named form, now or later. Fields bound by
-  declaration order. Named (`.x`) and numeric (`.0`) accessors
-  auto-generated.
+- **Structs: brace record literal construction.** `{ x = 10; y = 20 }`.
+  Check-mode only (needs expected type). Named accessors (`.x`,
+  `.y`) auto-generated. `.fields` returns `List((Str, Str))` for
+  generic traversal; `.values` returns `List(T)` on homogeneous
+  structs.
 - **Codata discipline functions.** `.get` is the codata observer
   (computes the value seen by the accessor), `.set` is the codata
   constructor. Both are `def` cells in Kl(Ψ). CBV focusing is the
