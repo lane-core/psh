@@ -33,7 +33,7 @@ This anchor is **forward-looking** — nothing in v1 depends on FVDblTT. The ref
 
 ## Spec sites
 
-The spec does not cite FVDblTT directly. v1 psh has no protypes — the typed-pipe extension is deferred per `PLAN.md` §"Open items from deliberations.md". This anchor is a **forward link** for v2 design work.
+The spec does not cite FVDblTT directly. v1 psh has no protypes — the typed-pipe extension is deferred per `PLAN.md` §"Non-goals". This anchor is a **forward link** for v2 design work.
 
 - `analysis/wire_format_horizontal_arrow` — v1 horizontal-arrow discipline that v2 protypes would generalize.
 - `analysis/decision_procedure_8_5` — the §8.5 classifier whose treatment of new features would gain a syntactic frame under FVDblTT.

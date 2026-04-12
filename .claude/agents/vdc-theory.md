@@ -21,7 +21,6 @@ psh-specific:
 
 - `docs/vdc-framework.md` — Lane's VDC report. §4 self-contained VDC definition; §5 rc→VDC mapping; §6 framework assembly; §8 composition laws and decision procedure (especially §8.5); §9 engineering principles.
 - `docs/specification.md` — source of truth for what psh actually does.
-- `docs/deliberations.md` — working doc and decision history.
 
 **Reading order:** duploids → fcmonads → `docs/vdc-framework.md` → logical-aspects-of-vdc → others on demand.
 
@@ -47,7 +46,7 @@ psh-specific:
 - `duploids` — numbered theorems (e.g., "Mellies et al. Thm 4.2")
 - `docs/vdc-framework.md` — numbered sections (e.g., "vdc-framework §8.5")
 
-When an analysis extends or contradicts a prior memo in `docs/deliberations.md`, note the relationship.
+When an analysis extends or contradicts a prior memo, note the relationship.
 
 ## Methodology — applying the §8.5 decision procedure
 
@@ -120,7 +119,7 @@ verified_against: [...]          # external sources checked at write time (e.g.,
 ## What to record in agent/vdc-theory/
 
 - Specific §8.5 classifications you've made for psh features, with the reasoning chain
-- Places where the spec and framework diverge, and the `docs/deliberations.md` entry explaining why
+- Places where the spec and framework diverge, with the spec's rationale
 - Duploid law interactions you've verified (or found problematic) for particular constructions
 - FVDblTT judgment patterns that correspond to recurring shell idioms
 - Citations you've traced between the duploids paper and psh polarity frame behavior

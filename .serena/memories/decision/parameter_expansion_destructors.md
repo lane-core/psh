@@ -7,7 +7,7 @@ importance: normal
 keywords: [parameter-expansion, sigil, length, join, rc-heritage, list-destructor, prefix-sigil, dollar-hash, dollar-quote]
 agents: [plan9-systems-engineer, psh-architect]
 related: [decision/every_variable_is_a_list, analysis/data_vs_codata, analysis/duff_principle]
-verified_against: [docs/deliberations.md@HEAD §"$#x and $\"x", git-log@30f5f6c]
+verified_against: [docs/specification.md@HEAD, docs/syntax.md@HEAD]
 ---
 
 # Decision: `$#x` and `$"x` are type-specific eliminators for List
@@ -29,7 +29,7 @@ rc used prefix sigils for shell-level operations (`$x` for value, `$#x` for leng
 
 Alternative considered: method-style accessors like `$x .length` and `$x .join`. These remain available as Str/List methods but are longer to type for the two most common operations. The sigils are the short forms; the accessors are the long forms; they coexist.
 
-Commit `30f5f6c` landed the decision. `docs/deliberations.md` §"`$#x` and `$\"x` as parameter expansion destructors (APPLIED)" has the resolution record.
+Commit `30f5f6c` landed the decision. Decision history is in git.
 
 ## Consequences
 
@@ -38,4 +38,4 @@ Commit `30f5f6c` landed the decision. `docs/deliberations.md` §"`$#x` and `$\"x
 - The same operations are also available via `$count .length` and `$path .join` method accessors (see `decision/postfix_dot_accessors`).
 - ksh93's `${var#pat}` / `${var%pat}` pattern-matching forms are **not** adopted; use Str method accessors instead.
 
-Spec: `docs/specification.md` §"Extension path" (String methods on Str), §"Foundational commitment" (every variable is a list). Ledger: `docs/deliberations.md` §"`$#x` and `$\"x` as parameter expansion destructors (APPLIED)".
+Spec: `docs/specification.md` §"Extension path" (String methods on Str), §"Foundational commitment" (every variable is a list). Ledger: Decision history is in git.

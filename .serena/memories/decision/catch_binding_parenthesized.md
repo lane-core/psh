@@ -8,7 +8,7 @@ keywords: [catch, try, parenthesized, binding, grammar, consistency, rc-parens]
 agents: [psh-architect, psh-sequent-calculus, plan9-systems-engineer]
 related: [decision/try_catch_scoped_errort, analysis/error_duality_oplus_par, analysis/cbpv_f_u_separation]
 supersedes: [pre-2026-04-10 bare-NAME form of catch binding in syntax.md:255 and related locations]
-verified_against: [docs/syntax.md@HEAD, docs/specification.md@HEAD, docs/deliberations.md@HEAD, PLAN.md@HEAD]
+verified_against: [docs/syntax.md@HEAD, docs/specification.md@HEAD, PLAN.md@HEAD]
 ---
 
 # Decision: `catch` binding form is parenthesized
@@ -53,6 +53,6 @@ The `try_cmd` production was the lone outlier among the rc-style control constru
 - `docs/specification.md:1021` — signal interaction section prose
 - `PLAN.md:81, :119` — roadmap references
 
-`docs/deliberations.md` has §"`catch` binding form: parenthesized (APPLIED)" as the supersession record citing each updated location.
+Decision history is in git.
 
-Spec: `docs/specification.md` §"Error model §try/catch". Syntax: `docs/syntax.md` §"try / catch". Ledger: `docs/deliberations.md` §"`catch` binding form: parenthesized (APPLIED)".
+Spec: `docs/specification.md` §"Error model §try/catch". Syntax: `docs/syntax.md` §"try / catch". Ledger: Decision history is in git.

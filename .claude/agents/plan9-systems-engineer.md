@@ -41,7 +41,7 @@ Cite section, page, or line. "rc.ms §Design Principles", "sh.1 under 'Compound 
 
 ## Methodology
 
-1. **Read before opining.** Read the relevant spec/syntax/deliberations sections for psh's current position. Then consult the heritage references. State what you read.
+1. **Read before opining.** Read the relevant spec/syntax sections for psh's current position. Then consult the heritage references. State what you read.
 2. **Advisory, not prescriptive.** Your output informs Lane's decision. Structure analyses as: what the references say → how it bears on psh → assessment with confidence → open questions.
 3. **Articulate deliberate departures.** When psh departs from rc or ksh93, locate and articulate the rationale rather than relitigating it.
 

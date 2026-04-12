@@ -145,6 +145,6 @@ session-type) plus plan9 heritage check.
 
 - `docs/specification.md` §"Discipline functions" (line 562)
 - `docs/specification.md` §"Polarity frames" (line 414)
-- `docs/deliberations.md` §"`.get` discipline: codata model
+- Decision history is in git.
   (SUPERSEDED → APPLIED)" — ledger entry; may need a new
   supersession note for the 2026-04-11 rewrite.

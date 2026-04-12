@@ -24,7 +24,6 @@ evaluator, and value model against the current spec.
 |---|---|
 | `docs/specification.md` | Single source of truth for resolved decisions. Read this carefully. |
 | `docs/syntax.md` | Formal grammar. |
-| `docs/deliberations.md` | Working doc with decision history, supersession notes, and in-progress items. Consult for context. |
 | `docs/vdc-framework.md` | Theoretical framework report. §4 (VDCs), §8 (composition laws + decision procedure), §9 (engineering principles) are load-bearing. |
 | `refs/ksh93/ksh93-analysis.md` | ksh26 sequent-calculus analysis of ksh93. Source of the polarity frame discipline and the sh.prefix bug analysis. |
 | `docs/implementation.md` | Dependency rationale and engineering principles (CLOEXEC, polarity frames, no global mutable state). |
@@ -159,13 +158,13 @@ Generated-with: Claude opus-4-6 (Anthropic) via Claude Code
 
 - **The spec is the source of truth.** Framework documents inform
   it but do not override it. If you find a contradiction, the spec
-  wins — consult deliberations.md for the decision history.
+  wins.
 - **The current implementation is not sacred.** Lane retired the
   prior type-system implementation explicitly so future work can
   rebuild from the current spec without compatibility constraints.
   Don't preserve code for preservation's sake.
 - **Don't pick design options autonomously** when the resolution is
-  not already in the spec or deliberations. Consult the agents, then
+  not already in the spec. Consult the agents, then
   present to Lane.
 - **Low-confidence rejection.** If you search the references for
   guidance and find nothing directly relevant, say so. Don't stretch
@@ -176,14 +175,13 @@ Generated-with: Claude opus-4-6 (Anthropic) via Claude Code
 
 ## Knowledge management
 
-Knowledge in psh lives at five tiers: `docs/specification.md` (tier
-1, single source of truth) > `docs/deliberations.md` (tier 2,
-working doc with supersession) > framework documents
+Knowledge in psh lives at four tiers: `docs/specification.md` (tier
+1, single source of truth) > framework documents
 (`docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`,
-`docs/implementation.md` — tier 3) > **serena memory store** (tier
-4, project-shared knowledge base; every agent reads the whole store,
+`docs/implementation.md` — tier 2) > **serena memory store** (tier
+3, project-shared knowledge base; every agent reads the whole store,
 writes only to `agent/<name>/` or project-level types) > vendored
-papers at `/Users/lane/gist/` (tier 5). Higher tiers override lower;
+papers at `/Users/lane/gist/` (tier 4). Higher tiers override lower;
 spec always wins.
 
 There is **no parallel per-tool memory layer.** Agent-private
@@ -211,6 +209,6 @@ The seven operational principles, in short:
 5. **Source ranking.** Follow higher tier; flag conflicts, don't
    reconcile.
 6. **Scope boundaries.** Hand off out-of-scope queries by name.
-7. **Deduplication.** Search `docs/deliberations.md`, serena
-   (including your `agent/<name>/` folder), and the spec before
-   writing new material.
+7. **Deduplication.** Search serena (including your
+   `agent/<name>/` folder) and the spec before writing new
+   material.

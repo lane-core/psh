@@ -12,7 +12,7 @@ agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vd
 
 This is the top-level project index — itself a hub per `policy/memory_discipline` §"Hubs reference, they do not contain". It orients agents to query categories and points at memories with one-line hooks. It does **not** contain memo content.
 
-**Sources of truth.** `docs/specification.md` is tier 1 (the spec wins). `docs/deliberations.md` is tier 2 (decision history). `docs/vdc-framework.md` / `refs/ksh93/ksh93-analysis.md` / `docs/implementation.md` are tier 3 (framework). Serena memories (below) are tier 4 (project-shared knowledge base). Vendored papers at `/Users/lane/gist/` are tier 5.
+**Sources of truth.** `docs/specification.md` is tier 1 (the spec wins). `docs/vdc-framework.md` / `refs/ksh93/ksh93-analysis.md` / `docs/implementation.md` are tier 2 (framework). Serena memories (below) are tier 3 (project-shared knowledge base). Vendored papers at `/Users/lane/gist/` are tier 4.
 
 ## Start here (every session)
 

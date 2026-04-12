@@ -7,7 +7,7 @@ importance: normal
 keywords: [lambda, syntax, pipe-delimited, rust-style, line-continuation, nullary]
 agents: [psh-architect, psh-sequent-calculus]
 related: [decision/def_vs_lambda, decision/backslash_escape_rules, analysis/cbpv_f_u_separation]
-verified_against: [docs/deliberations.md@HEAD §"Lambda syntax", git-log@e0ecaf5]
+verified_against: [docs/specification.md@HEAD, docs/syntax.md@HEAD]
 ---
 
 # Decision: lambda syntax is `|x| { body }` / `|x| => expr`
@@ -28,7 +28,7 @@ Replacing `\` as the lambda introducer frees the backslash for line continuation
 
 Alternative considered: keep `\x =>`, reserve backslash for lambdas only. Rejected because line continuation is an essential editor convenience and backslash escapes are too useful to give up.
 
-Commit `e0ecaf5` landed the change. `docs/deliberations.md` §"Lambda syntax: |x| { body } / |x| => expr (APPLIED)" has the resolution record.
+Commit `e0ecaf5` landed the change. Decision history is in git.
 
 ## Consequences
 
@@ -37,4 +37,4 @@ Commit `e0ecaf5` landed the change. `docs/deliberations.md` §"Lambda syntax: |x
 - Nullary lambda uses a space inside the pipes (`| |`) to avoid confusing with `||` (the boolean-OR operator).
 - The pipe position is unambiguous because lambdas appear in value position (RHS of `let`, argument to a higher-order function, etc.); in command position a leading `|` remains the pipeline operator.
 
-Spec: `docs/specification.md` §"Two kinds of callable", §"Syntax". Ledger: `docs/deliberations.md` §"Lambda syntax: |x| { body } / |x| => expr (APPLIED)".
+Spec: `docs/specification.md` §"Two kinds of callable", §"Syntax". Ledger: Decision history is in git.

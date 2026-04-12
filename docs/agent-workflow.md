@@ -45,8 +45,7 @@ organization-focused version; these seven apply to how an agent
 5. **Source ranking.** When multiple sources discuss the same
    topic, rank them:
 
-   `docs/specification.md` > `docs/deliberations.md` (resolved
-   entries) > `docs/vdc-framework.md` and
+   `docs/specification.md` > `docs/vdc-framework.md` and
    `refs/ksh93/ksh93-analysis.md` (framework) > serena memory >
    vendored papers at `/Users/lane/gist/`.
 
@@ -58,22 +57,21 @@ organization-focused version; these seven apply to how an agent
    tangential references.
 
 7. **Deduplication.** Before writing a new analysis, search for
-   existing material in `docs/deliberations.md`, serena (list
-   memories, read matches), and your own `agent/<your-name>/`
+   existing material in serena (list memories, read matches)
+   and your own `agent/<your-name>/`
    sub-namespace. Extend or refine rather than duplicating.
 
 ## Knowledge tiers
 
-Knowledge in psh lives at five tiers. Higher tiers override lower.
+Knowledge in psh lives at four tiers. Higher tiers override lower.
 In conflict, follow the higher tier and flag the conflict to Lane.
 
 | Tier | Location | Authority |
 |---|---|---|
 | 1 | `docs/specification.md` | single source of truth |
-| 2 | `docs/deliberations.md` | working doc with supersession; lands in spec |
-| 3 | `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/implementation.md` | framework |
-| 4 | serena memory store | project-shared knowledge base |
-| 5 | vendored papers at `/Users/lane/gist/` | original literature |
+| 2 | `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/implementation.md` | framework |
+| 3 | serena memory store | project-shared knowledge base |
+| 4 | vendored papers at `/Users/lane/gist/` | original literature |
 
 **Serena is one store per project, shared by all agents.** Every
 agent reads the whole store; every agent writes only to its own
@@ -93,10 +91,7 @@ Before any substantive analysis:
    touching the topic. If the topic is absent from the spec, say
    so explicitly — the spec's silence is meaningful.
 
-2. **Grep deliberations.md.** Identify resolved decisions,
-   supersession chains, or in-progress items on the topic.
-
-3. **Query serena.** Call `mcp__serena__list_memories` (optional
+2. **Query serena.** Call `mcp__serena__list_memories` (optional
    topic filter); read relevant matches with
    `mcp__serena__read_memory`. Start with `_index`. Check
    `agent/<your-name>/` for your own prior notes, and check other
@@ -183,7 +178,6 @@ Before emitting any non-trivial output, check:
 
 - [ ] Did I read the spec section for this topic?
 - [ ] Did I use both semantic and keyword retrieval?
-- [ ] Did I check `docs/deliberations.md` for prior decisions?
 - [ ] Did I check serena (`_index`, my agent sub-namespace, any
       relevant analysis hubs)?
 - [ ] Did I cite only references that actually informed the
@@ -207,7 +201,6 @@ rules need sequent calculus, and whose implementation needs psh
 architect), Lane dispatches the agents in parallel. Each agent
 follows this workflow independently and produces a memo. Lane
 synthesizes results and records the resolution in
-`docs/deliberations.md`, which eventually lands in
 `docs/specification.md`.
 
 When an agent reviews another agent's memo, the review uses the
@@ -313,7 +306,7 @@ anchors; the spec gets its own review pass.
 **Skipping the audit.** Permitted only for tier-3 anchors, short
 corrections that don't introduce new citations, or anchors that
 cite only psh's own materials (`docs/specification.md`,
-`docs/deliberations.md`, decision memos). Any new external paper
+decision memos). Any new external paper
 citation triggers the audit on the next pass.
 
 ## Source

@@ -33,7 +33,7 @@ The horizontal arrow framing is what lets the **§8.5 decision procedure** class
 ## Spec sites
 
 - `docs/specification.md` §"Wire format" (line 883) — frame layout (length-prefix, tag, payload).
-- `docs/deliberations.md` lines 372–382 — MAX_FRAME_SIZE 16 MiB cap, "protocol violation, not degraded condition" semantics (channel torn down, outstanding tags fail with error status, coprocess process killed). The cap is in deliberations, not in the spec proper.
+- MAX_FRAME_SIZE 16 MiB cap is in specification.md §Wire format.
 - `docs/specification.md` §"Coprocesses (9P-shaped discipline)" (line 763) — the protocol context.
 - `decision/coprocess_9p_discipline` — design decision.
 

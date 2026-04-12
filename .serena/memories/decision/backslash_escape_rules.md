@@ -7,7 +7,7 @@ importance: normal
 keywords: [backslash, escape, trivia, line-continuation, literal-n, string-literal]
 agents: [psh-architect, plan9-systems-engineer]
 related: [decision/lambda_syntax, decision/single_quotes_only]
-verified_against: [docs/deliberations.md@HEAD §"Backslash escape rules", git-log@c1512db]
+verified_against: [docs/syntax.md@HEAD]
 ---
 
 # Decision: backslash escape rules
@@ -28,7 +28,7 @@ Not adopting C-style `\n` for newline: keeps the lexical rule trivially simple (
 
 Alternative considered: adopt C-style `\n`, `\t`, `\r` escapes. Rejected because it complicates the lexer with a special case that rc users don't expect.
 
-Commit `c1512db` landed the rules. `docs/deliberations.md` §"Backslash escape rules (APPLIED)" has the resolution record.
+Commit `c1512db` landed the rules. Decision history is in git.
 
 ## Consequences
 
@@ -37,4 +37,4 @@ Commit `c1512db` landed the rules. `docs/deliberations.md` §"Backslash escape r
 - `\$` escapes a dollar sign — useful when the next character would otherwise look like a variable reference.
 - Multi-line string literals handle cases where users want embedded newlines.
 
-Spec: `docs/syntax.md` §"Backslash escapes". Ledger: `docs/deliberations.md` §"Backslash escape rules (APPLIED)".
+Spec: `docs/syntax.md` §"Backslash escapes". Ledger: Decision history is in git.

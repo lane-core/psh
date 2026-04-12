@@ -21,7 +21,6 @@ psh-specific:
 - `docs/specification.md` §Tuples / §Structs / §Sums — per-type optics.
 - `docs/specification.md` §Extension path — Optics activation table mapping types to supported optics.
 - `docs/vdc-framework.md` §5.3 — vertical arrows as interface transformations.
-- `docs/deliberations.md` — resolved decisions on accessor notation, partial-access semantics.
 
 **Reading order:** Don't Fear (intuition) → Clarke et al. (definitions) → spec profunctor structure and discipline function sections.
 

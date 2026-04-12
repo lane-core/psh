@@ -6,7 +6,7 @@ last_updated: 2026-04-11
 importance: high
 keywords: [psh, design-phase, stub, rc, ksh93, bidirectional-checking, commitment-a, option-b, record-literal-structs, user-enums, parametric-type-constructors, pattern-lets]
 agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect]
-verified_against: [docs/specification.md@HEAD, docs/syntax.md@HEAD, docs/deliberations.md@HEAD, git-log@HEAD]
+verified_against: [docs/specification.md@HEAD, docs/syntax.md@HEAD, git-log@HEAD]
 ---
 
 # psh status — session handoff
@@ -23,7 +23,8 @@ the Plan 9 / ksh93 operational heritage.
 
 The spec is in active iteration. `docs/specification.md` and
 `docs/syntax.md` describe the current design end-to-end.
-`docs/deliberations.md` is the ledger with supersession tracking.
+`docs/deliberations.md` has been retired — all content merged
+into the spec or deleted.
 `docs/vdc-framework.md` holds the theoretical framework report
 (§4 VDCs, §8 composition laws and decision procedure, §9
 engineering principles are load-bearing). `refs/ksh93/ksh93-
@@ -235,7 +236,7 @@ Key process notes for continuity:
   implies value preferences that age badly and confuse readers.
 
 - **No historical narrative in the spec.** specification.md and
-  syntax.md state what IS. deliberations.md is the decision
+  syntax.md state what IS. Decision history is in git. Git
   ledger with supersession. Git carries history. Do not
   duplicate. Phrases like "an earlier draft committed to X"
   or "the reversal is motivated by Y" do not belong in the
@@ -284,7 +285,7 @@ Key process notes for continuity:
    §"Enums," §"Coprocesses," §"Features and non-goals."
 3. `docs/syntax.md` — grammar productions, including the
    pattern, record-literal, enum, and let-else additions.
-4. `docs/deliberations.md` — decision ledger with supersession.
+4. Git log — decision history is in commit messages.
    Read only when investigating the history of a specific
    choice; do not let it seep into new spec text.
 5. `docs/vdc-framework.md` §4, §8, §9 — VDC framework, load-

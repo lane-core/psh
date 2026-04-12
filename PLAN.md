@@ -16,7 +16,7 @@ categories, and the Plan 9 / ksh93 operational heritage.
 
 **Design: complete (pending VDC reframing pass).** The resolved
 decisions are captured in `docs/specification.md`,
-`docs/syntax.md`, and `docs/deliberations.md`. The theoretical
+`docs/syntax.md`. The theoretical
 framework is in `docs/vdc-framework.md`. The ksh93 operational
 analysis is vendored as `refs/ksh93/ksh93-analysis.md`. The
 dependency rationale is in `docs/implementation.md`. All reference
@@ -56,8 +56,7 @@ decision but reorganizes the presentation.
 The handoff memo for this work is in Lane's possession (not
 committed). The reframing session uses `docs/vdc-framework.md`
 as the primary source and produces a restructured
-`specification.md` plus minor updates to `syntax.md` and
-`deliberations.md`.
+`specification.md` plus minor updates to `syntax.md`.
 
 ## Implementation roadmap (after VDC reframing)
 
@@ -175,22 +174,12 @@ The build sequence, in order:
 - [ ] `printf` (if fork cost matters for format strings)
 - [ ] `shift`, `$0`, positional parameter handling
 
-## Open items from deliberations.md
+## Non-goals (with reasoning in specification.md)
 
-These are deliberate non-decisions — features the spec mentions
-but that Lane has chosen not to pursue in v1:
-
-- **User-defined `enum` types.** `enum` keyword is reserved;
-  built-in sum tags (`ok`, `err`, `some`, `none`) suffice for v1.
-- **Parametric polymorphism.** `type` keyword is reserved;
-  syntax and semantics undecided.
-- **Named struct construction** (e.g., `Pos(x: 10, y: 20)`). Not
-  adopted, now or later. Positional `Pos(10 20)` is the only form.
-- **Pattern guards.** Deferred; workaround is `if` inside arm body.
-- **Session types on pipes.** Pipes remain byte streams. The
-  framework accommodates typed channels as a future extension.
-- **Pipeline fusion.** Segal-condition-based optimization; not
-  required for correctness.
+See specification.md §"Features and non-goals" for the full
+list with reasoning. Key items: no parametric polymorphism on
+`def` signatures, no typed session channels on pipes, no
+pipeline fusion as user-visible feature.
 
 ## Session log
 
