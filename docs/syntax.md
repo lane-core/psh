@@ -16,7 +16,7 @@ braces for new block constructs, operators where operators are
 expected, no overloading of existing rc syntax for new purposes.
 
 Duff's first principle — "input is never scanned more than
-once" [1, §Design Principles] — governs all parsing decisions.
+once" [Duf90, §Design Principles] — governs all parsing decisions.
 The parser does not consult the environment; parsing is
 context-free.
 
@@ -45,7 +45,7 @@ A program is a sequence of commands separated by terminators
     comment     = '#' (any char except '\n')*
 
 A comment starts with `#` and runs to end of line. Comments
-do not nest. rc heritage [1, §Simple commands].
+do not nest. rc heritage [Duf90, §Simple commands].
 
 
 ## Commands
@@ -53,8 +53,9 @@ do not nest. rc heritage [1, §Simple commands].
 A command is one of: a binding (context extension), a control
 flow construct, or an expression.
 
-    command     = binding | control | return_cmd | expr_cmd
+    command     = binding | control | return_cmd | exit_cmd | expr_cmd
     return_cmd  = 'return' value?
+    exit_cmd    = 'exit' NUM? WORD?            -- exit code + optional message
 
 
 ## Bindings
@@ -69,7 +70,7 @@ Bindings extend the context Γ with a new name. They are
     assignment  = NAME '=' rhs
     let_binding = 'let' let_quals pat (':' type_ann)? '=' rhs
                   ('else' body)?       -- let-else for refutable patterns
-    let_quals   = 'mut'? 'export'?
+    let_quals   = 'mut'? 'export'? '!'?     -- ! promotes to classical zone (§Linear resources)
     def_binding = 'def' NAME def_params? (':' type_ann)? body
     def_params  = '(' ')'                     -- explicit nullary
                 | /* empty */                  -- implicit (args via $1, $2, $*)
@@ -83,8 +84,11 @@ Bindings extend the context Γ with a new name. They are
 
     type_params = '(' TYPE_NAME (',' TYPE_NAME)* ')'   -- uppercase type variables
     type_ann    = fn_type
-    fn_type     = base_type ('->' base_type)*              -- function type (right-assoc)
-    base_type   = TYPE_NAME                                -- e.g. Int, Str, Pos
+    fn_type     = mod_type ('->' mod_type)*                    -- function type (right-assoc)
+    mod_type    = '!' base_type                                -- classical (!A, L-calculus promotion)
+                | '?' base_type                                -- negative dual (?A, continuation zone)
+                | base_type                                    -- default zone (type-determined)
+    base_type   = TYPE_NAME                                -- e.g. Int, Str, Pos, Path, ExitCode
                 | TYPE_NAME '(' type_ann (',' type_ann)* ')'  -- type application
                 | '(' type_ann (',' type_ann)* ')'             -- bare tuple type
 
@@ -112,7 +116,7 @@ for the CBPV framing.
 `x = val` walks the scope chain and updates the first matching
 variable. If no variable exists, creates one in the current
 scope. The RHS may be a value or a computation, just as with
-`let`. rc heritage [1, §Variables and Assignment] extended to
+`let`. rc heritage [Duf90, §Variables and Assignment] extended to
 admit computation RHS.
 
 ### let
@@ -126,9 +130,11 @@ value is bound to `x`, execution continues.
 
     let x = 42                          # pure value (trivial computation)
     let files = ls *.txt                # builtin returning a list
-    let tag = print -p myserver 'query' # effectful builtin returning an Int
+    let tag = print -p myserver 'query' # effectful, returns ReplyTag (affine)
     let count = wc -l < file            # pipeline returning an Int
     let out = `{ grep pattern $file }   # command substitution (forked subprocess)
+    let !fd = dup $log_fd               # ! promotes to classical zone (§Linear resources)
+    let fd : Fd = open 'lockfile'       # bare Fd = linear (must consume)
 
 Pure values are a special case: they are trivially thunkable
 computations whose RHS is just the value itself. The "let is
@@ -150,7 +156,7 @@ length.
 ### def
 
 `def name { body }` defines a named computation — a
-template in the command sort. This is rc's `fn` [1, §Functions], renamed. Duff chose `fn`
+template in the command sort. This is rc's `fn` [Duf90, §Functions], renamed. Duff chose `fn`
 deliberately, but psh draws a distinction between commands
 (cuts) and functions (morphisms) that rc did not make. `def`
 names the sort.
@@ -319,13 +325,16 @@ a braced block or `=>` single-line form.
 
     control     = if_cmd | for_cmd | while_cmd
                 | match_cmd | try_cmd | trap_cmd
+                | linear_block
+
+    linear_block = 'linear' body   -- all bindings default to linear zone (§Linear resources)
 
     if_cmd      = 'if' '(' pipeline ')' body ('else' (if_cmd | body))?
                 | 'if' 'let' pat '=' rhs body ('else' body)?   -- refutable pattern branch
     for_cmd     = 'for' '(' NAME 'in' value ')' body
     while_cmd   = 'while' '(' pipeline ')' body
     match_cmd   = 'match' '(' value ')' '{' match_arm (';' match_arm)* ';'? '}'
-    try_cmd     = 'try' body 'catch' '(' NAME ')' body
+    try_cmd     = 'try' body 'catch' '(' NAME ')' body    -- NAME : ExitCode (⊕ elimination)
     trap_cmd    = 'trap' SIGNAL (body body?)?
 
     match_arm   = pattern ('|' pattern)* guard? '=>' lambda_body
@@ -364,7 +373,7 @@ are interchangeable wherever `body` appears.
     if(test -d $dir) => echo 'is directory'
 
 **rc parens for conditions.** `if(cond)` — rc's parentheses
-around the condition [1, §Conditional execution]. psh preserves
+around the condition [Duf90, §Conditional execution]. psh preserves
 this convention.
 
 **`else` instead of `if not`.** Duff acknowledged: "The one
@@ -402,7 +411,7 @@ on failure.
 
 `for(name in value) body` parses exactly one `value`: either
 a parenthesized list `(a b c)` or a single word. To iterate
-over multiple elements, use a list. rc heritage [1, §For
+over multiple elements, use a list. rc heritage [Duf90, §For
 loops].
 
 ### while
@@ -432,7 +441,7 @@ rc's `while() echo y` (empty parens = always true) becomes
 **`match` instead of `switch`.** rc's `switch`/`case` used
 `case` labels as top-level commands within a list body — the
 `switch` body is syntactically a `{list}` with `case`
-sub-commands [1, §Switch]. psh's `match` uses structured `=>`
+sub-commands [Duf90, §Switch]. psh's `match` uses structured `=>`
 arms with `;` separators — a genuinely different syntactic
 form. Using `switch` would be a false cognate — it looks like
 rc heritage but has a different syntactic role. `match` names
@@ -544,6 +553,43 @@ model, including signal delivery at interpreter step
 boundaries (wake-from-block during child waits) and the four
 cases of signal interaction with try blocks.
 
+### linear
+
+`linear { ... }` changes the default zone from classical to
+linear for all bindings within the block. Every `let x = expr`
+inside a `linear` block produces a linear binding — the type
+checker requires it to be consumed on every control-flow path.
+Explicit `!` marks classical islands within the block.
+
+    linear {
+        let fd = open $notify_fd       # Fd — linear (must consume)
+        let name = $1                  # Str — linear (must use)
+        let !config = read_config()    # !List(Str) — classical island
+
+        write $fd '\n'                 # fd consumed
+        exec $name                     # name consumed
+    }                                  # checker: all linear bindings consumed
+
+The `linear` block is a type-checker directive, not a runtime
+construct. No operational cost for code that doesn't use it.
+See specification.md §Linear resources for the three-zone model
+(classical/affine/linear) and exceptional-exit semantics.
+
+### exit
+
+`exit` terminates the current shell with an ExitCode:
+
+    exit                    # exit with status of last command
+    exit 0                  # exit success
+    exit 1                  # exit failure, no message
+    exit 1 'not found'      # exit failure with descriptive message
+
+The `exit` command produces an ExitCode value. The numeric
+code is required for non-default exit. The message string is
+optional — builtins populate it; external commands and bare
+`exit N` leave it empty. See specification.md §ExitCode and
+Status.
+
 
 ## Expressions
 
@@ -572,7 +618,7 @@ redirections, pipelines, and operators.
 §Coprocesses for the full discipline.
 
 **`@{ }` subshell.** Fork with a copy of the current scope.
-rc's `@` operator [1, §Operators] — a subshell fork.
+rc's `@` operator [Duf90, §Operators] — a subshell fork.
 Classical contraction — continuation duplicated, each copy
 independent.
 
@@ -596,11 +642,17 @@ command that consumes them runs.
                 | '`{' program '}'
                 | '<{' program '}'
                 | '$((' arith_expr '))'
+                | path_literal
                 | '~' '/' LITERAL
                 | '~'
                 | lambda
                 | tagged_val
                 | tuple
+
+    path_literal = '/' path_component ('/' path_component)*   -- absolute: /usr/bin/rc
+                 | './' path_component ('/' path_component)*  -- relative: ./src/main.rs
+                 | '../' path_component? ('/' path_component)* -- parent: ../lib
+    path_component = LITERAL                                   -- non-empty, no / or NUL
 
     tagged_val  = NAME '(' word* ')'
     tuple       = '(' word (',' word)+ ','? ')'
@@ -625,6 +677,25 @@ than dot/bracket.
 
 RHS is lazily evaluated. Sugar for
 `match(M) { some(x) => x; none => N }`.
+
+**Path literals.** Filesystem paths are parsed into component
+sequences at parse time (specification.md §Path). The leading
+`/`, `./`, or `../` commits the parser to a path literal;
+internal `/`s are component separators, not content.
+
+    /usr/bin/rc             # Path: (root, normal(usr), normal(bin), normal(rc))
+    ./src/main.rs           # Path: (cur, normal(src), normal(main.rs))
+    ../lib                  # Path: (parent, normal(lib))
+
+Interpolation: `"$path"` joins components with `/` to produce
+a Str. Path is not a subtype of Str — conversion is explicit.
+
+**Path join operator.** Infix `/` with whitespace joins two
+paths by concatenating component lists. If the right operand
+is absolute, it replaces the left entirely (POSIX semantics).
+
+    $dir / $file            # path join: append components
+    $base / /etc/config     # right is absolute: replaces $base
 
     value       = '(' word* ')'            -- list (homogeneous, runtime arity)
                 | tuple                   -- anonymous product (comma-delim, min 2)
@@ -768,7 +839,7 @@ the purpose of avoiding a fork.
 
 ### Free carets
 
-rc's concatenation rule [1, §Free Carets]: when two word atoms
+rc's concatenation rule [Duf90, §Free Carets]: when two word atoms
 are adjacent with no intervening whitespace, an implicit `^`
 (concatenation) is inserted between them.
 
@@ -825,7 +896,7 @@ makes the split explicit and adds `.` to `word_char` (not
 Two string forms: single quotes (literal) and double quotes
 (interpolating).
 
-**Single quotes** — no expansion. rc heritage [1, §Quotation].
+**Single quotes** — no expansion. rc heritage [Duf90, §Quotation].
 
     'hello world'      literal string with space
     'it''s'            produces: it's (rc-compatible doubling)
@@ -902,7 +973,7 @@ otherwise.
     $filename =~ (*.c *.h) && echo 'C source'
 
 Patterns use fnmatch glob syntax (`*`, `?`, `[chars]`). rc
-heritage for the glob semantics [1, §Simple commands].
+heritage for the glob semantics [Duf90, §Simple commands].
 Perl/Ruby heritage for the `=~` infix syntax.
 
 ### Brace-delimited variable names
@@ -994,7 +1065,7 @@ Redirections are evaluated left to right. The AST wraps
 redirections as nesting (inner-to-outer = left-to-right
 evaluation). The profunctor laws hold by construction.
 
-rc heritage [1, §Advanced I/O Redirection].
+rc heritage [Duf90, §Advanced I/O Redirection].
 
 
 ## Coprocess syntax
@@ -1026,26 +1097,26 @@ wire format, named coprocesses).
 
 Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
-`return`, `struct`, `enum`.
+`return`, `exit`, `struct`, `enum`, `linear`.
 
 Reserved for future use: `type` (type aliases, if parametric
 polymorphism on function signatures is ever reconsidered).
 
 Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
-`^`, `>`, `>>`, `<`, `>[`, `<[`.
+`^`, `/`, `>`, `>>`, `<`, `>[`, `<[`.
+
+`/` serves double duty: path literal separator (`/usr/bin`) and
+infix path join operator (`$dir / $file`). Disambiguated by
+context: leading or following `.`/`..` = path literal; between
+two word expressions with surrounding whitespace = infix join.
 
 
 ## References
 
-[1] Tom Duff. "Rc — The Plan 9 Shell." 1990.
-    `refs/plan9/papers/rc.ms`
+All citation keys resolve to `docs/citations.md`.
 
-[3] Munch-Maccagnoni. "Syntax and Models of a Non-Associative
-    Composition of Programs and Proofs." Thesis, 2013.
-
-[4] Levy. *Call-by-Push-Value.* Springer, 2004.
-
-[5] Curien, Herbelin. "The Duality of Computation." ICFP, 2000.
-
-[9] Munch-Maccagnoni. "Models of a Non-Associative Composition."
-    FoSSaCS, 2014.
+- `[Duf90]` — Duff, "Rc — The Plan 9 Shell." 1990.
+- `[Mun13]` — Munch-Maccagnoni, thesis, 2013.
+- `[Lev04]` — Levy, *Call-by-Push-Value.* 2004.
+- `[CH00]` — Curien, Herbelin, "The Duality of Computation." ICFP, 2000.
+- `[Mun14]` — Munch-Maccagnoni, "Models of Non-Assoc. Composition." FoSSaCS, 2014.
