@@ -44,11 +44,11 @@ the relevant agent and Lane.
   (Γ).** Lambda syntax is `|x| => expr` or `|x| { block }`.
 - **Two accessor forms: bracket and dot.** Bracket `$a[i]` for
   projection by runtime value (tuples, lists, maps). Returns
-  `Option(T)`. Dot `$x .name` for named field/method/discipline
+  `Option(T)`. Dot `$x.name` for named field/method/discipline
   access — both bind tight, no space required. `.` is always
   accessor; concatenation uses explicit `^` (`$stem^.c`).
   `??` nil-coalescing: `$l[0] ?? 'default'`. Prism
-  previews: `$result .ok ?? 'fallback'`. `if let` for
+  previews: `$result.ok ?? 'fallback'`. `if let` for
   refutable pattern branches. Per-type accessor namespaces via
   `def Type.ident`.
 - **Uniform tagged construction.** `NAME(args)` with `NAME`
