@@ -3,215 +3,151 @@
 Current roadmap. Living document — update when tasks complete,
 priorities change, or new work is identified.
 
-## Design position
-
-psh is a new Plan 9 rc-derived system shell. It is a standalone
-shell with no external infrastructure dependencies — usable as a
-login shell on Linux, macOS, FreeBSD, and other Unix-likes. Its
-design is grounded in the λμμ̃-calculus of sequent calculus,
-duploid semantics, profunctor optics, session types, virtual double
-categories (FVDblTT as the internal language), and the Plan 9 /
-ksh93 operational heritage.
-
 ## Current state
 
-**Design: active.** The resolved decisions are in
-`docs/specification.md` and `docs/syntax.md`. The theoretical
-framework is in `docs/vdc-framework.md`. The ksh93 operational
-analysis is at `refs/ksh93/ksh93-analysis.md`. The dependency
-rationale is in `docs/implementation.md`. All reference material
-is vendored: rc paper and man page at `refs/plan9/`, ksh93
-manpage, sfio-analysis, and ksh26 analysis at `refs/ksh93/`.
+**Design: first draft complete.** The specification and grammar
+are in `docs/specification.md` and `docs/syntax.md`. Both have
+been through a six-agent review and verification pass. All typing
+rules use classical sequent notation with derivable mode
+annotations. All formal claims verified against cited references.
 
-**Implementation: not yet started.** The source tree is a
-deliberate stub:
+**Implementation: not yet started.** The source tree is a stub:
 
-| File | Lines | Role |
-|---|---|---|
-| `src/main.rs` | ~35 | Binary stub — reports retirement status and exits with 2 |
-| `src/parse.rs` | ~130 | Combine boilerplate — character predicates, trivia, keyword/name primitives, PshParser shell |
-| `src/signal.rs` | ~130 | Self-pipe signal handling (type-system neutral, preserved) |
+- `src/main.rs` — binary stub, exits with 2
+- `src/parse.rs` — combine boilerplate (character predicates,
+  trivia, keyword/name primitives)
+- `src/signal.rs` — self-pipe signal handling (preserved,
+  type-system neutral)
 
-The parser boilerplate is the expected starting point for the
-grammar implementation. The signal self-pipe is preserved because
-it's infrastructure, not type-system content.
-
-**Dependencies** (unchanged, per `docs/implementation.md`):
-`anyhow`, `bpaf`, `combine`, `fnmatch-regex`, `libc`, `rustix`,
-`smallvec`, `signals_receipts`. No pane dependencies. No `par`
-dependency.
+Dependencies per `docs/implementation.md`: `anyhow`, `bpaf`,
+`combine`, `fnmatch-regex`, `libc`, `rustix`, `smallvec`,
+`signals_receipts`.
 
 ## Implementation roadmap
 
-The build sequence, in order. Each phase depends on the previous.
+Build sequence. Each phase depends on the previous.
 
 ### Phase 1: parser
 
-- [ ] Fix `src/parse.rs` character predicates against the spec.
-- [ ] Implement the grammar from `docs/syntax.md` in layers:
-  - [ ] Lexical primitives (already in the boilerplate)
-  - [ ] Word atoms: literals, single-quoted and double-quoted
-        strings (with interpolation in double quotes), variable
-        references with tight-binding dot and bracket accessors,
-        `??` nil-coalescing, `$((...))`, command substitution
-        `` `{} ``, process substitution `<{}`, tilde expansion,
-        lambdas `|x| => body`
-  - [ ] Tuple literals `(a, b, c)` (min 2) and list literals
-        `(a b c)`
-  - [ ] Type-prefixed struct literals: named `Pos { x = 10;
-        y = 20 }` and positional `Pos { 10, 20 }` (min 2)
-  - [ ] Map literals `{'key': v, 'key': v}` with string keys
-  - [ ] Tagged construction `NAME(args)` for enum variants;
-        bare nullary variant names
-  - [ ] Here documents (`<<EOF`, `<<'EOF'`, `<<-EOF`,
-        `<<[n]EOF`) and here-strings (`<<<`)
-  - [ ] Type annotations with parametric constructors:
-        `Result(Int, Str)`, `List(Int)`, `Option(Path)`
-  - [ ] Expression precedence tower (or, and, pipeline, cmd_expr)
-  - [ ] Pipe operators: `|`, `|[n]`, `|[n=m]` (fd-targeted)
-  - [ ] Commands: `if(cond)`, `if let pat = rhs`,
-        `while(cond)`, `for(x in list)`,
-        `match(expr) { arms }` with guards `if(cond)`,
-        `try { } catch (e) { }`,
-        `trap SIGNAL (body body?)?`
-  - [ ] Bindings: `let` with pattern LHS (wildcard, tuple
-        destructuring, struct destructuring), `let-else` for
-        refutable patterns, `if let` for refutable pattern
-        branches, `def` with optional return type annotation
-        and `return` keyword, `struct`, `enum`, `ref`,
-        assignment
-  - [ ] Patterns for match arms: enum variant patterns (tagged
-        and nullary), struct record patterns (symmetric with
-        construction), tuple patterns, wildcard, literal
-        patterns
-- [ ] Parse-time AST validation (arity checks, type/variable
-      capitalization disambiguation for dotted def names)
+Implement the grammar from `docs/syntax.md` using `combine`.
 
-### Phase 2: AST and value model
+- [ ] Fix character predicates (`var_char`, `word_char`) against
+      the spec
+- [ ] Lexical: single-quoted and double-quoted strings (with
+      `$var`, `$var[i]`, `` `{cmd} `` interpolation in double
+      quotes; `${name.accessor}` for dot access in double
+      quotes), backslash escapes, line continuation
+- [ ] Words: literals, variable references with tight-binding
+      dot and bracket accessors, `??` nil-coalescing, `$((...))`,
+      command substitution `` `{} ``, process substitution `<{}`,
+      tilde expansion, free caret `^` (explicit only — `.` is
+      always accessor), lambdas `|x| => body`
+- [ ] Values: tuple `(a, b)` (min 2), list `(a b c)`, type-
+      prefixed struct `Pos { x = 10; y = 20 }` / `Pos { 10, 20 }`
+      (min 2), map literal `{'key': v}`, enum variant `ok(42)` /
+      bare `none`, here documents (`<<`, `<<'`, `<<-`, `<<[n]`),
+      here-strings `<<<`
+- [ ] Expressions: precedence tower (or `||`, and `&&`, pattern
+      match `=~`, pipeline `|` / `|[n]` / `|[n=m]`, negation `!`,
+      background `&`), per-command locals `VAR=val cmd`
+- [ ] Control flow: `if(cond)`, `if let pat = rhs`, `while(cond)`,
+      `for(x in list)`, `match(expr) { arms }` with guards
+      `if(cond)` and `|` alternation, `try { } catch (e) { }`,
+      `trap SIGNAL (body body?)?`
+- [ ] Bindings: `let` with pattern LHS (tuple, struct, enum),
+      `let-else` for refutable patterns, `def` with return type
+      annotation, `struct`, `enum`, assignment `x = val`
+- [ ] Patterns: enum variant (tagged + nullary), struct (named
+      + positional, type-prefixed), tuple, wildcard `_`, literal
+- [ ] Type annotations: `Type`, parametric `Result(Int, Str)`,
+      function `Str -> Int`
+- [ ] Redirections: `>`, `>>`, `<`, `>[n=m]`, `<[n=m]`
 
-- [ ] AST matching the three-sort structure from the spec:
-      `Word` (producers), `Expr` (engineering layer for
-      pipelines and redirections), `Command` (statements /
-      cuts). Consumers are synthesized implicitly from the
-      statement's shape.
-- [ ] `Val` enum with element types: `Str`, `Int`, `Bool`,
-      `Path`, `List`, `Tuple`, `Sum`, `Struct`, `Map`,
-      `Lambda`, typed-fd roles (`Pipe`, `File`, `Tty`,
-      `Coproc`, `Session`). Every variable is a list at the
-      outer level.
-- [ ] `Status(String)` type with `is_success` checking
-      emptiness (rc heritage).
-- [ ] Bidirectional type checker: synth mode (bottom-up from
-      literals and typed constructors) + check mode (top-down
-      from annotations, return types, parameter types). No
-      unification, no let-polymorphism. Under-determined
-      bindings are type errors at the binding site.
+### Phase 2: AST, value model, type checker
+
+- [ ] AST: three-sort structure — `Word` (producers), `Expr`
+      (pipelines + redirections), `Command` (cuts). Consumers
+      synthesized implicitly.
+- [ ] `Val` enum: `Str`, `Int`, `List`, `Tuple`, `Struct`,
+      `Map`, `Sum` (enum values), `Lambda`, `Status`
+- [ ] Every variable is a list at the outer level
+- [ ] Bidirectional type checker (~500-900 lines):
+  - [ ] Synth/check modes per the classical rules with mode
+        annotations in the spec
+  - [ ] Type parameter pinning for parametric types
+  - [ ] Lambda parameter pinning (write-once slots from body)
+  - [ ] Guard purity checking (reject commands in guard exprs)
+  - [ ] Pattern exhaustiveness (conservative for guarded arms)
+  - [ ] Error messages with source locations — invest here early
 
 ### Phase 3: evaluator
 
-- [ ] Word expansion pipeline (Kleisli composition of
-      `Word → Val` stages)
-- [ ] Command execution with three-composition-pattern
-      discipline (Kleisli pipeline, co-Kleisli sequencing, cut)
-- [ ] Polarity frames at `↓→↑` shift sites: command
-      substitution, `$((...))` (trivial frame), `.refresh` and
-      `.set` discipline bodies
-- [ ] CBPV `let` — accepts effectful RHS, binds the result
-      via the μ̃-binder
-- [ ] Codata discipline cells `.get` (pure), `.refresh`
-      (effectful, invoked imperatively), `.set` (mutator with
-      slot-write primitive); CBV focusing of `.get` via
-      thunkability
-- [ ] Redirections as profunctor wrapping (Adapter composition)
-- [ ] fd table with save/restore as Lens (PutGet/GetPut/PutPut)
+- [ ] Word expansion (Kleisli pipeline: tilde → parameter →
+      command sub → arithmetic → glob)
+- [ ] Glob no-match: non-matching glob stands for itself (rc)
+- [ ] Command execution, pipeline forking, fd plumbing
+- [ ] Polarity frames at ↓→↑ shift sites (command substitution,
+      `$((...))`, `.refresh` and `.set` bodies)
+- [ ] CBPV `let` — effectful RHS via μ̃-binder
+- [ ] Per-command local variables (`VAR=val cmd`)
+- [ ] Discipline functions: `.get` (pure, CBV focused), `.refresh`
+      (effectful), `.set` (mutator with slot-write primitive)
+- [ ] Redirections as profunctor wrapping (Adapter)
+- [ ] fd table save/restore (Lens)
+- [ ] `$status : Int`, `$pipestatus : List(Int)`
 
 ### Phase 4: control flow and error model
 
-- [ ] `if`/`else`, `while`, `for` with rc parens
-- [ ] `match` with enum variant patterns, struct record
-      patterns, tuple patterns, literal patterns, wildcards,
-      `|` alternation between patterns within an arm
-- [ ] Pattern lets (wildcard, tuple, struct) and `let-else`
-      for refutable patterns; `if let` for refutable branches
-- [ ] `try { } catch (e) { }` as scoped ErrorT monad transformer
-- [ ] Unified `trap` (lexical / global / deletion forms)
-- [ ] Signal delivery via self-pipe with wake-from-block
-      handling, EINTR retry policy in builtins
+- [ ] `if`/`else`, `if let`, `while`, `for`
+- [ ] `match` with pattern dispatch, guards, `|` alternation
+- [ ] `let-else`, pattern lets
+- [ ] `??` nil-coalescing (desugar to match on Option)
+- [ ] `try`/`catch` as scoped ErrorT
+- [ ] Unified `trap` (lexical / global / deletion)
+- [ ] Signal delivery via self-pipe, EINTR retry
 
-### Phase 5: coprocesses
+### Phase 5: types and methods
 
-- [ ] Named coprocess registry (`HashMap<String, Coproc>`)
-- [ ] Per-tag binary session state machine with phantom session
-      types
-- [ ] Admin session for Tflush / Rflush cancellation
-- [ ] Wire format: length-prefixed frames with first-byte
-      dispatch; `MAX_FRAME_SIZE` of 16 MiB
-- [ ] Negotiate handshake on tag 0 (protocol version only)
-- [ ] `print -p` returns Int tag; `read -p [-t tag]` reads
-      response
-- [ ] Shell-internal `PendingReply` tracking with compile-time
-      use-site affinity and runtime drop-as-cancel; tag reuse
-      gated on session termination
+- [ ] Struct declaration: auto-generate named accessors (`.field`
+      Lens), `.fields` (Getter), `.values` (Getter, homogeneous)
+- [ ] Enum declaration: auto-generate Prism previews (`.ok`,
+      `.err` returning `Option(Payload)`)
+- [ ] Option Display: `some(v)` → `v`, `none` → empty string
+- [ ] `Map(V)`: brace literal, `.insert` builder, `Map.from_list`,
+      bracket access `$m['key']`, bracket assignment, `.keys`,
+      `.values`
+- [ ] String methods: `.length`, `.upper`, `.lower`, `.split`,
+      `.strip_prefix`, `.strip_suffix`, `.replace`, `.contains`
+- [ ] Sigil aliases: `$#x` = `.length`, `$"x` = `.join`
 
-### Phase 6: primitive type methods
+### Phase 6: coprocesses
 
-- [ ] String operations as `def Str.name { }` methods:
-      `.length`, `.upper`, `.lower`, `.split`, `.strip_prefix`,
-      `.strip_suffix`, `.replace`, `.contains`
-- [ ] Sigil aliases: `$#x` for `.length`, `$"x` for `.join` on
-      List (rc heritage)
-- [ ] Struct accessors auto-generated from declarations:
-      named `.field` (Lens), `.fields` (Getter, generic
-      traversal), `.values` (Getter, homogeneous structs only)
-- [ ] Enum Prism preview methods (`$v.ok`, `$v.err`)
-      returning `Option(Payload)`
-- [ ] Option Display convention: `some(v)` displays as `v`,
-      `none` displays as empty string
+- [ ] Named coprocess registry
+- [ ] Per-tag binary session state machine (phantom types)
+- [ ] Negotiate on tag 0, orderly teardown via close frame
+- [ ] Cancellation: per-tag internal choice (⊕), Tflush/Rflush
+- [ ] Wire format: length-prefixed, first-byte dispatch,
+      MAX_FRAME_SIZE 16 MiB
+- [ ] `print -p` returns Int tag, `read -p [-t tag]` reads
+      response, PendingReply tracking, drop-as-cancel
 
-### Phase 7: Map type
+### Phase 7: job control and interactive
 
-- [ ] `Map(V)` with string keys as a parametric type constructor
-- [ ] Brace literal `{'key': v}`, `.insert` builder chain,
-      `Map.from_list : List((Str, V)) → Map(V)` bulk constructor
-- [ ] Bracket access `$m['key']` returning `Option(V)`
-- [ ] Bracket assignment `m['key'] = v` desugaring to
-      `m = $m.insert 'key' v`
-- [ ] `.keys` (Getter), `.values` (Getter), `.insert` (pure
-      functional update — distinct from discipline `.set`)
+- [ ] Job table, `fg`/`bg`/`jobs`/`wait -n`/`kill`, `%N` word
+- [ ] REPL with line editing
+- [ ] History, Ctrl-R search
+- [ ] Tab completion (paths, variables, def names, struct fields
+      after type-prefixed `{`)
 
-### Phase 8: job control and interactive features
+### Phase 8: conformance and polish
 
-- [ ] Job table with `JobStatus` tracking
-- [ ] Builtins: `fg`, `bg`, `jobs`, `wait` (with `-n`), `kill`
-- [ ] `%N` word form expanding to job PIDs
-- [ ] REPL with line editing (reedline or rustyline)
-- [ ] History (persistent `~/.psh_history`, Ctrl-R search)
-- [ ] Tab completion (filesystem paths, variable names, def
-      names)
+- [ ] Integration tests from spec/syntax examples
+- [ ] Property tests (no-rescan, sequence preservation, CBV
+      focusing, bidirectional soundness)
+- [ ] `ulimit`, `umask`, `export` (listing form)
+- [ ] `printf`, `shift`, `$0`, positional parameters
 
-### Phase 9: spec conformance tests
-
-- [ ] Integration tests with every example from
-      `docs/specification.md` and `docs/syntax.md`
-- [ ] Property tests for structural invariants (no-rescan,
-      sequence preservation, CBV focusing, bidirectional check
-      soundness)
-- [ ] Adapted ksh93u+m test suite for rc-heritage features
-- [ ] Fork-based tests must run single-threaded
-      (`--test-threads=1`)
-
-### Phase 10: polish
-
-- [ ] Error messages with source locations (high investment,
-      critical for UX — Rust-quality diagnostics)
-- [ ] Per-command local variables (`VAR=val cmd`, rc heritage)
-- [ ] `$pipestatus : List(Int)` for pipeline diagnostics
-- [ ] `ulimit`, `umask`, `export` builtin (for listing;
-      `let export` is the binding form)
-- [ ] `printf` (if fork cost matters for format strings)
-- [ ] `shift`, `$0`, positional parameter handling
-
-## Non-goals (with reasoning in specification.md)
+## Non-goals
 
 See specification.md §"Features and non-goals" for the full
 list with reasoning. Key items: no parametric polymorphism on
