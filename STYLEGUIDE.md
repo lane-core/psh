@@ -97,28 +97,81 @@ where it matters:
 | Plan 9 | `/Users/lane/src/lin/pane/reference/plan9/` vendored |
 | pane | `/Users/lane/src/lin/pane` |
 
-### Theoretical Annotations
+### Theoretical Citations
 
-When code implements a concept from the duploid framework or
-sequent calculus, cite the source concisely:
+psh cites published references using short bibliography keys
+that resolve to entries in `docs/citations.md`. The full
+workflow is in `docs/citation-workflow.md`. Summary:
+
+- **Module-level docs** (`//!`) carry a `# References` section
+  listing the keys that inform the module's architecture.
+- **Function-level docs** (`///`) cite only when the specific
+  function draws from a reference. Most functions need no
+  citation.
+- **Every citation is a testable claim.** "This code implements
+  the idea described in this reference." If the claim is not
+  defensible, remove the citation.
+- **Epistemic strength matches the source.** Hedge when the
+  source hedges.
+
+**Module-level template:**
 
 ```rust
-//! Theoretical basis: redirections are profunctor transformations
-//! (lmap/rmap on the IO profunctor). Left-to-right evaluation is
-//! the canonical left-associated bracketing in the duploid.
+//! # Module name — one-line role description
+//!
+//! Paragraph on the module's place in psh's architecture.
+//! Which layer (value/expression/command), which phase
+//! (parse/eval/exec), how it relates to adjacent modules.
+//!
+//! Design approach: what concepts from psh's theoretical
+//! foundation are realized here. Cite at the level of the
+//! architectural commitment, not at every function.
+//!
+//! See `docs/specification.md` §Relevant Section for the
+//! design rationale.
+//!
+//! # References
+//!
+//! - `[Key1]` — what it contributes to this module
+//! - `[Key2]` — what it contributes to this module
 ```
 
-Keep theoretical annotations brief. One sentence identifying the
-concept and its source.
+**Function-level example:**
+
+```rust
+/// Installs a one-shot reply continuation keyed on the request
+/// token. Consumed by `fire_reply`; removed on fire, realizing
+/// the linear usage from [HVK98] §3.
+///
+/// See `docs/specification.md` §Coprocess protocol.
+pub fn install_continuation(...) { ... }
+```
 
 ### Citation format
 
-| Tradition | Format |
-|-----------|--------|
-| rc | `(Duff 1990, §section)` or `rc.ms:line` |
-| ksh93 | `src/cmd/ksh93/sh/nvdisc.c:302` (path relative to ksh93 root) |
-| ksh26 SPEC.md | `(SPEC.md §section, line N)` |
-| Papers | Author, title, year, section |
+Two separate disciplines — do not cross them:
+
+| Tradition | Format | Audit procedure |
+|-----------|--------|-----------------|
+| Heritage (rc, ksh93, Plan 9) | `rc.ms:line` or `src/cmd/ksh93/sh/nvdisc.c:302` | Verify against cited source repo |
+| Theoretical (papers) | `[Key]` resolving to `docs/citations.md` | Verify against bibliography entry |
+| Internal design docs | `docs/specification.md §Section` | Verify against current spec |
+
+Heritage annotations cite source-code lineage. Theoretical
+citations cite papers. A module drawing from both carries both,
+separately.
+
+### Citation hygiene
+
+- **`tools/cite-lint.sh`** catches typos and dangling keys.
+  Run before committing. Green lint ≠ correct citations — it
+  is a mechanical check only.
+- **Semantic audit** catches stale citations, wrong attribution,
+  strengthened hedges. Performed at review time: if a PR touches
+  a cited function, the reviewer re-reads the cited reference
+  and confirms the citation is still accurate.
+- **Citations follow the code.** Move with refactors, delete
+  with deletions, update when the implementation changes.
 
 ---
 
@@ -175,6 +228,45 @@ and the pane project's `docs/shell.md`.
 | Dependencies | par (hard), pane-proto + pane-session (feature-gated). No fp-library. |
 | Scope | Decide: rc (no scoping) vs ksh (local via typeset). Document the choice. |
 | Shell struct | Keep decomposed. Separate concerns into separate sub-structs. Prevent Shell_t trajectory. |
+
+---
+
+## Intermediate State Principle
+
+Multi-step implementation is safer when each intermediate state
+is a natural resting point. The litmus test: **would anyone
+design the intermediate state on purpose?** If not — if it
+exists only as a waypoint between two coherent designs — combine
+the steps.
+
+**When phasing wins:** each intermediate is a plausible resting
+place. A validation library: step 1 = email validation (useful
+standalone), step 2 = URL validation. A protocol stack: step 1 =
+framing (useful without correlation). Each phase is a system
+someone would ship.
+
+**When phasing is a trap:** an intermediate creates a coherence
+obligation that neither the before-state nor the after-state
+requires. Building a counter separately from the collection it
+counts. Implementing error types before the operations that
+produce errors. Extracting a type to a new crate before the
+functions that return it. The transient cross-boundary invariant
+is strictly harder to reason about than either endpoint.
+
+**How to apply:**
+
+1. Before proposing a phased plan, write down what the system
+   looks like after each phase — not what changed, what EXISTS.
+2. For each intermediate: "If we stopped here permanently, would
+   this be a reasonable design?" If "no, but the next phase fixes
+   it" — merge the phases.
+3. A smaller diff is not inherently safer. An incoherent
+   intermediate is strictly more dangerous than a larger coherent
+   step.
+4. Exception: if a combined step is too large to review or test
+   as a unit, splitting is justified — but document the
+   intermediate as intentionally transient and land both steps in
+   the same review cycle.
 
 ---
 

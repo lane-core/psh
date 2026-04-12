@@ -62,14 +62,14 @@ reconstructed.
 
 ## rc's execution model as sequent calculus
 
-Duff's rc [1] departed from the Bourne shell for structural
+Duff's rc [Duf90] departed from the Bourne shell for structural
 reasons, not aesthetic ones. The critical moves:
 
 **List-valued variables.** Bourne conflated "list of strings"
 with "string containing separators" — every expansion re-scanned
 through IFS. rc made lists first-class: `path=(. /bin)` is two
 strings, never rescanned. Duff: "Input is never scanned more
-than once" [1, §Design Principles]. This was the foundational
+than once" [Duf90, §Design Principles]. This was the foundational
 move. Everything else follows from treating the shell's data
 type honestly.
 
@@ -86,12 +86,12 @@ meant `rfork e` gave you a new environment by kernel semantics,
 not shell magic. The shell was a client of the namespace, not
 its own micro-OS.
 
-rc has the three-sorted structure of the λμμ̃-calculus [5],
+rc has the three-sorted structure of the λμμ̃-calculus [CH00],
 unnamed and unenforced:
 
 | rc construct | Sort | Evidence |
 |---|---|---|
-| Words: literals, `$x`, `` `{cmd} ``, `a^b` | Producers | Eager evaluation. "Input is never scanned more than once" [1, §Design]. |
+| Words: literals, `$x`, `` `{cmd} ``, `a^b` | Producers | Eager evaluation. "Input is never scanned more than once" [Duf90, §Design]. |
 | Pipe readers, redirect targets, continuations | Consumers | Implicit — waiting to receive a value. |
 | Simple commands, `if`, `for`, `match` | Consumers (coterms) | `echo`: consumes args, writes stdout. `if`: consumes status. |
 | Pipelines, redirections, fork/exec | Cuts ⟨t \| e⟩ | `echo hello`: producer `hello` meets consumer `echo`. |
@@ -117,7 +117,7 @@ forking, runs a full shell statement whose effects include
 subprocess creation and I/O, and captures the byte-valued
 return; the inner computation straddles CBV/CBN because the
 forked pipeline is itself co-Kleisli. `$((...))` has neither
-polarity straddle nor subprocess. Per [7, §2.1] "Arithmetic
+polarity straddle nor subprocess. Per [BTMO23, §2.1] "Arithmetic
 Expressions," arithmetic binop in λμμ̃ is a **statement**
 shaped `⊙(p₁, p₂; c)` taking two producers and a consumer;
 the surface form `e₁ + e₂` translates as `μα.⊙(⟦e₁⟧, ⟦e₂⟧; α)`
@@ -157,11 +157,11 @@ psh makes two shifts explicit that rc left implicit:
 
 ## The sfio insight
 
-ksh93's sfio library [SFIO] was the shell's implicit type
+ksh93's sfio library `refs/ksh93/sfio-analysis/` was the shell's implicit type
 theory. The sfio-analysis suite [SFIO-1 through SFIO-12]
 revealed:
 
-**Buffer polarity.** sfio's five-pointer buffer system [SFIO-3]
+**Buffer polarity.** sfio's five-pointer buffer system `refs/ksh93/sfio-analysis/03-buffer-model.md`
 encodes polarity: `_endr` active = read mode (negative,
 consuming), `_endw` active = write mode (positive, producing).
 Mode switching (`_sfmode()`) is a polarity shift with
@@ -170,24 +170,24 @@ write→read. This is a shift operator with a cost, not a free
 operation.
 
 **Discipline stacks as morphism chains.** Each `Sfdisc_t` in
-the stack [SFIO-7] composes like an endomorphism between the
+the stack `refs/ksh93/sfio-analysis/07-disciplines.md` composes like an endomorphism between the
 buffer (value) and the kernel (computation). The stack as a
 whole mediates the value/computation boundary.
 
 **Dccache as non-associativity witness.** When a discipline
-is pushed onto a stream with buffered data [SFIO-7], the two
+is pushed onto a stream with buffered data `refs/ksh93/sfio-analysis/07-disciplines.md`, the two
 possible bracketings yield different results because data
 already in value mode (buffered) cannot be re-processed through
 a new computation discipline. This is structurally analogous to
 the duploid's failed fourth equation (Mangel/Melliès/
-Munch-Maccagnoni [2], the non-associative composition of
+Munch-Maccagnoni [MMM], the non-associative composition of
 call-by-value and call-by-name). The pattern matches; the full
 duploid composition laws have not been formally verified for
 sfio's discipline stack.
 
 **The lesson for psh:** ksh93's authors built correct polarity
 discipline in sfio and then failed to propagate it to the shell
-proper. The `sh.prefix` bugs (SPEC.md [SPEC] bugs 001–003b)
+proper. The `sh.prefix` bugs (SPEC.md `refs/ksh93/ksh93-analysis.md` bugs 001–003b)
 are exactly the same non-associativity that Dccache handles
 correctly — a computation (DEBUG trap) intruding into a value
 context (compound assignment) with no mediator. sfio had the
@@ -213,18 +213,18 @@ psh makes polarity explicit:
 
 ### The calculus
 
-**Curien and Herbelin** [5] introduced the λμμ̃-calculus as a
+**Curien and Herbelin** [CH00] introduced the λμμ̃-calculus as a
 term assignment for classical sequent calculus. Three syntactic
 categories: terms (μ-binder captures the current context),
 coterms (μ̃-binder captures the current value), and commands
 (a cut ⟨t | e⟩ connecting them). This is the foundation.
 
-**Spiwack** [SPW] dissects this into a polarized variant:
+**Spiwack** [Spi14] dissects this into a polarized variant:
 positive types (values, introduced eagerly) vs negative types
 (computations, introduced lazily). Shift connectives (↓N for
 thunking, ↑A for returning) mediate between polarities.
 
-psh adopts Grokking's [7] **two-sided** reading of λμμ̃ — three
+psh adopts Grokking's [BTMO23] **two-sided** reading of λμμ̃ — three
 syntactic categories (producers, consumers, statements) with
 μ distinct from μ̃ — rather than Spiwack's **one-sided**
 reading, where there are two categories (terms and commands)
@@ -244,34 +244,78 @@ the evaluator dispatches differently on each.
 
 ### The semantics
 
-**Mangel, Melliès, and Munch-Maccagnoni** [2] define duploids —
+**Mangel, Melliès, and Munch-Maccagnoni** [MMM] define duploids —
 non-associative categories integrating call-by-value (Kleisli/
 monadic) and call-by-name (co-Kleisli/comonadic) computation.
 Three of four associativity equations hold; the fourth — the
 `(⊕,⊖)` equation — fails, and that failure captures the CBV/CBN
 distinction. Maps restoring full associativity on the left are
-thunkable (pure, value-like); one direction of the Hasegawa-
-Thielecke implication, **thunkable ⇒ central** [2, Proposition
-8550], holds in every symmetric monoidal duploid — no dialogue
-structure or involutive negation required. psh cites only the
-forward direction; the reverse (central ⇒ thunkable) is the
-full Hasegawa-Thielecke theorem and requires dialogue-duploid
-structure that psh does not commit to.
+thunkable (pure, value-like).
 
-**Munch-Maccagnoni's thesis** [3] is where duploids originate.
-The companion paper [9] gives the clearest self-contained
+psh's duploid is a **dialogue duploid** [MMM, Definition 9.4]: a
+symmetric monoidal duploid equipped with positive and negative
+monoidal structures `(D, ⊗, 1)` and `(D, ⅋, ⊥)` related by a
+strong monoidal duality functor `¬(−)` (involutive negation).
+The correspondence to psh constructs:
+
+| Dialogue structure | psh construct | Surface syntax |
+|---|---|---|
+| Product `×` (= `!A ⊗ !B` classically) | Tuples (§Tuples) | `(a, b)` |
+| Tensor `⊗` (linear product) | Tuples inside `linear` blocks | `linear { let pair = (fd1, fd2) }` |
+| Negative par `⅋` | Trap continuations (§Error model) | `trap SIG { h } { body }` |
+| Involutive negation `¬(−)` | Type-level polarity swap | `¬A` = continuation expecting `A` |
+| Downshift `↓` | Thunk behind a name | `<{cmd}`, `.refresh` |
+| Upshift `↑` | Force / return | `` `{cmd} `` = ↓→↑, `let` binding |
+| Exponential `!` | Classical zone | `let !x = b`, `!T` in type annotations |
+
+The internal type theory is the **linear classical L-calculus**
+[MMM, §9.3], which extends λμμ̃ with involutive negation and the
+negative symmetric monoidal structure `(⅋, ⊥)` dual to positive
+`(⊗, 1)`. The exponentials `!`/`?` mark the boundary between the
+linear and classical zones — shell variables live under `!` by
+default (freely duplicable, discardable); resource types
+(coprocess tags, scoped fds) live in the linear zone (§Linear
+resources). psh's unit-free fragment (no unit types) drops `1`
+and `⊥`; structural results from [MMM] hold in the unit-free
+setting because the relevant proofs do not depend on the units.
+
+**Theorem 9.5** [MMM] establishes the equivalence: every duploid
+from a dialogue chirality `L ⊣ R` carries dialogue duploid
+structure, and conversely. psh's `L ⊣ R` is the adjunction
+every duploid admits [MMM], realized operationally as the polarity
+frame (§Polarity frames). The dialogue commitment upgrades the
+adjunction to a full dialogue chirality by adding the duality
+functor (process substitution's polarity swap) and the negative
+monoidal structure (trap's ⅋).
+
+The **Hasegawa-Thielecke theorem** [MMM, §9.6] holds in full:
+**a map is thunkable if and only if it is central** in any
+dialogue duploid. The forward direction (thunkable ⇒ central,
+Proposition 8550) holds in any symmetric monoidal duploid. The
+dialogue commitment licenses the reverse: **central ⇒
+thunkable** — any map that commutes with all others under `⊗`
+is necessarily pure. The `(⊕,⊖)` non-associativity is
+preserved — dialogue does not restore it. Oblique maps remain
+neither thunkable nor central; polarity frames remain mandatory
+at every boundary crossing. An associative dialogue duploid
+would be a `*`-autonomous category [MMM, Definition 9.4]; psh's
+duploid is non-associative, so psh is not `*`-autonomous — the
+non-associativity is load-bearing, not an artifact.
+
+**Munch-Maccagnoni's thesis** [Mun13] is where duploids originate.
+The companion paper [Mun14] gives the clearest self-contained
 definition. Table 1 maps abstract structure to concrete PL
 concepts: thunk, return, Kleisli, co-Kleisli, and oblique maps.
 
 ### The practice
 
-**Binder, Tzschentke, Müller, and Ostermann** [7] present
+**Binder, Tzschentke, Müller, and Ostermann** [BTMO23] present
 λμμ̃ as a compiler intermediate language. Key insights:
 evaluation contexts are first-class (the μ̃-binder reifies
 "what happens next"); let-bindings (μ̃) are dual to control
 operators (μ); ⊕ vs ⅋ error handling are dual.
 
-**Levy** [4] defines Call-by-Push-Value, the practical
+**Levy** [Lev04] defines Call-by-Push-Value, the practical
 framework for the value/computation distinction. psh's
 `def`/`let` + lambda split is CBPV's `U`/`F` adjunction
 surfaced as syntax. The F/U adjunction bridges value types
@@ -282,7 +326,7 @@ the Γ/Δ split.
 
 ## The three sorts, made explicit
 
-In Curien-Herbelin's λμμ̃ [5], the three syntactic categories
+In Curien-Herbelin's λμμ̃ [CH00], the three syntactic categories
 are:
 
 - **Terms** (producers): values that have been computed or are
@@ -340,7 +384,7 @@ computation might jump to. In psh, Δ is populated by:
 
 - **trap bindings**: `trap SIGINT { handler } { body }` binds
   the handler as a continuation in Δ for the duration of the
-  body. The μ-binder `μα.c` in the calculus [5] — α names the
+  body. The μ-binder `μα.c` in the calculus [CH00] — α names the
   signal continuation, c is the body that runs with α in scope.
 - **catch bindings**: `try { body } catch (e) { handler }` binds
   the error handler as a continuation in Δ for the duration of
@@ -398,8 +442,8 @@ commands.
 
 ### The AST's three sorts
 
-psh's AST has three sorts matching the λμμ̃ categories [5],
-[7, §2]:
+psh's AST has three sorts matching the λμμ̃ categories [CH00],
+[BTMO23, §2]:
 
 | psh node | λμμ̃ category | Evaluator | Role |
 |---|---|---|---|
@@ -452,7 +496,7 @@ requires process substitution gymnastics.
 Cross-polarity composition — a pipeline stage that expands a
 variable (CBV) and writes to a pipe (CBN) — is non-associative
 in the duploid sense. Specifically: among the four cases
-`(ε, ε') ∈ {⊕,⊖}²` enumerated in [2, §"Emergence of non-
+`(ε, ε') ∈ {⊕,⊖}²` enumerated in [MMM, §"Emergence of non-
 associativity"], three associate cleanly and the fourth —
 `(⊕,⊖)` — fails. Writing `•` for Kleisli (monadic) composition
 and `○` for co-Kleisli (comonadic) composition, the failing
@@ -473,7 +517,7 @@ completes before `execvp` runs; the fork boundary separates the
 two polarities; the polarity frame discipline (see §Polarity
 frames) mediates the remaining `↓→↑` crossings. This is
 operational focalization — the same deterministic reduction
-order that Curien and Munch-Maccagnoni's focused calculus [8]
+order that Curien and Munch-Maccagnoni's focused calculus [CMM10]
 achieves syntactically, psh achieves operationally. See
 `docs/vdc-framework.md` §8.4 for the full statement of the
 non-associativity failure and its decision-procedure
@@ -534,11 +578,11 @@ value substituted in.
 
 The frame is the operational analog of the shift connectives
 `↓` / `↑` from the focused sequent calculus, and of the `L ⊣ R`
-adjunction every duploid admits [2, §"Duploids," adjunctions-
+adjunction every duploid admits [MMM, §"Duploids," adjunctions-
 duploids theorem]. Without the frame, a computation-mode
 operation inside a value-mode context can silently corrupt
 positive-mode state — the `sh.prefix` bug pattern documented in
-[SPEC], which is the operational form of the `(⊕,⊖)` non-
+`refs/ksh93/ksh93-analysis.md`, which is the operational form of the `(⊕,⊖)` non-
 associativity named above.
 
 Polarity frames are invoked in three places in psh:
@@ -549,7 +593,7 @@ Polarity frames are invoked in three places in psh:
 - **Arithmetic expansion** `$((…))` — frame is operationally
   trivial (pure in-process computation, no effects to guard), but
   the shift is still type-theoretic: the expression is `μα.⊙(e₁,
-  e₂;α)` in [7, §2.1]'s arithmetic translation, a statement
+  e₂;α)` in [BTMO23, §2.1]'s arithmetic translation, a statement
   wrapped in a μ-binder to produce a positive value. The frame
   mechanism is the same; its save/restore steps simplify to no-ops.
 - **Discipline refresh** `.refresh` and **mutation** `.set`
@@ -571,6 +615,118 @@ fork that returns immediately with `/dev/fd/N`; the name is
 positive, the computation behind the name is negative and
 demand-driven. The polarity frame discipline applies only to
 the bind, not to the deferred computation.
+
+
+### Linear resources and exponentials
+
+The linear classical L-calculus (§The semantics) partitions the
+typing context into a **classical zone** (variables under `!`,
+with contraction and weakening) and a **linear zone** (bare
+variables, no structural rules). psh extends this two-zone
+partition with an **affine** middle zone (weakening with runtime
+cleanup, no contraction) for resource types that have a
+well-defined cancellation protocol. The three usage disciplines:
+
+| Zone | Default for | Structural rules | Surface syntax |
+|---|---|---|---|
+| **Classical** (`!A`) | Value types: Str, Int, Bool, Path, ExitCode, List, Tuple, Struct | Contraction + weakening (copy, discard freely) | `let x = b` or `let !x = b` |
+| **Affine** | Resource types with cleanup: ReplyTag | No contraction; weakening triggers runtime cleanup | `let tag = print -p name 'q'` |
+| **Linear** (bare `A`) | Bare-annotated bindings; default inside `linear` blocks | No contraction, no weakening | `let fd : Fd = open f` or `linear { let fd = open f }` |
+
+**Default behavior.** `let x = expr` infers the zone from the
+type. Ground value types (Str, Int, Bool, Path, ExitCode, List,
+Tuple, Struct) are implicitly `!`-promoted — classical, freely
+duplicable and discardable. This is why `$x` can appear multiple
+times in an expression with no ceremony. Resource types with
+runtime cleanup actions (ReplyTag) are affine — use at most
+once, drop triggers the cleanup (Tflush for coprocess tags).
+Most shell code lives entirely in the classical zone and never
+encounters linearity.
+
+**Explicit `!` promotion.** `let !x = expr` or a `!T` type
+annotation forces a binding into the classical zone regardless
+of its type's default. This is the L-calculus promotion rule
+(A → !A): the user asserts "I am managing this resource myself;
+give me classical access." Example: `let !fd : Fd = dup $log_fd` — the
+fd is freely reusable because the user has explicitly accepted
+responsibility for its lifecycle.
+
+**Linear bindings.** A bare type annotation without `!` places
+the binding in the linear zone: `let fd : Fd = open 'lockfile'`.
+The type checker requires that `fd` is consumed (closed,
+passed to a function that consumes it, or otherwise used exactly
+once) on every control-flow path. Failure to consume is a type
+error, not a runtime cleanup — this is the strict discipline for
+resource-critical code (init scripts, supervision trees,
+long-running services).
+
+**Zone defaults for resource types.** `Fd` defaults to linear
+because there is no protocol-level cleanup for abandoned file
+descriptors — a leaked fd is a silent resource leak. `ReplyTag`
+defaults to affine because the Tflush/Rflush protocol provides
+safe cancellation — dropping a tag is a well-defined protocol
+action, not a leak. The `!` promotion (`let !fd = dup $log_fd`)
+overrides both defaults when the user accepts responsibility.
+
+**`linear` blocks.** The `linear { ... }` block changes the
+default zone from classical to linear for all bindings within
+the block. Inside a `linear` block, `let x = expr` produces a
+linear binding even for value types. Explicit `!` marks
+classical islands within the block. The block boundary is where
+the type checker verifies: all linear bindings introduced in the
+block are consumed before exit.
+
+**Exceptional exit from `linear` blocks.** When a `linear`
+block is exited via `try`/`catch` abort or signal handler
+`return N`, unconsumed linear bindings degrade to affine
+cleanup: the runtime sends Tflush for outstanding ReplyTags
+and closes outstanding Fds. This is consistent with the
+polarity-frame unwind semantics (§Polarity frames). The type
+checker warns on linear blocks in `try` bodies where
+exceptional paths leave bindings unconsumed, but does not
+reject — the runtime cleanup guarantees protocol correctness
+regardless.
+
+```
+linear {
+    let fd = open $notify_fd       # Fd — linear (must consume)
+    let name = $1                  # Str — linear (must use)
+    let !config = read_config()    # !List(Str) — classical island
+
+    write $fd '\n'                 # fd consumed
+    exec $name                     # name consumed
+}                                  # checker: all linear bindings consumed ✓
+```
+
+**Type annotations.** `!` and `?` appear in type position with
+their L-calculus meaning. `!T` is "classical T" (freely
+usable). Bare `T` is "linear T" (use exactly once). `?T` is the
+negative dual of `!T` — it appears in continuation/coterm
+position and is not expected in typical user code. Function
+signatures use these annotations to express resource contracts:
+
+```
+def supervise : (Str, !Fd) -> Status {
+    # first arg: linear Str (must use the service name)
+    # second arg: classical Fd (log fd, freely reusable)
+}
+```
+
+**De Morgan duality.** The exponentials are dual: `?A = (!(A⊥))⊥`.
+This connects to the ⊕/⅋ duality already in the spec: `try`
+operates on ⊕ (data, positive, under `!` in the classical zone),
+while `trap` operates on ⅋ (codata, negative, under `?` in the
+continuation zone). The two compose orthogonally (§Signal
+interaction with try blocks) because they live in dual zones.
+
+**Operational cost.** The three-zone model adds no runtime
+overhead for classical code. The `!` promotion is the default
+and requires no tracking. Affine tracking is already implemented
+(coprocess tag tracking via the outstanding-tags HashMap).
+Linear checking is a compile-time verification pass — it
+constrains control-flow paths at the type level, not at runtime.
+The `linear` block is a type-checker directive, not a runtime
+construct.
 
 
 ## Syntax
@@ -600,7 +756,7 @@ Key syntactic decisions with semantic grounding:
 - **rc parentheses** around conditions: `if(cond)`,
   `while(cond)`, `for(x in list)`, `match(expr)`.
 - **`else` instead of `if not`.** Duff acknowledged rc's
-  weakness here [1, §Design Principles].
+  weakness here [Duf90, §Design Principles].
 - **`match`/`=>` instead of `switch`/`case`.** rc's `case` arms
   are top-level commands in a list; psh's `match` uses structured
   `=>` arms with `;` separators. The operation is genuinely
@@ -656,7 +812,7 @@ Key syntactic decisions with semantic grounding:
   were complex (interpolation of `$`, `` ` ``, `\`, `!` but not
   globs). psh's expansion model is simpler (no IFS splitting,
   no glob expansion inside quotes), so the "raft of obscure
-  quoting problems" Duff cited [1, §Design Principles] does
+  quoting problems" Duff cited [Duf90, §Design Principles] does
   not apply.
 
 
@@ -743,7 +899,7 @@ nothing.
 
 All typing rules use classical sequent notation
 `Γ ⊢ t : A | Δ` (matching psh's λμμ̃ foundation — Grokking
-[7, §2], Curien-Herbelin [5]). Each rule carries a **mode
+[BTMO23, §2], Curien-Herbelin [CH00]). Each rule carries a **mode
 annotation** `[synth]` or `[check]` indicating the
 implementation strategy in the bidirectional checker. The mode
 is **derived** from the rule structure: [synth] when the
@@ -866,7 +1022,7 @@ them in the `Namval_t` machinery.
 | Scope | Dynamic (reads current scope) | Captures at definition |
 | Effects | May have effects (oblique map) | Purity inferred (thunkable when pure) |
 | CBPV type | `F(Status)` | `U(A → B)` or `U(A → F(B))` |
-| rc analog | `fn name { body }` [1, §Functions] | (no rc analog — extension) |
+| rc analog | `fn name { body }` [Duf90, §Functions] | (no rc analog — extension) |
 | Invocation | `name arg1 arg2` | `name arg1 arg2` (bare word forces the lambda) |
 
 The `def` keyword replaces rc's `fn`. psh renames it because
@@ -918,7 +1074,7 @@ are recognized:
   value, mediates the assignment, and writes the slot.
 
 The split between observation and refresh is a return to rc's
-observation philosophy ([1] §Environment): observation is a read,
+observation philosophy ([Duf90] §Environment): observation is a read,
 mutation is an imperative step, and the shell's reference model
 never hides work behind a variable reference. Plan 9 realized
 this via `/env` as a kernel filesystem; psh realizes the same
@@ -941,7 +1097,7 @@ In the sequent calculus, data types are defined by constructors
 types are defined by destructors (how to observe or transform a
 value) and eliminated by copattern matching: the producer is a
 cocase that says how to respond to each destructor invocation
-[7, §6.3].
+[BTMO23, §6.3].
 
 A disciplined variable is the cocase
 
@@ -954,7 +1110,7 @@ a statement in `Kl(Ψ)`, and `.set-body` is a statement taking one
 producer argument (the incoming value) and mediating the slot
 write. All three are **destructors** of the codata type; the
 cocase is the sole constructor (the variable *is* its cocase).
-Per [7, §6.3], a codata constructor is the whole cocase; `.set`
+Per [BTMO23, §6.3], a codata constructor is the whole cocase; `.set`
 is a destructor with one producer argument, not a constructor
 in its own right.
 
@@ -975,7 +1131,7 @@ user-defined `.get` bodies are permitted but must remain pure
 The once-per-expression reuse property is a theorem, not an
 operational convention: pure maps into positive values are
 thunkable by construction in the symmetric monoidal duploid, and
-thunkable maps are central [2, Prop 8550]. Central maps may be
+thunkable maps are central [MMM, Prop 8550]. Central maps may be
 reused at every consumption site inside an expression without
 disturbing composition order. CBV argument expansion therefore
 evaluates `.get` once and shares the result at every occurrence
@@ -997,7 +1153,7 @@ the stored slot. It is invoked as an imperative command at a step
 boundary, never implicitly by reference.
 
 Canonical shape (portable across contemporary unix-likes; the
-rc/Plan 9 "observation is a file read" philosophy [1] §Environment
+rc/Plan 9 "observation is a file read" philosophy [Duf90] §Environment
 realized on unix without requiring `/env` or 9P services):
 
     let mut cursor = 0
@@ -1021,7 +1177,7 @@ convention (`def Type.method` for per-type methods uppercase;
 lowercase) is enough to disambiguate `cursor.refresh` from a
 per-type method invocation. Users who want the ksh93 "live
 variable" ergonomics wrap the pair in their own function — the
-rc `fn cd` pattern [1, §Functions] applied to discipline
+rc `fn cd` pattern [Duf90, §Functions] applied to discipline
 invocation:
 
     def show_cursor { cursor.refresh; echo $cursor }
@@ -1086,7 +1242,7 @@ point are user-visible and expected.
 directly. A `.set` body that does not perform such an assignment
 does not update the slot. The evaluator does not write the slot
 after `.set` returns — every state transition goes through a
-destructor body [7, §6.3]. This makes `.set` the sole legitimate
+destructor body [BTMO23, §6.3]. This makes `.set` the sole legitimate
 writer of a disciplined variable's slot from the assignment
 side; `.refresh` is the legitimate writer from the observation
 side.
@@ -1226,8 +1382,10 @@ a simpler pipeline:
 2. **Var** → read the stored slot, invoking the variable's
    `.get` cell (pure `W(S, A)` — default is the identity slot
    reader; a user-defined `.get` must remain pure). The result
-   is thunkable and is reused within the expression by CBV
-   focusing [2, Prop 8550]. No polarity frame — `.get` has no
+   is thunkable, hence central [MMM, Prop 8550] (forward
+   direction; dialogue structure not required here), and reused
+   within the expression by CBV focusing. No polarity frame —
+   `.get` has no
    effects to guard. Effectful state refresh is the job of
    `.refresh`, invoked separately as an imperative command.
 3. **Count** → lookup then measure
@@ -1239,7 +1397,7 @@ They compose by structural recursion over the `Term` AST.
 
 **Glob no-match behavior.** A glob pattern that matches no
 filenames stands for itself — it is not replaced by the empty
-list and is not an error. rc heritage [1, §Patterns]: "a
+list and is not an error. rc heritage [Duf90, §Patterns]: "a
 pattern matching no names is not replaced by the empty list;
 rather it stands for itself." `ls *.xyz` passes the literal
 string `*.xyz` to `ls`, which prints its own error. This is
@@ -1260,7 +1418,7 @@ named coprocesses. Neither had a conversation discipline.
 Plan 9's 9P protocol [9P] is the design inspiration: a
 session protocol imposed on a byte stream. The sequence
 Tversion/Rversion, Tattach/Rattach, Twalk, Topen, Tread/Twrite,
-Tclunk is a state machine — what Honda [Honda98] would later
+Tclunk is a state machine — what Honda [HVK98] would later
 formalize as session types. 9P session-typed its IPC informally,
 enforced by runtime checks rather than compile-time types.
 
@@ -1332,17 +1490,28 @@ operate at the floor.
 ### The user-visible protocol
 
 `print -p name 'request'` sends a request to the named coprocess
-and returns an `Int` tag identifying the outstanding request.
+and returns a `ReplyTag` identifying the outstanding request.
 `let` binds the tag directly, per the CBPV rule that `let`
 accepts effectful computations:
 
     let tag = print -p myserver 'query'
-    # tag is an Int — a list of one element, $#tag is 1
+    # tag is a ReplyTag — a list of one element, $#tag is 1
 
 `read -p name reply` reads the oldest outstanding response
 (FIFO order) into `reply`. `read -p name -t $tag reply` reads
-the response for a specific tag. The user holds plain Int tags
-— there is no linear handle type at the shell level.
+the response for a specific tag. Tags are **affine resources**
+in the linear zone of psh's type system (§Linear resources).
+`ReplyTag` is a distinct type from `Int`: using a tag twice is
+a type error (contraction failure on a linear resource);
+dropping a tag without consuming it is permitted (affine
+discard) — the runtime sends a Tflush frame to cancel the
+outstanding request (§Shell-internal tracking). The FIFO
+pattern (no tag capture, `read -p name reply`) is unaffected:
+tags allocated without `let` binding are consumed in order by
+the shell's internal tracking, and their affine obligation is
+discharged by the read. Within a `linear` block, tags are
+strictly linear — unconsumed tags at block exit are a type
+error, not a silent Tflush.
 
 Simple FIFO pattern (no tag capture):
 
@@ -1528,7 +1697,7 @@ for filesystem reads.
 
 `get`/`set` builtins resolve against all three tiers uniformly.
 The namespace grows; the language does not. This is Plan 9's
-principle: `/env` was a filesystem [1, §Environment]; psh
+principle: `/env` was a filesystem [Duf90, §Environment]; psh
 extends the scope chain into the filesystem honestly.
 
 **Per-command local variables** (rc heritage, rc.ms lines
@@ -1545,32 +1714,37 @@ the common single-command case.
 
 ### ⊕ and ⅋
 
-Every operation returns `Status(pub String)`. rc: "On Plan 9
-status is a character string describing an error condition. On
-normal termination it is empty" [1, §Exit status]. psh preserves
-this. `Status::is_success()` checks emptiness.
+Every command returns `Status = Result((), ExitCode)` — a
+genuine ⊕ coproduct (see §ExitCode and Status for definitions).
+rc heritage [Duf90, §Exit status]: "On Plan 9 status is a
+character string describing an error condition. On normal
+termination it is empty." psh adapts this to Unix: the numeric
+code is the POSIX reality (`waitpid` 0-255); the descriptive
+string lives in `ExitCode.message`, populated by builtins and
+signal-death synthesis.
 
 Linear logic gives two disjunction connectives — not two names
 for the same thing, but two genuinely different kinds of error
-handling [7, §"Linear Logic and the Duality of Exceptions"]:
+handling [BTMO23, §"Linear Logic and the Duality of Exceptions"]:
 
 - **⊕ (plus, positive / data):** a tagged return value.
   Constructors `Inl(t)` / `Inr(t)`; elimination by
   `case{Inl(x) ⇒ s₁, Inr(y) ⇒ s₂}`. The caller inspects the
   tag. Rust's `Result<T, E>` and Haskell's `Either` are this
-  shape. **psh's `$status` is ⊕**: every command returns a
-  tagged value, and `try { body } catch (e) { handler }`
-  pattern-matches on success/failure at step boundaries.
-  `$status` is data; `try` is the consuming case.
+  shape. **psh's Status is ⊕**: every command returns a
+  tagged value `ok(()) | err(ExitCode)`, and
+  `try { body } catch (e) { handler }` is the coproduct
+  elimination — `e : ExitCode` binds the error payload.
 
-  **Pipeline status.** `$status : Int` holds the exit code of
-  the last command (or the last pipeline component). For full
-  pipeline diagnostics, `$pipestatus : List(Int)` holds the
-  exit codes of all pipeline components in order. Two variables,
-  two types — `$status` never changes type. For a simple
-  command (not a pipeline), `$pipestatus` is a single-element
-  list equal to `($status)`. This follows bash/zsh convention
-  (`$PIPESTATUS` / `$pipestatus`) with psh's native list type.
+  **Pipeline status.** `$status : ExitCode` holds the exit
+  code of the last command (or the last pipeline component).
+  For full pipeline diagnostics, `$pipestatus : List(ExitCode)`
+  holds the exit codes of all pipeline components in order.
+  Two variables, two types — `$status` never changes type.
+  For a simple command (not a pipeline), `$pipestatus` is a
+  single-element list equal to `($status)`. This follows
+  bash/zsh convention (`$PIPESTATUS` / `$pipestatus`) with
+  psh's native list type.
 
 - **⅋ (par, negative / codata):** a pair — more generally an
   N-tuple — of continuations, one per outcome. The callee
@@ -1597,8 +1771,10 @@ positive Γ, `trap` on signal continuations in the negative Δ.
 `try { body } catch (e) { handler }` changes the sequencing
 combinator within `body` from unconditional `;` to monadic `;ₜ`
 that checks Status after each command. On nonzero status,
-execution aborts to the handler. The handler binding `e` is a
-μ̃-binder on the error case.
+execution aborts to the handler. The handler binding
+`e : ExitCode` is a μ̃-binder on the error case — the
+coproduct elimination of `Status = Result((), ExitCode)`.
+The handler can inspect `$e.code` and `$e.message`.
 
 Equivalent to lexically-scoped `set -e` without POSIX `set -e`'s
 composability defects. Boolean contexts (if/while conditions,
@@ -2274,14 +2450,217 @@ guarded arms requires a fallback (unguarded arm or wildcard).
 composition site inside case dispatch. A failed effectful
 guard has already committed its side effects, making
 "resume matching" unsound — the world has changed between
-arms. Pure guards are thunkable (central per Duploids
-Proposition 8550), compose freely, and backtrack safely
-because no state was modified. Effectful conditions belong
-in `if` inside the arm body, where the effect is explicit
-and no backtracking occurs.
+arms. Pure guards are thunkable, and thunkable ⇔ central by
+the Hasegawa-Thielecke theorem [MMM, §9.6] — they compose
+freely and backtrack safely because no state was modified.
+The converse is the deeper justification: an effectful guard
+is non-thunkable, hence non-central by HT contrapositive,
+and its side effects interact with match dispatch in
+composition-order-dependent ways — exactly the `(⊕,⊖)` non-
+associativity failure at the guard boundary. Effectful
+conditions belong in `if` inside the arm body, where the
+effect is explicit and no backtracking occurs.
 
 Enums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.
+
+
+## Path (component sequences)
+
+A path is not a string — it is a sequence of components with
+structural boundaries. This is Duff's principle applied to the
+filesystem: component boundaries are part of the data, not
+recovered by scanning for `/`. A filename containing `/` in
+one component cannot be confused with a directory separator,
+for the same reason that a list element containing spaces
+cannot be confused with a list separator.
+
+**Representation.** Path is a list of typed components:
+
+    Path = List(PathComponent)
+
+    enum PathComponent {
+        root;             # / (Unix root)
+        parent;           # ..
+        cur;              # .
+        normal(Str)       # a directory or file name
+    }
+
+The leading `root` component distinguishes absolute from
+relative paths. `..` and `.` are preserved as components —
+normalization (resolving `..` against the parent) is a
+filesystem operation, not a type-level operation. This matches
+Rust's `std::path::Components` design: `..` components are
+kept literal in the iterator, resolved only by `canonicalize`.
+
+**Literals.** Path literals use filesystem syntax directly:
+
+    /usr/bin/rc           # Path: (root, normal(usr), normal(bin), normal(rc))
+    ./src/main.rs         # Path: (cur, normal(src), normal(main.rs))
+    ../lib                # Path: (parent, normal(lib))
+
+The parser decomposes path literals at parse time. The `/` at
+the start is the root component; internal `/`s are component
+separators. This parallels how `(a b c)` is parsed into a list
+at parse time — the spaces are separators, not content.
+
+**Interpolation.** `"$path"` joins with `/` to produce a Str.
+This is the display/exec form — the string that goes to a
+syscall. The component structure is the canonical
+representation; the joined string is derived. Multi-element
+path lists join each path with space (standard list
+interpolation), then each path internally with `/`.
+
+**Accessors.** Path has optic-backed accessors:
+
+| Accessor | Optic class | Returns | Example |
+|----------|-------------|---------|---------|
+| `$p.parent` | Lens | Path (all but last component) | `/usr/bin/rc` → `/usr/bin` |
+| `$p.name` | Lens | Str (last component) | `/usr/bin/rc` → `rc` |
+| `$p.stem` | Lens | Str (name without extension) | `/src/main.rs` → `main` |
+| `$p.ext` | AffineTraversal | Option(Str) (may not exist) | `/src/main.rs` → `some(rs)` |
+| `$p.components` | Getter | List(Str) (component strings) | `/usr/bin` → `(usr bin)` |
+| `$p[n]` | AffineTraversal | Option(PathComponent) (nth component) | `/usr/bin`[1] → `normal(bin)` |
+
+**Join.** Path joining is component concatenation — the second
+path's components are appended to the first:
+
+    $dir / $file          # / as infix join operator on Path
+    path.join($base $rel) # explicit builtin
+
+If the right operand is absolute (starts with `root`), it
+replaces the left operand entirely — matching Rust's
+`PathBuf::push` semantics and POSIX path resolution.
+
+**Relationship to Str.** Path is not a subtype of Str. The
+conversion is explicit:
+
+- Path → Str: interpolation (`"$path"`) or `str $path`
+  (joins components with `/`)
+- Str → Path: `path $str` builtin (decomposes on `/`)
+  or path literal syntax
+
+This prevents accidental treatment of paths as strings (which
+would lose component boundaries) or strings as paths (which
+would misparse embedded separators). The type system catches
+`echo $path` (list splice — each component becomes a separate
+argument) vs `echo "$path"` (interpolation — the joined string).
+
+**Non-UTF-8 filenames.** On Unix, filenames are arbitrary bytes
+(except NUL and `/`). psh's Str is UTF-8. Filenames that are
+not valid UTF-8 produce a runtime error at the Str → Path or
+Path → Str boundary, with a diagnostic naming the offending
+bytes. This is a deliberate restriction: psh's value model is
+string-based, and silently mangling non-UTF-8 filenames would
+violate Duff's principle (structure should not be corrupted by
+the representation). The 99.9% case (UTF-8 filenames on modern
+systems) works cleanly; the edge case fails loudly.
+
+**Classical zone.** Path is a value type, freely copyable and
+discardable (`!Path` in the classical zone). No resource
+semantics — a Path names a location but does not hold a handle.
+
+Path is positive (value sort), admits all structural rules.
+Inert data — Clone, no embedded effects.
+
+
+## ExitCode and Status
+
+### ExitCode — the error payload
+
+ExitCode is a ground type representing a process termination
+result. It carries both the POSIX numeric code and an optional
+descriptive message:
+
+    struct ExitCode {
+        code : Int;        # 0-255 for external, wider for builtins
+        message : Str      # descriptive error (empty on success or
+                           # when unavailable from external commands)
+    }
+
+The `code` field is the POSIX reality: `waitpid` returns
+0-255 for external processes. Shell builtins and `def`
+functions may use the full Int range (ksh93 precedent: sh.1
+lines 1699-1709), clamped to 0-255 at process exit boundaries.
+
+The `message` field preserves rc's string-status heritage
+[Duf90, §Exit status]: "On Plan 9 status is a character string
+describing an error condition." On Unix, builtins populate the
+message with descriptive errors (`'file not found'`,
+`'permission denied'`). External commands leave it empty —
+the POSIX interface provides no string channel. Signal death
+synthesizes a message (`'killed by SIGTERM'`). The message is
+informational, not load-bearing for control flow — conditionals
+and `try`/`catch` inspect `code`, not `message`.
+
+**Accessors:**
+
+    $e.code       # Int
+    $e.message    # Str
+
+**Construction:** builtins and `exit` produce ExitCode values.
+The user writes `exit 1` (bare code, empty message) or
+`exit 1 'not found'` (code + message). External commands
+produce ExitCode from `waitpid` with an empty message.
+
+ExitCode is positive (value sort), classical zone (`!ExitCode`),
+freely copyable and discardable. It is inert data — no resource
+semantics.
+
+### Status — the ⊕ connective
+
+Status is the return type of every command. It is a genuine
+two-case coproduct (⊕), not a bare integer with an implicit
+predicate:
+
+    Status = Result((), ExitCode)
+
+- **Success:** `ok(())` — the command succeeded. No payload.
+- **Failure:** `err(ExitCode)` — the command failed. The
+  ExitCode carries the code and optional message.
+
+This is the ⊕ from linear logic: constructors `Inl(t)` /
+`Inr(t)`, eliminated by case dispatch. `try`/`catch` is the
+coproduct elimination form:
+
+    try { body } catch (e) {
+        # e : ExitCode — the error payload
+        echo $e.code $e.message
+    }
+
+Conditionals (`if`, `&&`, `||`) consume Status via ⊕
+elimination — they inspect the tag (ok vs err), not a
+numeric value. The shell convention "0 = truthy" is a
+consequence of the ⊕ structure: success is the left injection
+(the "continue" case), failure is the right injection (the
+"abort/branch" case). **Bool never enters the picture at the
+type level for command status.** If the user wants an explicit
+boolean, `$status.is_success` returns Bool via a named
+projection.
+
+**`$status` and `$pipestatus`:**
+
+    $status     : ExitCode       # most recent exit code
+    $pipestatus : List(ExitCode) # per-component codes
+
+`$status` holds the ExitCode from the most recent command.
+On success, `$status.code` is 0 and `$status.message` is
+empty. For a simple command (not a pipeline), `$pipestatus`
+is `($status)` — a single-element list. For a pipeline,
+`$pipestatus` holds the ExitCode of each component in order,
+following bash/zsh convention with psh's native list type.
+
+### In the VDC
+
+ExitCode is the type of the bottom-boundary horizontal arrow
+of every command cell. The co-Kleisli extract that `&&`/`||`
+observe is `ε : W(Context) → ExitCode` — naming what was
+previously implicit. `$pipestatus` is the sequence of
+bottom-boundary ExitCode annotations from each cell in a
+pipeline, naturally preserved because the VDC framework
+maintains pipelines as sequences, not composites (Duff's
+principle generalized: structure is never destroyed and
+reconstructed).
 
 
 ## Features and non-goals
@@ -2383,7 +2762,7 @@ stabilizes.
 
 - **`$((...))` arithmetic** — documented in §"rc's execution
   model"; in-process pure expression evaluation returning an
-  `Int`, shaped as `μα.⊙(e₁, e₂; α)` per [7, §2.1].
+  `Int`, shaped as `μα.⊙(e₁, e₂; α)` per [BTMO23, §2.1].
 
 - **Parametric type constructors on user declarations.**
   Users may declare parametric struct and enum types with
@@ -2505,6 +2884,11 @@ determines how the optic is selected, not which class it is.
 | Map(V), key lookup | `$m['key']` | Affine traversal (partial) | Cartesian + Cocartesian |
 | Map(V), all values | `.values` | Getter (read-only) | — |
 | List slice | `$l[a..b]` | Affine fold (read-only) | (read-only restriction of AffineTraversal) |
+| Path | `$p.parent` | Lens (drop last component) | Cartesian |
+| Path | `$p.name`, `.stem` | Lens (last component) | Cartesian |
+| Path | `$p.ext` | AffineTraversal (may not exist) | Cartesian + Cocartesian |
+| Path | `$p[n]` | AffineTraversal (nth component) | Cartesian + Cocartesian |
+| ExitCode | `$e.code`, `$e.message` | Lens (struct field) | Cartesian |
 | fd table (save/restore) | (internal) | Lens | Cartesian |
 | Redirections | (wrapping) | Adapter | Profunctor |
 
@@ -2568,86 +2952,45 @@ slot. The discipline is transparent to bracket composition.
 
 ## References
 
-[1] Tom Duff. "Rc — The Plan 9 Shell." 1990.
-    `refs/plan9/papers/rc.ms` (with companion man page at
-    `refs/plan9/man/1/rc`)
+All citation keys resolve to `docs/citations.md`, which carries
+full ACM-style entries with annotations. See
+`docs/citation-workflow.md` for the citation discipline.
 
-[2] Mangel, Melliès, Munch-Maccagnoni. "Duploids."
-    `~/gist/classical-notions-of-computation-duploids.gist.txt`
+### Published references (bibliography keys)
 
-[3] Munch-Maccagnoni. "Syntax and Models of a Non-Associative
-    Composition of Programs and Proofs." Thesis, 2013.
+| Key | Short description |
+|-----|-------------------|
+| `[Duf90]` | Duff — Rc, The Plan 9 Shell (1990) |
+| `[MMM]` | Mangel, Melliès, Munch-Maccagnoni — Classical Notions / Hasegawa-Thielecke (POPL 2026) |
+| `[Mun13]` | Munch-Maccagnoni — Non-Associative Composition (thesis, 2013) |
+| `[Mun14]` | Munch-Maccagnoni — Models of Non-Associative Composition (FoSSaCS 2014) |
+| `[Lev04]` | Levy — Call-by-Push-Value (2004) |
+| `[CH00]` | Curien, Herbelin — The Duality of Computation (ICFP 2000) |
+| `[Wad03]` | Wadler — CBV Dual to CBN (ICFP 2003) |
+| `[BTMO23]` | Binder, Tzschentke, Müller, Ostermann — Grokking the Sequent Calculus (2023) |
+| `[CMM10]` | Curien, Munch-Maccagnoni — Duality Under Focus (TCS 2010) |
+| `[Spi14]` | Spiwack — A Dissection of L (2014) |
+| `[HVK98]` | Honda, Vasconcelos, Kubo — Session Types (ESOP 1998) |
+| `[CMS]` | Carbone, Marin, Schürmann — Async Multiparty Compatibility |
+| `[CBG24]` | Clarke, Boisseau, Gibbons — Profunctor Optics (Compositionality 2024) |
+| `[CS10]` | Cruttwell, Shulman — Generalized Multicategories (TAC 2010) |
+| `[Lei04]` | Leinster — Higher Operads, Higher Categories (CUP 2004) |
+| `[Bur71]` | Burroni — T-catégories (1971) |
 
-[4] Levy. *Call-by-Push-Value.* Springer, 2004.
+### Heritage references (cited by repo-relative path)
 
-[5] Curien, Herbelin. "The Duality of Computation." ICFP, 2000.
+| Source | Path |
+|--------|------|
+| rc paper + man page | `refs/plan9/papers/rc.ms`, `refs/plan9/man/1/rc` |
+| Plan 9 9P protocol | man pages section 5 in any Plan 9 distribution |
+| Haiku / BeOS | `reference/haiku-book/` |
 
-[6] Wadler. "Call-by-Value is Dual to Call-by-Name." ICFP, 2003.
+### Project-internal references (cited by repo-relative path)
 
-[7] Binder, Tzschentke, Müller, Ostermann. "Grokking the
-    Sequent Calculus." 2023.
-    `~/gist/grokking-the-sequent-calculus.gist.txt`
-
-[8] Curien, Munch-Maccagnoni. "The Duality of Computation
-    Under Focus." TCS, 2010.
-
-[9] Munch-Maccagnoni. "Models of a Non-Associative Composition."
-    FoSSaCS, 2014.
-
-[9P] Plan 9 9P protocol. man pages section 5 in any Plan 9
-    distribution; cited here as design inspiration for the
-    coprocess conversation discipline, not for wire protocol.
-
-[Honda98] Honda, Vasconcelos, Kubo. "Language Primitives and
-    Type Discipline for Structured Communication-Based
-    Programming." ESOP, 1998.
-
-[CMS] Carbone, Marin, Schürmann. "A Logical Interpretation of
-    Asynchronous Multiparty Compatibility." Proves the MCutF
-    admissibility theorem: forwarders subsume classical
-    coherence and capture all multiparty compatible
-    compositions. Load-bearing justification for psh's star
-    topology.
-    `~/gist/logical-interpretation-of-async-multiparty-compatbility/`
-
-[Clarke] Clarke, Boisseau, Gibbons. "Profunctor Optics, a
-    Categorical Update." Compositionality, 2024.
-    `~/gist/profunctor-optics/arxivmain.tex` (formal paper,
-    primary citation for def-labels like `def:monadiclens`).
-    `~/gist/DontFearTheProfunctorOptics/` is the three-part
-    intuition introduction; read first, then Clarke for formal
-    definitions.
-
-[SPW] Spiwack. "A Dissection of L." 2014.
-    `~/gist/dissection-of-l.gist.txt`
-
-[Be] Haiku / BeOS. Application Kit, Interface Kit, I/O hierarchy.
-    `reference/haiku-book/`
-
-[SPEC] ksh26 Theoretical Foundation. `refs/ksh93/ksh93-analysis.md`
-
-[SFIO] sfio Operational Semantics Reference.
-    `refs/ksh93/sfio-analysis/README.md`
-
-[SFIO-3] sfio Buffer Model.
-    `refs/ksh93/sfio-analysis/03-buffer-model.md`
-
-[SFIO-7] sfio Disciplines.
-    `refs/ksh93/sfio-analysis/07-disciplines.md`
-
-[VDC] psh VDC Framework Report. `docs/vdc-framework.md`
-
-[CS] Cruttwell, Shulman. "A unified framework for generalized
-    multicategories." Theory and Applications of Categories
-    24(21), 2010, pp. 580–655. Introduces virtual double
-    categories under their current name.
-
-[Lei] Leinster. *Higher Operads, Higher Categories.* London
-    Mathematical Society Lecture Note Series 298, Cambridge
-    University Press, 2004. Introduces fc-multicategories
-    (= virtual double categories).
-
-[Bur] Burroni. "T-catégories (catégories dans un triple)."
-    Cahiers de Topologie et Géométrie Différentielle
-    Catégoriques 12(3), 1971, pp. 215–321. Original source
-    (as "multicatégorie").
+| Document | Path |
+|----------|------|
+| ksh26 Theoretical Foundation | `refs/ksh93/ksh93-analysis.md` |
+| sfio Analysis Suite | `refs/ksh93/sfio-analysis/` |
+| sfio Buffer Model | `refs/ksh93/sfio-analysis/03-buffer-model.md` |
+| sfio Disciplines | `refs/ksh93/sfio-analysis/07-disciplines.md` |
+| VDC Framework Report | `docs/vdc-framework.md` |

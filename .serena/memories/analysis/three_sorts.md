@@ -46,7 +46,7 @@ costs real resources (forking or thunking).
 The AST has three logical sorts corresponding to Grokking's
 categories, plus one engineering layer:
 
-- **`Word` / `Value`** — Producer sort. Values, variable
+- **`Term`** — Producer sort. Values, variable
   references, command substitutions, lambdas, concatenations,
   tuples, list literals, struct brace record literals, enum
   variant construction. Everything in Γ.
@@ -55,40 +55,7 @@ categories, plus one engineering layer:
   pipelines, redirections, background. Logically part of the
   consumer apparatus; kept as a separate AST node type because
   the evaluator dispatches on it before the cut fires.
-- **`Command`** — Statement sort. Every cut. Simple commands,
-  pipelines at the statement level, assignments (⟨val | μ̃x.rest⟩
-  — the μ̃-binder is the consumer slot inside the statement,
-  not a separate sort), if/for/match/try/trap.
-
-Consumers are **synthesized implicitly** by the evaluator from
-the statement's shape rather than stored as first-class AST
-nodes — the same way rc's consumers were implicit, made just
-explicit enough for sort-directed evaluation. There is no
-separate `Binding` sort or `Coterm` sort in the AST; μ̃-binders
-live inside statements as the consumer slot of a cut.
-
-## Foundational refs
-
-- `reference/papers/grokking_sequent_calculus` — Binder et al.
-  introduce the three sorts as the "Core" calculus on the
-  Fun→Core compilation. Cleanest first read. Grokking §"Syntax"
-  (gist ~line 12300) is explicit: "λμμ̃ uses three different
-  syntactic categories: producers p, consumers c and statements
-  s."
-- `reference/papers/dissection_of_l` — Spiwack treats the
-  calculus piece by piece in one-sided System L, with two sorts
-  plus duality on types. psh uses Grokking's two-sided reading
-  instead for the reasons described in §"Concept" above.
-- `docs/vdc-framework.md` §3.1 "Two Sorts: Values and Commands"
-  (line 180) and §3.2 "Cut as Execution" (line 207) — psh's
-  framing in the framework document.
-
-## Spec sites
-
-- `docs/specification.md` §"The three sorts, made explicit" —
-  authoritative.
-- `docs/specification.md` §"Terms (producers) — Γ",
-  §"Coterms (consumers) — Δ", §"Commands (cuts) — ⟨t | e⟩" —
+- **`Command` — Consumer sort (coterm). Command shapess) — ⟨t | e⟩" —
   sort-by-sort treatment.
 - `docs/specification.md` §"The AST's three sorts (plus
   engineering layer)" — the AST-level mapping.

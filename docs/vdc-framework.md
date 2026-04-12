@@ -1,9 +1,13 @@
 # Sequences, Not Strings: Shell Semantics via Sequent Calculus and Virtual Double Categories
 
-> **Status:** Theoretical report presented by Lane at the end of the
-> previous design session. Not yet integrated into `specification.md`.
-> See the corresponding handoff memo for how this report is expected to
-> reframe the live spec.
+> **Status:** Theoretical framework report. Develops the categorical
+> semantics (virtual double categories, sequent calculus reading,
+> composition laws) that `specification.md` draws on but does not
+> reproduce. The spec is the source of truth for psh syntax and
+> resolved design decisions; this document is the source of truth for
+> the underlying categorical argument. Where psh departs from rc, the
+> departure is noted inline. Where this document and the spec disagree,
+> the spec wins.
 
 ## 0. Overview
 
@@ -62,7 +66,7 @@ The no-rescan invariant has direct consequences:
 
 1. **The `$@` vs `$*` distinction is unnecessary.** In the Bourne shell, `$*` joins arguments into a single string, losing boundaries, while `$@` (inside double quotes) attempts to preserve them. This distinction exists only because the Bourne shell lost structure by flattening to a string and needs two different recovery strategies. In rc, `$*` is always a list; there is nothing to recover.
 
-2. **Four kinds of quoting collapse to one.** Bourne's single quotes, double quotes, backticks, and backslash each address a different aspect of the rescanning problem. Rc has apostrophes and nothing else: you quote when you want a syntax character treated literally, and at no other time.
+2. **Four kinds of quoting collapse to one.** Bourne's single quotes, double quotes, backticks, and backslash each address a different aspect of the rescanning problem. Rc has apostrophes and nothing else: you quote when you want a syntax character treated literally, and at no other time. (psh has two string forms — single quotes are literal, double quotes interpolate — but the structural point holds: quoting is syntax, not a rescanning workaround.)
 
 3. **The IFS security hole is eliminated.** Because the Bourne shell's `system()` and `popen()` functions invoke `/bin/sh`, which rescans its input splitting on IFS, an attacker can set `IFS=/` and leave Trojan binaries in the current directory. Rc never rescans, so IFS manipulation cannot alter the parse of a command.
 
@@ -133,6 +137,12 @@ cc -^$flags $stems^.c
 
 This is a notational convenience, but it reveals something structural: the adjacency of tokens in rc source code is itself an operation (concatenation), distinct from whitespace-separation (list formation). Rc distinguishes two modes of combining things — "next to" (`^`, pointwise on elements) versus "alongside" (space, sequential on lists) — and the syntax reflects this.
 
+> **psh departure:** psh reserves `.` for dot accessors (field/method
+> access). `$stem.c` in psh is a dot accessor on `$stem`, not
+> concatenation. The free-caret-before-dot rule does not apply. Use
+> explicit `^` for file extension concatenation: `$stem^.c`. See
+> `docs/syntax.md` §Free carets.
+
 ### 2.4 Command Substitution
 
 Command substitution in rc is a unary operator:
@@ -165,7 +175,7 @@ The rc value domain is:
 - **List formation:** Juxtaposition / parenthesized grouping. This is the free monoid structure.
 - **Pointwise concatenation:** The caret operator `^`. This distributes over lists.
 - **Substitution:** Structural — splices a list into a command without rescanning.
-- **Command substitution:** Runs a command, splits output on `$ifs` once, produces a list. No further rescanning.
+- **Command substitution:** Runs a command, splits output on `$ifs` once (rc) or on newlines (psh), produces a list. No further rescanning. (psh removes `$ifs` entirely — see `docs/specification.md` §rc-isms removed.)
 
 The key invariant: the boundaries between elements of a list are part of the data, not recoverable from the content. Structure is carried, not reconstructed.
 
@@ -284,9 +294,10 @@ The sequent calculus reveals data types and codata types as perfectly dual:
 
 In rc, this duality appears in the distinction between:
 
-- **Arguments** (data): the command receives a list of strings. The list was constructed by the caller. The command must pattern-match on it (e.g., using `switch` on `$#*` to dispatch on argument count).
+- **Arguments** (data): the command receives a list of strings. The list was constructed by the caller. The command must pattern-match on it (e.g., dispatching on argument count).
 
   ```
+  # rc syntax (psh uses match/=> — see docs/syntax.md §match):
   switch($#*){
   case 1
       cat >>$1
@@ -551,6 +562,7 @@ The distribution law for `^` — pairwise when both operands have equal length, 
 **In the shell:** Rc functions are named cells:
 
 ```
+# rc syntax (psh uses `def` — see docs/specification.md §def):
 fn g {
     grep $1 *.[hcyl]
 }
@@ -560,11 +572,17 @@ This defines a cell named `g`. Its top boundary is a sequence of one horizontal 
 
 Function definitions are deleted by writing `fn name` with no body. This removes the named cell from the collection — it does not leave a "null function" behind. Again, the distinction between absence and nullity is maintained.
 
+> **psh departure:** psh uses `def` instead of `fn`. rc's `fn` was a
+> misnomer — it defines a cut template, not a first-class function.
+> `def` names the sort honestly. See `docs/specification.md` §Two
+> kinds of callable.
+
 ### 5.10 Signal Handlers = Cells on Exceptional Arrows
 
 Signal handlers in rc are functions triggered by external events:
 
 ```
+# rc syntax:
 fn sigint {
     rm /tmp/junk
     exit
@@ -572,6 +590,13 @@ fn sigint {
 ```
 
 This defines a cell that runs when the SIGINT horizontal arrow arrives. Because it is a function (parsed at definition time), it is a well-formed cell — its internal structure was checked when it was defined. In the Bourne shell, signal handlers are strings, which means they are horizontal arrows that must be *re-parsed* (cut-eliminated at signal time). This is precisely the violation of Duff's principle: the Bourne shell stores a deferred computation as a flat string rather than as a pre-parsed cell.
+
+> **psh departure:** psh replaces rc's `fn SIGNAL { body }` pattern
+> with a unified `trap` grammar: `trap SIGNAL { handler }` (global),
+> `trap SIGNAL { handler } { body }` (lexical scope), `trap SIGNAL`
+> (deletion). The structural point is unchanged — handlers are
+> pre-parsed cells, not deferred strings — but the syntax is
+> different. See `docs/specification.md` §Unified trap.
 
 ### 5.11 Local Variables = Restricted Cells
 
@@ -616,21 +641,24 @@ A here document is a cell whose top boundary includes a literal data channel —
 
 ### 5.14 The Holmdel Example: A Complete Pasting Diagram
 
-Duff's `holmdel` script is worth examining as a complete worked example. Here is a simplified excerpt:
+Duff's `holmdel` script is worth examining as a complete worked example. Here is a simplified excerpt in rc syntax:
+
+> **psh syntax differs in three places**, annotated with `# psh:`
+> comments below. The pasting diagram analysis applies to both.
 
 ```
 t=/tmp/holmdel$pid
 
-fn read {
+fn read {                        # psh: def read {
     $1='{awk '{print;exit}'}
 }
 
-fn sigexit sigint sigquit sighup {
-    rm -f $t
-    exit
-}
+fn sigexit sigint sigquit sighup {  # psh: separate trap statements
+    rm -f $t                        #   trap SIGEXIT { rm -f $t; exit }
+    exit                            #   trap SIGINT  { rm -f $t; exit }
+}                                   #   etc.
 
-while(){
+while(){                         # psh: while(true) {
     lab='{fortune $t}
     echo $lab
     if(~ $lab Holmdel){
@@ -657,7 +685,7 @@ The pasting diagram of this script is:
 
 5. **The inner loop** `while(read lab; ! grep -i -s $lab $t)` is a compound condition: two cells composed sequentially, with the status of the second determining repetition. The `read` function itself is a cell that captures stdin (a horizontal arrow from the terminal) and binds it to a variable (inserting a new horizontal arrow into the context).
 
-6. **Signal handling:** The `sigexit`/`sigint`/etc. definitions are cells pre-registered on exceptional horizontal arrows. If SIGINT arrives (an exceptional horizontal arrow from the operating system), the registered cell fires: it removes the temp file and exits. Because the handler is a function (a pre-parsed cell), there is no rescanning — the cell's structure was established at definition time.
+6. **Signal handling:** The signal handler definitions are cells pre-registered on exceptional horizontal arrows. If SIGINT arrives (an exceptional horizontal arrow from the operating system), the registered cell fires: it removes the temp file and exits. Because the handler is a pre-parsed cell, there is no rescanning — the cell's structure was established at definition time. (In psh, each signal gets its own `trap` statement rather than rc's multi-signal `fn` form.)
 
 The whole script is a pasting diagram in the virtual double category **Shell**: cells stacked and nested, with horizontal arrows carrying data between them, vertical arrows transforming interfaces (redirections, variable scoping), and the sequence structure of argument lists preserved at every level.
 
@@ -701,7 +729,7 @@ The polarity discipline of the focused sequent calculus maps onto shell semantic
 
 **Negative types** (codata, continuations) correspond to *stream-like* channels. A pipe is not a value — it is a computation that produces data on demand. A file descriptor connected to a running process is negative. It is lazy: its content is determined incrementally as the cut reduces.
 
-**Focusing** is the discipline that determines evaluation order within a command. The static focusing of Downen et al. corresponds to the shell's argument expansion: before a command runs, all its arguments are focused (evaluated to values). This is why rc evaluates `'{ls}` before passing the result to the outer command — command substitution is a focusing step that reduces a negative type (the running `ls` process) to a positive type (the resulting list of filenames).
+**Focusing** is the discipline that determines evaluation order within a command. The static focusing of Binder et al. corresponds to the shell's argument expansion: before a command runs, all its arguments are focused (evaluated to values). This is why rc evaluates `'{ls}` before passing the result to the outer command — command substitution is a focusing step that reduces a negative type (the running `ls` process) to a positive type (the resulting list of filenames).
 
 **The shift connectives** mediate between positive and negative types. In the shell, this is the boundary between "a file as data" (positive — a filename string you can pass as an argument) and "a file as a stream" (negative — an open fd you can read from). The operation of opening a file for reading is a shift from positive to negative; capturing a command's output into a variable is a shift from negative to positive.
 
@@ -718,6 +746,11 @@ The entire framework is designed to preserve and formalize Duff's core insight:
 **eval is the exception that proves the rule** becomes **forcing the Segal condition (computing a composite) is an explicit operation, not a default behavior.** In the virtual double category, most sequences of horizontal arrows do not have composites. Composition must be constructed explicitly. This is the categorical expression of "input is never scanned more than once, except by eval."
 
 ### 6.4 From Rc to a Typed Shell
+
+> **Note:** This section was written as a prospective sketch. psh's
+> spec has since resolved all four items below. The spec is
+> authoritative for the concrete design; this section preserves the
+> categorical motivation.
 
 Rc gets the data model right but does not have a type theory. All horizontal arrows in rc carry the same type (lists of strings). All channels are untyped byte streams. The sequent calculus provides the machinery to refine this:
 
@@ -737,7 +770,7 @@ The virtual double category provides the scaffold for all of this: objects are t
 
 ## 7. Summary of Correspondences
 
-| Rc / Shell concept          | Sequent calculus               | Virtual double category              |
+| Shell concept               | Sequent calculus               | Virtual double category              |
 |-----------------------------|--------------------------------|--------------------------------------|
 | Process interface           | Context (Γ, Δ)                 | Object                               |
 | Argument / file / fd        | Formula (A, B)                 | Horizontal arrow                     |
@@ -745,7 +778,7 @@ The virtual double category provides the scaffold for all of this: objects are t
 | Command execution           | Cut ⟨p \| c⟩                  | Cell                                 |
 | Argument list               | Multi-formula context          | Sequence of horizontal arrows (multi-source) |
 | Pipe `\|`                   | Cut on a single formula        | Cell composition (single slot)       |
-| Command substitution `'{}`  | Operadic substitution          | Cell composition (general)           |
+| Command substitution `` `{} `` | Operadic substitution       | Cell composition (general)           |
 | Variable binding            | μ̃x.s (value capture)          | Naming a horizontal arrow            |
 | Redirection                 | μα.s (continuation capture)    | Vertical arrow / restriction         |
 | `eval`                      | Forced re-parsing              | Forcing the Segal condition          |
@@ -756,13 +789,21 @@ The virtual double category provides the scaffold for all of this: objects are t
 | Positive type (data)        | Constructor-defined type       | Horizontal arrow, positive polarity  |
 | Negative type (codata)      | Destructor-defined type        | Horizontal arrow, negative polarity  |
 | Focusing / arg expansion    | Static focusing                | Evaluation to canonical form         |
-| `fn name { body }`          | Named proof / definition       | Named cell                           |
-| Signal handler              | Cell on exceptional channel    | Cell on distinguished horizontal arrow |
+| `def name { body }`         | Named proof / definition       | Named cell                           |
+| `trap SIGNAL { handler }`   | Cell on exceptional channel    | Cell on distinguished horizontal arrow |
 | Here document               | Literal data in proof          | Cell with embedded constant arrows   |
 | `for(i in list) cmd`        | Iterated cut over list         | Family of cells indexed by sequence  |
-| `switch` / `~`              | Case split on data type        | Cell with branching on constructor   |
+| `match` / `=>`             | Case split on data type        | Cell with branching on constructor   |
 | `^` (caret)                 | (pointwise transformation)     | Vertical arrow acting on sequence    |
 | Local variable              | Scoped binding                 | Restricted horizontal arrow          |
+| `let x = M`                | μ̃x.s (monadic bind, CBPV)    | Value capture into Γ                 |
+| `try { } catch { }`        | Scoped ErrorT                  | Cell with error channel              |
+| `$((…))` arithmetic        | Pure producer (no cut)         | Cell with empty side arrows          |
+| Tuple `(a, b)`             | Product type                   | Horizontal arrow with product structure |
+| Struct `T { x=1; y=2 }`   | Named product                  | Horizontal arrow with labelled fields |
+| Enum variant `ok(v)`       | Coproduct constructor          | Constructor injection into sum       |
+| Coprocess channel           | Binary session type            | Typed horizontal arrow (per-tag session) |
+| `.get` / `.set` discipline | Codata observer / constructor  | MonadicLens in Kl(Ψ)                |
 
 
 ---
@@ -770,9 +811,9 @@ The virtual double category provides the scaffold for all of this: objects are t
 
 ## 8. Composition Laws
 
-The SPEC (ksh26 Theoretical Foundation) identifies three
-composition patterns in shell execution, corresponding to three
-duploid equations. These patterns carry over to any shell built on
+The ksh26 Theoretical Foundation (`refs/ksh93/ksh93-analysis.md`)
+identifies three composition patterns in shell execution,
+corresponding to three duploid equations. These patterns carry over to any shell built on
 the VDC framework and serve as a decision procedure for new
 features.
 
@@ -791,8 +832,15 @@ produces data, the right cell consumes it. Associativity holds:
 same result, because the intermediary is a value (data on a pipe)
 and value composition is associative.
 
-In duploid terms, this is (•) — Kleisli composition. The pipe fd
-is the positive intermediary. Data flows left to right.
+In duploid terms, the *composition structure* is (•) — Kleisli
+composition. The pipe fd is the positive intermediary; data flows
+left to right. Note the distinction: the *execution strategy* is
+demand-driven (operationally co-Kleisli-flavored — `yes | head -1`
+does not evaluate `yes` to completion, because the pipe's blocking
+read is the demand). The Kleisli label describes how the pipeline
+*types* (data on the pipe is a positive intermediary), not how it
+*runs* (demand flows right-to-left). See `docs/specification.md`
+§Pipeline execution for the full disambiguation.
 
 ### 8.2 Sequential composition (○, co-Kleisli/comonadic)
 
@@ -849,7 +897,7 @@ composes g and f through the positive intermediary first, then h
 fires around the result — the positive state is exposed to h.
 
 This is the structural condition underlying the sh.prefix bugs
-documented in SPEC.md: a computation (a DEBUG trap) intruding into
+documented in `refs/ksh93/ksh93-analysis.md`: a computation (a DEBUG trap) intruding into
 a value context (compound assignment), with two possible reduction
 orders yielding different results. The critical pair is not a
 theoretical curiosity — it is the root cause of real interpreter
@@ -862,6 +910,23 @@ This is the operational analog of Curien and Munch-Maccagnoni's
 focused calculus, which eliminates the critical pair syntactically.
 The shell eliminates it operationally, by the same structural means.
 
+> **Dialogue commitment.** psh commits to dialogue-duploid
+> structure [MMM, Definition 9.4] — duploid + involutive
+> negation via a strong monoidal duality functor. This does not
+> restore the (+,−) equation: the non-associativity failure still
+> holds for oblique maps. What dialogue provides is the
+> Hasegawa-Thielecke theorem [MMM, §9.6]: **thunkable ⇔
+> central**. The maps that restore full associativity are exactly
+> the maps that commute with all others under tensor. This
+> equivalence sharpens the boundary between the "safe"
+> subcategory (pure, freely reorderable) and the "unsafe" one
+> (oblique, requiring polarity frames). The ⊗/⅋ De Morgan
+> duality (`¬(A ⊗ B) ≅ ¬A ⅋ ¬B`) is an immediate theorem of
+> dialogue structure; the ⊕/⅋ duality noted in
+> `docs/specification.md` §Error model follows via the
+> L-calculus's additive/multiplicative relationship. See
+> `docs/specification.md` §The semantics for the full commitment.
+
 ### 8.5 Decision procedure for new features
 
 When adding a new feature to a shell built on this framework, the
@@ -870,7 +935,10 @@ implementer should classify the feature by its composition pattern:
 **Purely value-level?** (e.g., new expansion syntax, new string
 operation, new type annotation) → Monadic. Thread through the
 expansion context. No polarity frame needed. The feature composes
-with other value-level operations via (•).
+with other value-level operations via (•). Under the dialogue
+commitment, the purity test has a single criterion: a map is
+purely value-level if and only if it is thunkable, which by the
+Hasegawa-Thielecke theorem is equivalent to being central.
 
 **Purely computation-level?** (e.g., new control flow construct,
 new job control feature) → Comonadic. Save/restore the execution
@@ -1038,10 +1106,25 @@ The contribution of this perspective is not a new shell, but a new way of seeing
 
 ## References
 
-- T. Duff, "Rc — The Plan 9 Shell." Plan 9 Programmer's Manual, Bell Labs.
-- P.-L. Curien and H. Herbelin, "The duality of computation." Proceedings of the Fifth ACM SIGPLAN International Conference on Functional Programming (ICFP), 2000.
-- P.-A. Munch-Maccagnoni, "Focalisation and Classical Realisability." Thesis, Univ. Paris Diderot, 2013. See also "A Dissection of L."
-- D. Downen, Z. Sullivan, Z. Ariola, S. Peyton Jones, "Grokking the Sequent Calculus (Functional Pearl)."
-- G.S.H. Cruttwell and M.A. Shulman, "A unified framework for generalized multicategories." Theory and Applications of Categories 24(21), 2010, pp. 580–655.
-- T. Leinster, "Higher Operads, Higher Categories." London Mathematical Society Lecture Note Series 298, Cambridge University Press, 2004.
-- A. Burroni, "T-catégories (catégories dans un triple)." Cahiers de Topologie et Géométrie Différentielle Catégoriques 12(3), 1971, pp. 215–321.
+All references use canonical keys from `docs/citations.md`. Full
+citations with venue, year, and DOI are in the bibliography.
+
+**Directly cited in this document:**
+
+- `[Duf90]` — Duff, "Rc — The Plan 9 Shell." Founding reference for the entire analysis.
+- `[CH00]` — Curien, Herbelin, "The Duality of Computation." ICFP, 2000. The λμμ̃-calculus.
+- `[Mun13]` — Munch-Maccagnoni, "Syntax and Models of a Non-Associative Composition." Thesis, 2013. Non-associative composition, focusing.
+- `[Spi14]` — Spiwack, "A Dissection of L." 2014. Shift placement, L-calculus analysis.
+- `[BTMO23]` — Binder, Tzschentke, Müller, Ostermann, "Grokking the Sequent Calculus." 2023. Accessible sequent calculus presentation.
+- `[CS10]` — Cruttwell, Shulman, "A unified framework for generalized multicategories." TAC, 2010. Virtual double categories.
+- `[Lei04]` — Leinster, *Higher Operads, Higher Categories.* CUP, 2004. fc-multicategories.
+- `[Bur71]` — Burroni, "T-catégories." 1971. Original multicatégorie structure.
+
+**Cited by the spec for constructs discussed in this document:**
+
+- `[MMM]` — Mangel, Melliès, Munch-Maccagnoni, "Duploids." Composition laws (§8).
+- `[CMM10]` — Curien, Munch-Maccagnoni, "Duality Under Focus." TCS, 2010. Focusing discipline.
+- `[CBG24]` — Clarke, Boisseau, Gibbons, "Profunctor Optics." Compositionality, 2024. MonadicLens structure for discipline functions.
+- `[CMS]` — Carbone, Marin, Schürmann, "Async Multiparty Compatibility." MCutF admissibility for coprocess star topology.
+- `[HVK98]` — Honda, Vasconcelos, Kubo, "Session Types." ESOP, 1998. Binary sessions for coprocesses.
+- `[Lev04]` — Levy, *Call-by-Push-Value.* 2004. CBPV for `let` binding.

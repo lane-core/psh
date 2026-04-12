@@ -193,6 +193,44 @@ Before emitting any non-trivial output, check:
 
 Any unchecked box is a signal to revise before emitting.
 
+## Intermediate state principle
+
+When planning or executing multi-step work — new features,
+refactorings, extractions, migrations — each intermediate state
+must be a natural resting point.
+
+**Litmus test:** would anyone design the intermediate state on
+purpose? If not — if it exists only as a waypoint between two
+coherent designs — combine the steps. A smaller diff is not
+inherently safer. An incoherent intermediate creates
+cross-boundary coherence obligations that exist only
+transiently, and those are strictly harder to reason about than
+either the before-state or the after-state.
+
+**Phasing wins** when each intermediate is a plausible resting
+place — a configuration someone would ship. A protocol stack
+where step 1 = framing (useful without correlation). A
+validation library where step 1 = email (useful standalone).
+
+**Phasing is a trap** when an intermediate creates a coherence
+obligation that neither the before-state nor the after-state
+requires. Building a counter before the collection it counts.
+Implementing error types before the operations that produce
+errors. Extracting a type before the functions that return it.
+
+**Application to agent work:**
+
+1. Before proposing a phased plan, write what the system looks
+   like after each phase — not what changed, what EXISTS.
+2. For each intermediate: "If we stopped here permanently, would
+   this be a reasonable design?" If "no, but the next phase
+   fixes it" — merge the phases.
+3. When agents disagree on ordering, this principle is the
+   tiebreaker. Coherent intermediates win over smaller diffs.
+4. Exception: if a combined step is too large to review or test,
+   splitting is justified — but document the intermediate as
+   intentionally transient and land both steps together.
+
 ## Deliberation rounds
 
 For design decisions requiring multiple agents (e.g., a new
