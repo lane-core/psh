@@ -50,8 +50,10 @@ Concrete consequences:
   level — they can appear inside the list. `let pos : Tuple = (10,
   20)` holds a list of one tuple. `$#pos` is 1. `$pos[0]` is
   `10`.
-- No scalar/list distinction means no `"$var"` quoting ceremony
-  is ever needed. Variables always splice structurally.
+- No scalar/list distinction means no quoting ceremony is ever
+  needed for correctness. Variables always splice structurally.
+  Double quotes are for string interpolation (`"hello $name"`),
+  not for protecting against word splitting.
 
 This is Duff's principle extended across the type system: the
 list structure is carried as data, never destroyed and
@@ -623,11 +625,21 @@ Key syntactic decisions with semantic grounding:
 - **`$((...))` arithmetic** — in-process pure computation
   returning an `Int`. Bare names inside refer to their integer
   values (no `$` needed). Polarity shift ↓→↑ without fork.
-- **Single quotes only for string literals**, with `\`-escapes
-  for literal characters (`\'`, `\$`, `\n` is literal `n`, etc.)
-  and `\<whitespace>` forms as trivia (including line
-  continuation via `\<newline>`). See syntax.md §Backslash
-  escapes.
+- **Two string forms: single and double quotes.** Single quotes
+  are literal (no expansion): `'hello $name'` is the literal
+  text. Double quotes interpolate: `"hello $name"` expands
+  `$name`. Inside double quotes, `$var`, `$var[0]`,
+  `$var .name`, and `` `{cmd} `` are expanded; `\$` escapes
+  the dollar sign. Multi-element lists inside double quotes
+  join with spaces (equivalent to `$"var`). `\`-escapes work
+  in both forms. See syntax.md §Quoting and §Backslash escapes.
+
+  rc rejected double quotes because Bourne's double-quote rules
+  were complex (interpolation of `$`, `` ` ``, `\`, `!` but not
+  globs). psh's expansion model is simpler (no IFS splitting,
+  no glob expansion inside quotes), so the "raft of obscure
+  quoting problems" Duff cited [1, §Design Principles] does
+  not apply.
 
 
 ## Bidirectional type checking
@@ -773,7 +785,7 @@ to pin each parameter type from monomorphic operations in the
 body:
 
     let double = |x| => $((x * 2))    # x pinned to Int by *
-    let greet = |name| => 'hello '$name .upper
+    let greet = |name| => "hello $name .upper"
                                        # name pinned to Str by .upper
 
 Each parameter gets a write-once slot. Operations with
@@ -2078,15 +2090,15 @@ and context check as described above.
 construction:
 
     match ($r) {
-        ok(val)  => echo 'got '$val;
-        err(msg) => echo 'failed: '$msg
+        ok(val)  => echo "got $val";
+        err(msg) => echo "failed: $msg"
     }
 
     match ($c) {
-        success(p)                        => echo 'built: '$p;
-        warning(w)                        => echo 'warning: '$w;
-        error(ErrorInfo { message = msg; line = ln }) => echo 'error: '$msg' at '$ln;
-        error(ErrorInfo { message; line })            => echo 'error: '$message' at '$line
+        success(p)                        => echo "built: $p";
+        warning(w)                        => echo "warning: $w";
+        error(ErrorInfo { message = msg; line = ln }) => echo "error: $msg at $ln";
+        error(ErrorInfo { message; line })            => echo "error: $message at $line"
     }
 
     match ($o) {

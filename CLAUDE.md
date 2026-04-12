@@ -78,9 +78,9 @@ the relevant agent and Lane.
   inside the body.
 - **`$((...))` arithmetic.** In-process pure computation returning
   an `Int`.
-- **Single quotes only for string literals.** With `\`-escapes
-  (`\'`, `\$`, `\\`, etc.) and `\<whitespace>` as trivia (including
-  `\<newline>` for line continuation).
+- **Two string forms.** Single quotes are literal (`'no $expansion'`).
+  Double quotes interpolate (`"hello $name"`). Multi-element lists
+  inside double quotes join with spaces. `\`-escapes in both forms.
 
 ## Quick start
 

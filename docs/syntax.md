@@ -231,7 +231,7 @@ composable.
                 | '{' program '}'   -- block form
 
     let double = |x| => $((x * 2))
-    let greet  = |name| { echo 'hello '$name; return 0 }
+    let greet  = |name| { echo "hello $name"; return 0 }
     let add    = |x| => |y| => $((x + y))    # currying
     let thunk  = | | => echo 'no args'       # nullary
 
@@ -427,8 +427,8 @@ patterns per arm use list syntax: `(*.txt *.md) => body`.
 **Structural matching** on Sum values:
 
     match($result) {
-        ok(val)  => echo 'success: '$val;
-        err(msg) => echo 'error: '$msg
+        ok(val)  => echo "success: $val";
+        err(msg) => echo "error: $msg"
     }
 
 Structural arms use `tag(binding) =>` — the same parens
@@ -445,9 +445,9 @@ immediately after a word.
     try {
         let title = `{ cat /srv/window/title }
         let cursor = `{ cat /srv/window/cursor }
-        echo $title' ['$cursor']'
+        echo "$title [$cursor]"
     } catch (e) {
-        echo 'unavailable: '$e
+        echo "unavailable: $e"
     }
 
 Scoped error handling — ErrorT monad transformer over command
@@ -769,7 +769,12 @@ representation via Display.
     VARNAME     = var_char+
     NAME        = word_char+
     LITERAL     = word_char+
-    QUOTED      = "'" (any | "''")* "'"
+    QUOTED      = SQ_STRING | DQ_STRING
+    SQ_STRING   = "'" (any | "''")* "'"         -- literal, no expansion
+    DQ_STRING   = '"' (dq_char | dq_expand)* '"' -- interpolating
+    dq_char     = any except '$', '`', '"', '\'
+                | '\$' | '\"' | '\\' | '\`'     -- escaped specials
+    dq_expand   = var_ref | cmd_sub              -- $var, $var[0], `{cmd}
 
 **`var_char`** is rc's variable-name alphabet. Used after `$`,
 `$#`, and `$"`. Variable names terminate at the first character
@@ -785,41 +790,55 @@ makes the split explicit and adds `.` to `word_char` (not
 
 ### Quoting
 
-Single quotes only. No double quotes. rc heritage [1,
-§Quotation] for the single-quote convention. psh adds limited
-backslash escape support (see §Backslash escapes).
+Two string forms: single quotes (literal) and double quotes
+(interpolating).
+
+**Single quotes** — no expansion. rc heritage [1, §Quotation].
 
     'hello world'      literal string with space
     'it''s'            produces: it's (rc-compatible doubling)
     'it\'s'            produces: it's (psh extension)
     '$x'               literal $x, no expansion
 
+**Double quotes** — `$var`, `$var[0]`, `$var .name`, and
+`` `{cmd} `` are expanded inside. Multi-element lists join
+with spaces (equivalent to `$"var`). Double-quoted strings
+always produce a single `Str` value.
+
+    "hello $name"              interpolation
+    "path: $HOME/bin"          $HOME expands, /bin is literal
+    "count: $items .length"    accessor expansion
+    "files: `{ls *.txt}"       command substitution
+    "literal \$dollar"         escaped $
+    "she said \"hi\""          escaped quote
+
+rc rejected double quotes because Bourne's double-quote rules
+were complex. psh's expansion model is simpler (no IFS
+splitting, no glob expansion inside quotes), so the Bourne
+problems don't apply.
+
 ### Backslash escapes
 
-psh allows backslash escapes in limited form, both inside and
-outside single-quoted strings.
+psh allows backslash escapes in limited form.
+
+**Outside quotes and inside single quotes:**
 
     \<non-whitespace>    literal escape — produces the character
     \<newline>           line continuation (rc heritage)
-    \<space>, \<tab>     trivia (the whitespace character, backslash stripped)
-
-Specifically:
+    \<space>, \<tab>     trivia (backslash stripped)
 
 - `\\` produces a literal backslash.
 - `\'` inside a single-quoted string produces a literal single
-  quote. This is in addition to rc's `''` convention, which also
-  works.
-- `\$`, `\#`, `\"`, etc. outside quotes produce the literal
-  character, bypassing any interpretation.
-- `\<newline>` at the end of a line continues the line without
-  a terminator. Standard line continuation.
-- `\<space>` and `\<tab>` collapse to the whitespace character
-  alone — the backslash is stripped. This is trivia and has no
-  semantic effect, but is not an error.
+  quote (in addition to rc's `''` doubling, which also works).
+- `\$`, `\#`, etc. outside quotes produce the literal character.
 
-psh does NOT do C-style escape sequences. `\n` is literal `n`
-(the character), not a newline. `\t` is literal `t`. If you need
-a real newline in a string, use a multi-line quoted string.
+**Inside double quotes:** `\$`, `\"`, `\\`, `` \` `` escape
+the interpolation-triggering characters. All other `\X`
+sequences are literal (the backslash and the character).
+
+**No C-style escapes.** `\n` is literal `n` (the character),
+not a newline. `\t` is literal `t`. For a real newline, use a
+multi-line quoted string or a here document.
 
 **Divergence from rc:** rc had no backslash escaping. psh adds
 it as a cleaner alternative to `''` for literal quotes inside
