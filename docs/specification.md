@@ -388,12 +388,10 @@ separate sort: desugared, it is the cut ⟨M | μ̃x.⟨rest | α⟩⟩
 [7, §3.2]. The μ̃-binder is a consumer alternative in Grokking's
 grammar `c ::= α | μ̃x.s | D(p̄;c̄) | case{...}`; it lives
 *inside* a statement as the consumer slot, not alongside the
-statement as a peer sort. Earlier drafts of this spec treated
-`Binding` as a fourth logical sort parallel to `Command`; that
-was a category error. psh synthesizes consumers implicitly from
-the statement's shape rather than storing them as first-class
-nodes — the same way rc's consumers were implicit, made just
-explicit enough for sort-directed evaluation.
+statement as a peer sort. psh synthesizes consumers implicitly
+from the statement's shape rather than storing them as
+first-class nodes — the same way rc's consumers are implicit,
+made just explicit enough for sort-directed evaluation.
 
 The `Expr` sort is an engineering choice, not a logical one —
 it separates the profunctor transformations (redirections,
@@ -684,11 +682,11 @@ expression carries no type information:
     let r = none                         # ERROR: no synth rule for nullary enum constructor; no context
     let r : Option(Str) = none           # OK: annotation provides context
 
-This is rule (a) from the polymorphism deliberation: under-
-determined bindings are rejected at their site rather than
-carried as open obligations. The consequence is a simpler
+Under-determined bindings are rejected at their site rather
+than carried as open obligations. The consequence is a simpler
 checker and clearer errors, at the cost of requiring
-annotations in the narrow cases where synth gives nothing.
+annotations in the narrow cases where synth alone gives
+nothing.
 
 ### Expressions by mode
 
@@ -834,9 +832,9 @@ a statement in `Kl(Ψ)`, and `.set-body` is a statement taking one
 producer argument (the incoming value) and mediating the slot
 write. All three are **destructors** of the codata type; the
 cocase is the sole constructor (the variable *is* its cocase).
-Earlier drafts called `.set` a "constructor"; per [7, §6.3], a
-codata constructor is the whole cocase, and `.set` is a destructor
-with one producer argument.
+Per [7, §6.3], a codata constructor is the whole cocase; `.set`
+is a destructor with one producer argument, not a constructor
+in its own right.
 
 A variable without discipline cells is ordinary data: the stored
 value is what you read, assignment replaces the stored value, and
@@ -1714,17 +1712,6 @@ carries no type-level information at its surface — the nominal
 type must come from context. This is the standard bidirectional
 treatment of check-only expressions.
 
-**Historical note.** An earlier draft of this spec committed to
-positional tagged construction (`Pos(10 20)`) with a "no named
-construction form, now or in the future" rule. That commitment
-has been reversed — brace record literal with named fields is
-the canonical form. The reversal is motivated by (a) the
-consistency of using the same brace/`;`/named-field grammar at
-declaration and construction sites, (b) the "don't lie with
-syntax" principle applied to the structural heterogeneity of
-struct fields, and (c) the bidirectional type checking
-discipline making check-mode record literals a clean fit.
-
 **In VDC terms:** a struct declaration specifies a cell with a
 fixed multi-source signature. `Pos : Int, Int → Pos` says the
 constructor cell has two `Int` horizontal arrows on top and
@@ -1918,19 +1905,6 @@ Cocartesian): `$result .ok .0` is Prism then Lens, returning
 Enums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.
 
-**Historical note.** Earlier drafts of this spec offered only
-four built-in sum tags (`ok`, `err`, `some`, `none`) and
-deferred user-declared enums as future work. That restriction
-has been lifted: users declare their own enums with `enum
-Name(T) { … }`, and the built-in tags are now just the
-variants of two standard-library enums `Result(T, E)` and
-`Option(T)`. Deferring user-declared enums was motivated by
-an over-coupling with parametric polymorphism on function
-signatures; on re-examination, user enums with type
-parameters on the declaration (but monomorphic at function
-signatures) are a small, clean extension that does not
-require function-level polymorphism.
-
 
 ## Features and non-goals
 
@@ -1996,47 +1970,38 @@ serving the focused shell psh is designed to be.
 - **Parametric polymorphism on `def` signatures.** Rank-1
   prenex `∀` at function boundaries — `def map(T, U) : (T ->
   U) -> List(T) -> List(U)` or similar — is not part of the
-  design. The rationale, established by the polymorphism
-  roundtable across five agent seats (vdc-theory, psh-sequent-
-  calculus, psh-optics-theorist, psh-session-type-agent,
-  plan9-systems-engineer), is that function-level
-  polymorphism requires either VETT's hyperdoctrine semantics
-  (which abandons FVDblTT's single-VDC home and in-language
-  protype-isomorphism reasoning) or the unpublished
-  dependent-FVDblTT extension. The rank-1 free-theorem
-  benefit (`∀α. α → α` is uniquely identity) is too weak to
-  justify elaborator complexity, annotation burden, and the
-  categorical commitments required. Init-script robustness
-  is delivered instead by rich ground-typed builtins and the
-  polarity discipline that already carries Reynolds-style
-  parametricity internally at the phase boundary [Sterling-
-  Harper, logical-relations-as-types §4226-4243]. Generic
-  combinators (`map`, `filter`, `fold`) are shell builtins
-  whose types live at the Rust implementation layer and are
-  never surfaced to the shell user. Parametric type
-  *constructors* on type declarations (see Features above)
-  are permitted because they require only monomorphization
-  at use sites, which is structurally different from rank-1
-  prenex `∀` at function signatures. The `type` keyword
-  remains reserved for possible future reconsideration if a
-  concrete shell-level use case emerges that monomorphic
-  ground types cannot serve; the current design commits to
-  the bidirectional ground-type discipline as the ceiling.
+  design. Function-level polymorphism requires either VETT's
+  hyperdoctrine semantics (which abandons FVDblTT's single-
+  VDC home and in-language protype-isomorphism reasoning) or
+  the unpublished dependent-FVDblTT extension. The rank-1
+  free-theorem benefit (`∀α. α → α` is uniquely identity) is
+  too weak to justify elaborator complexity, annotation
+  burden, and the categorical commitments required.
+  Init-script robustness is delivered instead by rich
+  ground-typed builtins and the polarity discipline that
+  already carries Reynolds-style parametricity internally at
+  the phase boundary [Sterling-Harper, logical-relations-as-
+  types §4226-4243]. Generic combinators (`map`, `filter`,
+  `fold`) are shell builtins whose types live at the Rust
+  implementation layer and are never surfaced to the shell
+  user. Parametric type *constructors* on type declarations
+  (see Features above) are permitted because they require
+  only monomorphization at use sites, which is structurally
+  different from rank-1 prenex `∀` at function signatures.
+  The `type` keyword remains reserved in case a concrete
+  shell-level use case ever emerges that monomorphic ground
+  types cannot serve.
 
 - **Typed session channels on pipes.** Pipes are byte
-  streams and remain byte streams permanently. The typed-IPC
-  case is served entirely by coprocesses (§Coprocesses),
-  which have session-type discipline per tag. Typing pipes
-  would force every pipeline stage to commit to a protocol —
-  breaking rc's text-stream pipeline ergonomics and
-  conflating two different IPC mechanisms. The
-  session-type agent confirmed in the polymorphism roundtable
-  that there is no binding site at `|` to pin session types,
-  because pipe producers and consumers are separately
-  compiled processes with no compile-time link. The rc/Plan
-  9 heritage supports the stronger commitment: pipes will
-  remain byte streams, and all typed IPC goes through
-  coprocesses.
+  streams. The typed-IPC case is served entirely by
+  coprocesses (§Coprocesses), which have session-type
+  discipline per tag. Typing pipes would force every pipeline
+  stage to commit to a protocol — breaking rc's text-stream
+  pipeline ergonomics and conflating two different IPC
+  mechanisms. There is no binding site at `|` to pin session
+  types, because pipe producers and consumers are separately
+  compiled processes with no compile-time link. Pipes are
+  byte streams, and typed IPC goes through coprocesses.
 
 - **Refinement session types on coprocess payloads.** Das et
   al. ("Practical Refinement Session Type Inference") prove
@@ -2103,9 +2068,7 @@ in §Discipline functions.
 **Traversing / Applicative** is the Tambara-module class
 corresponding to Clarke's power-series action [Clarke,
 `def:traversal`]. It is the class for van-Laarhoven-style
-traversals `forall f. Applicative f => (a -> f b) -> (s -> f t)`.
-"Monoidal" in earlier drafts was Don't Fear's informal name for
-the same class; Traversing is the Clarke-aligned terminology
+traversals `forall f. Applicative f => (a -> f b) -> (s -> f t)`,
 and matches the Haskell `profunctors` library convention.
 
 **Affine traversal** requires a cartesian-closed base category
