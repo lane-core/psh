@@ -66,6 +66,9 @@ enum Term {
     /// <{cmd} — process substitution (downshift into namespace)
     ProcSub(Ann, Box<Expr>),
 
+    /// %N — job ID (expands to PID of background job N)
+    JobId(Ann, u32),
+
     /// (a b c) — list construction
     List(Ann, Vec<Term>),
 

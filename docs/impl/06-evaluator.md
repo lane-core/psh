@@ -11,6 +11,41 @@ defines the save/restore mechanism for shift boundaries.
 09-redirections.md defines the profunctor composition model
 for redirections.
 
+### Status — the evaluator's return type
+
+Status is `Result(Unit, ExitCode)` — a newtype over
+`Either(Unit, ExitCode)`. At the Rust level, it's a simple
+enum used as the return type of `run_cmd` and `run_expr`.
+It is NOT a `Val` — commands produce Status, not storable
+values.
+
+```rust
+/// Command return type. Result(Unit, ExitCode) realized.
+enum Status {
+    Ok,                                 // ok — success (nullary, Unit payload)
+    Err(ExitCode),                      // err(ExitCode) — failure
+}
+
+struct ExitCode {
+    code: i32,
+    message: SmolStr,                   // optional diagnostic
+}
+
+impl Status {
+    fn ok() -> Self { Status::Ok }
+    fn err(code: i32, msg: &str) -> Self {
+        Status::Err(ExitCode { code, message: msg.into() })
+    }
+    fn is_ok(&self) -> bool { matches!(self, Status::Ok) }
+    fn negate(self) -> Self {
+        match self {
+            Status::Ok => Status::err(1, ""),
+            Status::Err(_) => Status::Ok,
+        }
+    }
+}
+```
+
 ### The Shell struct
 
 All mutable state lives on one struct. No globals.

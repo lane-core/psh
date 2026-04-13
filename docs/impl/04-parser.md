@@ -155,6 +155,40 @@ Top-level: a sequence of commands separated by terminators.
 `full_trivia` (whitespace + comments + line continuations)
 consumed between tokens.
 
+### Syntax particle traits
+
+The parser mirrors the type trait hierarchy (Layer 1) with
+its own trait layer for syntactic objects:
+
+```rust
+trait SyntaxParticle {
+    fn sort(&self) -> SyntaxSort;        // term / command / expr
+}
+
+trait Constructor: SyntaxParticle {
+    fn payload(&self) -> &dyn Ty;
+    fn parent_type(&self) -> TypeName;
+    fn is_nullary(&self) -> bool {       // Unit payload → no parens
+        self.payload().is_unit()
+    }
+}
+
+trait PatternForm: SyntaxParticle {
+    fn bindings(&self) -> &[Binding];
+    fn is_refutable(&self) -> bool;
+}
+```
+
+Parser decisions — "does this constructor need parens?", "is
+this pattern refutable?", "what delimiter separates children?"
+— are trait queries on syntax objects, not name-matching. The
+Unit-nullary rule (e.g., `none` in `Option`) is just
+`Constructor::is_nullary` checking `payload().is_unit()`.
+
+Both layers are populated by Σ registration: a `type` or `enum`
+declaration creates type entries for the checker and constructor
+entries for the parser in one pass.
+
 ### Parser ↔ Σ interface
 
 The parser takes `&Sigma` as a parameter threaded through all
