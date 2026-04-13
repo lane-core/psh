@@ -4,7 +4,7 @@
 
 Crate dependencies, implementation strategy, and engineering
 decisions. Updated as the implementation evolves. Companion to
-`specification.md` (semantics) and `syntax.md` (grammar).
+`docs/spec/` (semantics) and `docs/spec/04-syntax.md` (grammar).
 
 
 ## Dependencies
@@ -59,7 +59,7 @@ not a framework.
 internal plumbing (startup, config loading, signal setup).
 Not used in the hot path (command execution uses `Status`
 directly). anyhow is appropriate here because internal errors
-are diagnostic ("failed to read ~/.psh/env"), not structured
+are diagnostic ("failed to read config"), not structured
 data.
 
 ### Argument parsing
@@ -106,7 +106,7 @@ dependency in a login shell that runs on every terminal open?
     src/
         main.rs     — entry point, argument parsing, REPL loop
         ast.rs      — three-sort AST (Term, Expr, Command)
-        parse.rs    — combine-based parser matching syntax.md
+        parse.rs    — combine-based parser matching docs/spec/04-syntax.md
         check.rs    — bidirectional type checker (~500-900 lines)
         exec.rs     — evaluator (eval_term, run_expr, run_cmd)
         env.rs      — scope chain, variable store, discipline dispatch
@@ -130,7 +130,7 @@ pipeline setup, redirect composition).
 follow them. Read before writing.
 
 **The parser is the grammar.** `parse.rs` should read as a
-transliteration of `syntax.md`. Each production in the grammar
+transliteration of `docs/spec/04-syntax.md`. Each production in the grammar
 maps to a named parser function. When the grammar changes, the
 parser changes to match.
 
@@ -162,9 +162,118 @@ The reentrancy guard for discipline functions is a field on
 `sh.prefix` / `sh_getscope` bugs [SPEC, §The critical pair].
 
 
+## Type representation architecture
+
+The typechecker operates uniformly over all types — ground,
+compound, and newtype — via a trait hierarchy in the Rust
+implementation. This avoids special-casing and makes newtypes
+zero-cost extensions.
+
+### Trait hierarchy
+
+```rust
+trait Type {
+    fn sort(&self) -> Sort;           // positive / negative
+    fn zone(&self) -> Zone;           // classical / affine / linear
+    fn backing(&self) -> Option<&dyn Type>;  // newtype: Some(underlying)
+    fn eq_nominal(&self, other: &dyn Type) -> bool;
+    fn eq_structural(&self, other: &dyn Type) -> bool;
+}
+
+trait Number: Type { }               // arithmetic-capable
+trait Iterable: Type { }             // supports for/map/filter/each/fold
+trait Accessible: Type { }           // supports dot/bracket accessors
+```
+
+Ground types (`Str`, `Int`, `Bool`) implement the relevant
+subtraits directly. Compound types (`List(T)`, `Map(V)`,
+`Tuple`, `Struct`, `Enum`) implement based on their structure.
+Newtypes **inherit subtraits from their backing type** — a
+`type Meters = Int` implements `Number` because `Int` does.
+
+### Newtype representation
+
+A newtype entry in Σ is:
+
+```rust
+struct NewtypeEntry {
+    name: TypeName,
+    params: Vec<TypeParam>,
+    backing: TypeRef,
+    renaming: HashMap<VariantName, VariantName>,  // new => old
+    // reverse map computed once at registration
+    reverse: HashMap<VariantName, VariantName>,   // old => new
+}
+```
+
+The renaming table is static, resolved at parse/elaborate time.
+No runtime cost, no dynamic dispatch. The typechecker consults
+`backing` to verify payloads and `renaming` to map constructor
+names. Trait inheritance is computed once at registration:
+`Meters` checks `Int`'s trait set and inherits it.
+
+### Syntax particle traits
+
+The parser mirrors the type trait hierarchy with its own
+trait layer for syntactic objects:
+
+```rust
+trait SyntaxParticle {
+    fn sort(&self) -> SyntaxSort;        // term / command / expr
+}
+
+trait Constructor: SyntaxParticle {
+    fn payload(&self) -> &dyn Type;
+    fn parent_type(&self) -> TypeName;
+    fn is_nullary(&self) -> bool {       // Unit payload → no parens
+        self.payload().is_unit()
+    }
+}
+
+trait PatternForm: SyntaxParticle {
+    fn bindings(&self) -> &[Binding];
+    fn is_refutable(&self) -> bool;
+}
+```
+
+Parser decisions — "does this constructor need parens?", "is
+this pattern refutable?", "what delimiter separates children?"
+— are trait queries on syntax objects, not name-matching. The
+Unit-nullary rule (e.g., `none` in `Option`) is just
+`Constructor::is_nullary` checking `payload().is_unit()`.
+
+Both layers are populated by Σ registration: a `type` or `enum`
+declaration creates type entries for the checker and constructor
+entries for the parser in one pass.
+
+### Design principle
+
+The `Type` trait exposes what the typechecker needs uniformly:
+equality, sort, zone, backing representation. Subtraits capture
+capability families. The typechecker never asks "is this a
+newtype?" — it asks "does this type implement Number?" and gets
+the right answer regardless of whether the type is direct or
+newtype. This is the implementation-level analogue of the optics
+result: `Adapter ∘ Prism = Prism` — newtypes are transparent
+to capability queries.
+
+### Upper/lower bounds on elaborator complexity
+
+If type inference becomes an albatross, the escape hatch is
+weakening inference by leaning on the namespace system to
+disambiguate. Weaken inference, not the type system.
+
+Features naturally suggested by the type system should stay in
+the design. `set -o` can disable non-essential features for
+performance, but this is not an excuse to make core safety
+features slow and then justify it with an off-switch. Safety
+features achievable within the design goals must be implemented
+well. The default is safe; opting out is conscious and rare.
+
+
 ## References
 
-All citation keys resolve to `docs/citations.md`.
+All citation keys resolve to `docs/spec/references.md`.
 
 - `[Duf90]` — Duff, "Rc — The Plan 9 Shell." 1990.
 - ksh26 Theoretical Foundation: `refs/ksh93/ksh93-analysis.md`

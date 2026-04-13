@@ -35,7 +35,8 @@ Full rationale: serena `policy/citation_workflow`.
 
 David Binder, Marco Tzschentke, Marius Müller, and Klaus
 Ostermann. "Grokking the Sequent Calculus (Functional Pearl)."
-*Haskell Symposium*, 2023. *NEEDS BACKFILL: DOI, page range.*
+*Proc. ACM Program. Lang.* 8, ICFP, pp. 395–425, 2024.
+DOI: [10.1145/3674639](https://doi.org/10.1145/3674639).
 
 **Annotation.** Accessible introduction to the sequent calculus
 and the λμμ̃-calculus with a programming-languages audience in
@@ -66,10 +67,11 @@ explicit.
 
 **Alias:** `[Clarke]`
 
-Matthew Clarke, Guillaume Boisseau, and Jeremy Gibbons.
+Bryce Clarke, Derek Elkins, Jeremy Gibbons, Fosco Loregian,
+Bartosz Milewski, Emily Pillmore, and Mario Román.
 "Profunctor Optics, a Categorical Update."
-*Compositionality*, 2024. *NEEDS BACKFILL: volume, article
-number, DOI.*
+*Compositionality* 6, 2024.
+DOI: [10.32408/compositionality-6-1](https://doi.org/10.32408/compositionality-6-1).
 
 **Annotation.** Primary reference for psh's profunctor optics
 framework. Provides the formal definitions that psh's accessor
@@ -92,7 +94,8 @@ disciplined variable a monadic lens by Clarke's
 Pierre-Louis Curien and Hugo Herbelin. "The Duality of
 Computation." In *Proceedings of the Fifth ACM SIGPLAN
 International Conference on Functional Programming (ICFP)*,
-2000. *NEEDS BACKFILL: page range, DOI.*
+2000, pp. 233–243.
+DOI: [10.1145/351240.351262](https://doi.org/10.1145/351240.351262).
 
 **Annotation.** Foundational paper for psh's type theory. The
 λμμ̃-calculus introduced here provides psh's three-sorted
@@ -107,8 +110,10 @@ directly onto the Curien-Herbelin sorts.
 ### `[CMM10]`
 
 Pierre-Louis Curien and Guillaume Munch-Maccagnoni. "The
-Duality of Computation Under Focus." *Theoretical Computer
-Science*, 2010. *NEEDS BACKFILL: volume, page range, DOI.*
+Duality of Computation Under Focus." In *IFIP TCS 2010:
+Theoretical Computer Science*, IFIP AICT vol 323,
+pp. 165–181, 2010.
+DOI: [10.1007/978-3-642-15240-5_13](https://doi.org/10.1007/978-3-642-15240-5_13).
 
 **Annotation.** Extends CH00 with focusing. psh's CBV focusing
 discipline for discipline function reentrancy (within one
@@ -123,7 +128,8 @@ pair analysis in the spec.
 
 Marco Carbone, Sonia Marin, and Carsten Schürmann. "A Logical
 Interpretation of Asynchronous Multiparty Compatibility."
-*NEEDS BACKFILL: venue, year, DOI.*
+In *LOPSTR 2023*, LNCS 14330, pp. 99–117, 2023.
+DOI: [10.1007/978-3-031-45784-5_7](https://doi.org/10.1007/978-3-031-45784-5_7).
 
 **Annotation.** Proves the MCutF admissibility theorem:
 forwarders subsume classical coherence and capture all
@@ -176,8 +182,8 @@ quoting traces back to this paper.
 Kohei Honda, Vasco T. Vasconcelos, and Makoto Kubo. "Language
 Primitives and Type Discipline for Structured Communication-
 Based Programming." In *ESOP '98: European Symposium on
-Programming*, Springer LNCS, 1998. *NEEDS BACKFILL: volume
-number, page range, DOI.*
+Programming*, LNCS 1381, pp. 122–138, 1998.
+DOI: [10.1007/BFb0053567](https://doi.org/10.1007/BFb0053567).
 
 **Annotation.** Foundational paper for binary session types.
 psh's coprocess protocol uses per-tag binary sessions
@@ -207,8 +213,9 @@ Cruttwell-Shulman.
 ### `[Lev04]`
 
 Paul Blain Levy. *Call-by-Push-Value: A Functional/Imperative
-Synthesis.* Springer, 2004. *NEEDS BACKFILL: series, volume,
-DOI.*
+Synthesis.* Semantics Structures in Computation, vol 2,
+Springer, 2004.
+DOI: [10.1007/978-94-007-0954-6](https://doi.org/10.1007/978-94-007-0954-6).
 
 **Annotation.** psh's `let` binding is the CBPV thunk-force
 discipline: `let x = M` where `M : F(A)` is the μ̃-binder on
@@ -225,9 +232,9 @@ in shell syntax.
 
 Éléonore Mangel, Paul-André Melliès, and Guillaume
 Munch-Maccagnoni. "Classical Notions of Computation and the
-Hasegawa-Thielecke Theorem." *Proceedings of the ACM on
-Programming Languages* (POPL), 2026. *NEEDS BACKFILL: volume,
-article number, DOI.*
+Hasegawa-Thielecke Theorem." *Proc. ACM Program. Lang.* 10,
+POPL, pp. 2112–2141, 2026.
+DOI: [10.1145/3776715](https://doi.org/10.1145/3776715).
 
 **Annotation.** The most load-bearing reference in the project.
 Defines duploids (non-associative categories capturing mixed-
@@ -269,8 +276,9 @@ draws on this thesis alongside [CMM10].
 
 Guillaume Munch-Maccagnoni. "Models of a Non-Associative
 Composition." In *FoSSaCS 2014: Foundations of Software
-Science and Computation Structures*, Springer LNCS, 2014.
-*NEEDS BACKFILL: volume number, page range, DOI.*
+Science and Computation Structures*, LNCS 8412,
+pp. 396–410, 2014.
+DOI: [10.1007/978-3-642-54830-7_26](https://doi.org/10.1007/978-3-642-54830-7_26).
 
 **Annotation.** Conference paper distilling the thesis [Mun13]
 into the non-associativity result. Cited alongside [Mun13]
@@ -283,8 +291,8 @@ laws psh draws on.
 
 **Alias:** `[SPW]`
 
-Arnaud Spiwack. "A Dissection of L." 2014. *NEEDS BACKFILL:
-venue (preprint? workshop?), DOI or stable URL.*
+Arnaud Spiwack. "A Dissection of L." Unpublished preprint,
+2014. URL: https://assert-false.science/arnaud/papers/A%20dissection%20of%20L.pdf
 
 **Annotation.** Analysis of the L-calculus (Levy's
 call-by-push-value in sequent form) that psh's spec cites for
@@ -299,8 +307,8 @@ layer (words) and the computation layer (commands).
 
 Philip Wadler. "Call-by-Value is Dual to Call-by-Name." In
 *Proceedings of the Eighth ACM SIGPLAN International
-Conference on Functional Programming (ICFP)*, 2003. *NEEDS
-BACKFILL: page range, DOI.*
+Conference on Functional Programming (ICFP)*, pp. 189–201,
+2003. DOI: [10.1145/944705.944723](https://doi.org/10.1145/944705.944723).
 
 **Annotation.** Establishes the duality between CBV and CBN
 via the sequent calculus, complementing [CH00]. psh's spec
@@ -334,14 +342,14 @@ conclusions in Δ, classical control via trap/μ-binders).
 
 ## Correspondence to spec references
 
-The spec (`docs/specification.md`) uses its own numbering
+The spec (prior monolithic `docs/specification.md`) used its own numbering
 scheme. This table maps spec reference numbers to bibliography
 keys for cross-referencing during the transition period.
 
 | Spec ref | Bibliography key | Notes |
 |----------|-----------------|-------|
 | `[1]` | `[Duf90]` | |
-| `[2]` | `[MMM]` | NEEDS BACKFILL |
+| `[2]` | `[MMM]` | |
 | `[3]` | `[Mun13]` | |
 | `[4]` | `[Lev04]` | |
 | `[5]` | `[CH00]` | |
@@ -350,7 +358,7 @@ keys for cross-referencing during the transition period.
 | `[8]` | `[CMM10]` | |
 | `[9]` | `[Mun14]` | |
 | `[Honda98]` | `[HVK98]` | |
-| `[CMS]` | `[CMS]` | Key unchanged; NEEDS BACKFILL |
+| `[CMS]` | `[CMS]` | Key unchanged |
 | `[Clarke]` | `[CBG24]` | `[Clarke]` retained as alias |
 | `[SPW]` | `[Spi14]` | `[SPW]` retained as alias |
 | `[CS]` | `[CS10]` | |
@@ -371,19 +379,13 @@ cites them by repo-relative path:
 
 ---
 
-## NEEDS BACKFILL summary
+## Backfill status
 
-The following entries have incomplete metadata that should be
-resolved against the primary source before code cites them:
+All entries resolved (2026-04-13). Corrections applied:
 
-- `[BTMO23]` — DOI, page range
-- `[CBG24]` — volume, article number, DOI
-- `[CH00]` — page range, DOI
-- `[CMM10]` — volume, page range, DOI
-- `[CMS]` — venue, year, DOI
-- `[HVK98]` — LNCS volume number, page range, DOI
-- `[Lev04]` — series, volume, DOI
-- `[MMM]` — venue, year, DOI
-- `[Mun14]` — LNCS volume number, page range, DOI
-- `[Spi14]` — venue classification, DOI or stable URL
-- `[Wad03]` — page range, DOI
+- `[BTMO23]` — venue corrected from "Haskell Symposium, 2023"
+  to "Proc. ACM Program. Lang. 8, ICFP, 2024"
+- `[CBG24]` — authors corrected (7 authors, not 3)
+- `[CMM10]` — venue clarified as IFIP TCS conference, not
+  Elsevier journal
+- `[Spi14]` — confirmed unpublished preprint, no DOI exists

@@ -134,7 +134,7 @@ psh makes two shifts explicit that rc left implicit:
 
 1. **Command substitution without IFS.** psh splits on newlines,
    not on an arbitrary `$ifs`. The return operation (bytes → list)
-   is fixed. Duff kept `$ifs` only because "indispensable" [1,
+   is fixed. Duff kept `$ifs` only because "indispensable" [Duf90,
    §Design Principles]; psh removes it, closing the last re-scanning hole.
 
 2. **Process substitution as downshift into namespace.** rc's

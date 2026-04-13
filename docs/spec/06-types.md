@@ -1,5 +1,169 @@
 # Types
 
+## Ground types
+
+Ground types are the primitive types from which all compound
+types are built. They are positive (value sort), classical
+zone by default (`!A` — freely duplicable and discardable),
+and inert (Clone, no embedded effects). Every ground type is
+a valid list element type under the "every variable is a list"
+model.
+
+### `Str`
+
+The fundamental type. rc's only data type was strings; psh
+retains `Str` as the default element type for untyped
+contexts. String literals use single quotes (`'hello'` —
+literal, no expansion) or double quotes (`"hello $name"` —
+interpolation). The empty string `''` is a valid `Str` value
+and is distinct from an empty list.
+
+**Per-type methods** (registered as `def Str::name { }`):
+`.length`, `.upper`, `.lower`, `.split`, `.strip_prefix`,
+`.strip_suffix`, `.replace`, `.contains`. Partial operations
+return `Option(T)`; predicates return status. These replace
+ksh93's `${var#pat}`/`${var%pat}` parameter expansion with
+typed, fork-free alternatives. See 16-features.md §String
+methods for the full list.
+
+**Sort:** positive. **Zone:** classical (`!Str`). **Optics:**
+`$s.length` is a Getter (read-only, no set-back). Bracket
+access is not defined on Str — use `.split` to decompose.
+
+### `Int`
+
+Arbitrary-precision integer. Produced by `$((...))` arithmetic
+expressions and integer literals. psh does not have a separate
+float type — shell arithmetic is integer arithmetic. Integers
+participate in arithmetic, comparison, and list indexing.
+
+**Sort:** positive. **Zone:** classical (`!Int`).
+
+### `Bool`
+
+Two values: `true` and `false`. Produced by comparison
+operators, predicate methods (`.contains`, etc.), and the
+`test` external command's exit status when captured. `Bool` is
+the type of match guards (`if(expr)`) and conditions.
+
+`Bool` is not the type of command success/failure — that is
+`Status` (see §ExitCode and Status). A command that succeeds
+does not "return true"; it returns `ok`. The distinction
+matters: `Status` is a coproduct (`Result(Unit, ExitCode)`),
+`Bool` is a ground value.
+
+**Sort:** positive. **Zone:** classical (`!Bool`).
+
+### `List(T)`
+
+The foundational compound type. Every variable holds a
+`List(T)` — scalars are length-1 lists. Substitution splices
+lists into argument positions: `cmd $args` with
+`args = (a b c)` expands to `cmd a b c`. This is Duff's
+no-rescan invariant realized as list structure [Duf90].
+
+**Construction:** space-delimited parentheses `(a b c)` or
+bare assignment `let x = val` (wraps in a length-1 list).
+The empty list is `()`.
+
+**Access:** bracket notation `$l[i]` returns `Option(T)` —
+`some(v)` on success, `none` on out-of-bounds. Negative
+indices count from end: `$l[-1]` is the last element. Slice
+`$l[a..b]` returns a sub-list. `$#l` gives the list length.
+
+**Special forms:** `$"l` joins elements with spaces (single
+word). `$l` in argument position splices. These are rc
+heritage [Duf90, §Variables].
+
+**Sort:** positive. **Zone:** classical (`!List(T)`).
+**Optics:** `$l[i]` is an AffineTraversal (0 or 1 hit,
+read-write). `$l[a..b]` is a Fold (read-only). `$#l` is a
+Getter.
+
+### `Map(V)`
+
+Associative array with string keys and homogeneous values.
+Parametric type constructor `Map(V)`. Keys are always strings
+— matching the unanimous convention of bash, zsh, ksh93,
+nushell, and ysh. Integer-keyed collections use lists;
+string-keyed associative lookup uses maps.
+
+**Construction:** brace syntax with colon key-value separator
+and comma delimiter: `let m : Map(Int) = {'name': 1, 'age': 2}`.
+Syntactically distinct from struct record literals (`=` and
+`;`). Also: `Map.empty`, `.insert` builder chains,
+`Map.from_list : List((Str, V)) → Map(V)`.
+
+**Empty `{}` disambiguation.** Non-empty braces are
+unambiguous: `{k: v, ...}` (colon + comma) is a map,
+`{f = v; ...}` (equals + semicolon) is a struct. Empty `{}`
+is ambiguous and resolves via check mode — the expected type
+determines interpretation:
+
+- Expected `Map(V)` → empty map
+- Expected struct type with no required fields → empty struct
+- No expected type → type error (ambiguous, annotation needed)
+
+**Typing rule** (map introduction):
+
+    Γ ⊢ vᵢ : V | Δ    (for each entry 'kᵢ': vᵢ)    [synth]
+    ─────────────────────────────────────────────
+    Γ ⊢ {'k₁': v₁, …, 'kₙ': vₙ} : Map(V) | Δ
+
+**Access:** bracket notation `$m['key']` returns `Option(V)`.
+**Insertion:** `m['key'] = v` on a `let mut` map desugars to
+`m = $m.insert 'key' v` (discipline-transparent).
+
+**Accessors:** `.keys` returns `List(Str)`, `.values` returns
+`List(V)`. Key-indexed view (`$m['key']`) is an
+AffineTraversal; iterate-all-values (`.values`) is a
+Traversal.
+
+**Sort:** positive. **Zone:** classical (`!Map(V)`).
+
+### `Fd`
+
+File descriptor — an opaque handle to a kernel I/O resource.
+`Fd` is the type of open files, pipes, sockets, and any other
+kernel object accessed through the file descriptor table.
+
+Unlike the value types above, `Fd` defaults to the **linear
+zone** (bare `A`, not `!A`) because there is no protocol-level
+cleanup for abandoned file descriptors — a leaked fd is a
+silent resource leak. The type checker requires that an `Fd`
+binding is consumed (closed, passed to a function that consumes
+it, or otherwise used exactly once) on every control-flow path.
+Failure to consume is a type error.
+
+    let fd : Fd = open 'lockfile'     # linear — must be consumed
+    write $fd 'locked'
+    close $fd                          # consumed here
+
+**Explicit `!` promotion** overrides the default:
+`let !fd : Fd = dup $log_fd` — the fd is freely reusable
+because the user has explicitly accepted responsibility for
+its lifecycle. This is the L-calculus promotion rule (A → !A).
+
+**Sort:** positive. **Zone:** linear by default; classical via
+explicit `!` promotion. **Optics:** not an accessor target —
+fds are opaque, not structured.
+
+### `Bytes`
+
+Raw byte sequence. The type of untyped pipe content — when a
+pipe carries no session type annotation, the channel type is
+`!Bytes` (classical, freely duplicable). `Bytes` represents
+the undifferentiated byte stream that kernel pipes provide.
+
+`Bytes` is not a user-facing construction type — there is no
+`Bytes` literal syntax. It exists in the type system to give
+a name to the content of untyped pipes and to serve as the
+target of session-type erasure: collapsing a typed pipe
+`Stream(T)` to an untyped pipe yields `!Bytes`.
+
+**Sort:** positive. **Zone:** classical (`!Bytes`).
+
+
 ## Tuples (products, ×)
 
 Tuples are products — fixed-size heterogeneous containers.
@@ -225,9 +389,9 @@ Struct field access is dot-only, reflecting that struct fields
 are named observers, not indexed projections.
 
 The struct declaration is a batch registration in the per-type
-accessor namespace, equivalent to writing `def Pos.x { }` and
-`def Pos.y { }` by hand. `.fields` and `.values` are
-auto-generated `def Type.fields` and `def Type.values`
+accessor namespace, equivalent to writing `def Pos::x { }` and
+`def Pos::y { }` by hand. `.fields` and `.values` are
+auto-generated `def Type::fields` and `def Type::values`
 methods — computations that produce new lists, not lens
 projections into the struct's storage.
 
@@ -239,7 +403,7 @@ position via `Type::field(value)` (§Syntax, "Type::name()"):
     Pos::fields($p)         # same as $p.fields
 
 The `::` prefix form and the `.` postfix form call the same
-`def Type.name`. Prefix is useful when the accessor is the
+`def Type::name`. Prefix is useful when the accessor is the
 operation rather than the value — e.g., as an argument to
 `map`:
 
@@ -331,14 +495,9 @@ optional payload type, and construction uses tagged form
 
 **Declaration:**
 
-    enum Option(T) {
-        some(T);
-        none
-    }
-
-    enum Result(T, E) {
-        ok(T);
-        err(E)
+    enum Either(A, B) {
+        inl(A);
+        inr(B)
     }
 
     enum CompileResult {
@@ -348,6 +507,37 @@ optional payload type, and construction uses tagged form
     }
 
     struct ErrorInfo { message: Str; line: Int }
+
+`Either(A, B)` is the canonical binary coproduct. Domain-specific
+sum types are newtypes over `Either` (see §Newtypes below).
+
+**Prelude types.** The following are defined in the prelude
+(available before any user code runs):
+
+    struct Unit { }
+
+    enum Either(A, B) { inl(A); inr(B) }
+
+    type Option(T) = Either(T, Unit) renaming {
+        inl => some;
+        inr => none
+    }
+
+    type Result(T, E) = Either(T, E) renaming {
+        inl => ok;
+        inr => err
+    }
+
+`Unit` is a zero-field struct — the canonical unit type. It is
+not a ground type; it is a regular struct declared in the
+prelude. Any zero-field struct satisfies `is_unit()` in the
+type trait hierarchy.
+
+`Option(T)` and `Result(T, E)` are newtypes over `Either`.
+Their constructors (`some`/`none`, `ok`/`err`) are the renamed
+forms of `inl`/`inr`. `none` is nullary because `inr`'s
+payload type is `Unit` — the parser's nullary-constructor rule
+absorbs the Unit argument automatically.
 
 The form is `enum Name(TypeParams) { variant₁(Type₁);
 variant₂(Type₂); …; variantₙ }` where:
@@ -374,10 +564,12 @@ a struct and reference it.
 **Construction** mirrors declaration: tagged form for variants
 with payloads, bare name for nullary variants.
 
-    let r : Result(Int, Str) = ok(42)
-    let r : Result(Int, Str) = err('not found')
-    let o : Option(Path)     = some(/tmp/file)
-    let o : Option(Path)     = none
+    let e : Either(Int, Str) = inl(42)
+    let e : Either(Int, Str) = inr('hello')
+    let r : Result(Int, Str) = ok(42)          # newtype: ok is renamed inl
+    let r : Result(Int, Str) = err('not found') # newtype: err is renamed inr
+    let o : Option(Path)     = some(/tmp/file) # newtype: some is renamed inl
+    let o : Option(Path)     = none            # nullary: inr(Unit) absorbed
     let c : CompileResult    = success(/tmp/a.out)
     let c : CompileResult    = warning('deprecated syntax')
     let c : CompileResult    = error(ErrorInfo { message = 'syntax error'; line = 42 })
@@ -389,10 +581,12 @@ record literal (struct construction). The expected type
 literal via the bidirectional check. Tagged construction and
 brace record literals compose naturally.
 
-**Bare `none` vs parenthesized `none()`.** Nullary variants
-are bare — no parens at construction. `()` is reserved for
-the empty list. `none()` is not valid syntax under this
-rule.
+**Bare nullary variants.** Nullary variants (those whose
+backing payload is a zero-field struct like `Unit`) are bare —
+no parens at construction. `()` is reserved for the empty list.
+`none()` is not valid syntax. The parser checks the backing
+variant's payload type in Σ and omits the argument when the
+payload satisfies `is_unit()`.
 
 **Qualified variant syntax.** Variant names can be qualified
 with their parent type using `::` (Rust convention):
@@ -580,8 +774,8 @@ preview methods:
     $result.err              # some(msg) or none
     $opt.some                # some(v) or none (identity on Option)
 
-These are `def Result.ok`, `def Result.err` etc. — discipline
-functions in the standard per-type namespace, returning
+These are `def Result::ok`, `def Result::err` etc. — per-type
+methods in the type accessor namespace, returning
 `Option(PayloadType)`. They compose naturally with `??`:
 
     $result.ok ?? 'fallback'    # extract ok or default
@@ -656,6 +850,81 @@ effect is explicit and no backtracking occurs.
 
 Enums are positive (value sort), admit all structural rules.
 They are inert data — Clone, no embedded effects.
+
+
+## Newtypes
+
+A newtype creates a nominally distinct type backed by an
+existing type, with optional constructor renaming.
+
+**Declaration:**
+
+    type Result(T, E) = Either(T, E) renaming {
+        inl => ok;
+        inr => err
+    }
+
+    type Meters = Int
+
+The `renaming` clause maps old constructor names (left of `=>`)
+to new names (right of `=>`). Partial renaming is permitted —
+un-renamed constructors keep their original names. The
+`renaming` clause is omitted for newtypes over non-enum types.
+
+**Nominal distinctness.** `Result(Int, Str) ≠ Either(Int, Str)`
+for type-checking purposes. No implicit coercion. Crossing the
+boundary requires explicit match-and-reconstruct. The newtype
+is an isomorphism in the metatheory (Adapter in the profunctor
+hierarchy) but never fires implicitly.
+
+**Typing rule** (introduction, renamed variant):
+
+    type N(Ā) = M(Ā) renaming { …; d => c; … } ∈ Σ
+    enum M(Ā) { …; d(B); … } ∈ Σ
+    Γ ⊢ e : B[τ̄/Ā] | Δ                           [synth-if-pinned]
+    ──────────────────────────────────────────
+    Γ ⊢ c(e) : N(τ̄) | Δ
+
+`Result::ok(42)` synths directly to `Result(Int, E)`. The
+elaborator consults the renaming table in Σ to find `ok => inl`,
+verifies the payload against `Either`'s `inl` variant, and the
+conclusion type is `Result`. The backing `Either` never appears
+in user-facing types.
+
+**Elimination** (pattern matching) uses renamed names:
+
+    match($r) {
+        ok(v)  => echo "success: $v";
+        err(e) => echo "error: $e"
+    }
+
+Exhaustiveness is checked against the underlying enum's variant
+set, but the user writes the newtype's constructor names.
+
+**Nullary constructor rule.** When a renamed variant's backing
+payload type satisfies `is_unit()` (any zero-field struct,
+including `Unit`), the renamed constructor is nullary — no
+parentheses needed. This is how `none` in `Option` works:
+`inr` takes `Unit`, so `none` is bare.
+
+**Newtypes over ground types.** `type Meters = Int` creates a
+distinct type backed by `Int`. Construction requires a type
+annotation: `let d : Meters = 100`. The elaborator checks `100`
+against `Meters`'s backing type `Int`. Newtypes inherit
+capability traits from their backing type — `Meters` implements
+`Number` because `Int` does, so arithmetic works on `Meters`
+values.
+
+**VDC classification:** monadic (§8.5 clause 1). Wrap/unwrap
+are pure positive-to-positive maps, thunkable and central.
+
+**Optic preservation.** `Adapter ∘ Prism = Prism` in the
+profunctor hierarchy. The newtype isomorphism is the identity
+element in the profunctor constraint lattice — all optic laws
+survive. Per-type accessor methods are auto-generated from the
+renaming clause (same mechanism as struct field registration).
+
+**Sort:** declaration (Σ-level, same as `struct` and `enum`).
 
 
 ## Path (component sequences)
@@ -806,9 +1075,10 @@ Status is the return type of every command. It is a genuine
 two-case coproduct (⊕), not a bare integer with an implicit
 predicate:
 
-    Status = Result((), ExitCode)
+    Status = Result(Unit, ExitCode)
 
-- **Success:** `ok(())` — the command succeeded. No payload.
+- **Success:** `ok` — the command succeeded. Nullary (backing
+  payload is Unit).
 - **Failure:** `err(ExitCode)` — the command failed. The
   ExitCode carries the code and optional message.
 

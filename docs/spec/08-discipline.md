@@ -119,9 +119,9 @@ disciplined variable's cocase (§"The codata model"). It runs
 at a step boundary, produces a status, and composes with
 `try`/`catch` and `trap` the same way any other command does.
 The parser's NAME-head dispatch plus the capitalization
-convention (`def Type.method` for per-type methods uppercase;
-`def varname.discipline` for per-variable disciplines
-lowercase) is enough to disambiguate `cursor.refresh` from a
+convention (`def Type::method` with `::` for per-type methods;
+`def varname.discipline` with `.` for per-variable disciplines)
+is enough to disambiguate `cursor.refresh` from a
 per-type method invocation. Users who want the ksh93 "live
 variable" ergonomics wrap the pair in their own function — the
 rc `fn cd` pattern [Duf90, §Functions] applied to discipline

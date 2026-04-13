@@ -4,7 +4,7 @@
 
 ### CBV/CBN split
 
-The CBV/CBN split follows the duploid's two subcategories [2,
+The CBV/CBN split follows the duploid's two subcategories [MMM,
 §2.1]. Word expansion is Kleisli composition: each stage
 (`$x` lookup, concatenation, command substitution) takes a
 partial value and produces an expanded value with possible

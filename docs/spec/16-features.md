@@ -14,57 +14,11 @@ psh's type system beyond what rc had. Each is in the design;
 full spec sections will be added or refined as the design
 stabilizes.
 
-- **Map type** — associative arrays with O(1) lookup.
-  Parametric type constructor `Map(V)`. Keys are always
-  strings — matching the unanimous convention of bash, zsh,
-  ksh93, nushell, and ysh. Integer-keyed collections use
-  lists; string-keyed associative lookup uses maps.
-
-  **Construction** has three paths:
-
-  *Map literal* — brace syntax with colon key-value separator
-  and comma delimiter, syntactically distinct from struct
-  record literals (`=` and `;`):
-
-      let m : Map(Int) = {'name': 1, 'age': 2}
-
-  Map literals can synthesize their type from entries
-  (value types must agree). Empty `{}` is [check] — the
-  expected type resolves whether it is an empty map or an
-  empty struct.
-
-  **Typing rule** (map introduction):
-
-      Γ ⊢ vᵢ : V | Δ    (for each entry 'kᵢ': vᵢ)    [synth]
-      ─────────────────────────────────────────────
-      Γ ⊢ {'k₁': v₁, …, 'kₙ': vₙ} : Map(V) | Δ
-
-  *Builder chain* — `.insert` is a pure functional update
-  method on Map values (distinct from the discipline `.set`
-  on variables), returning a new Map:
-
-      let m : Map(Int) = Map.empty .insert 'name' 1 .insert 'age' 2
-
-  *Bulk constructor* — `Map.from_list : List((Str, V)) → Map(V)`
-  constructs from a list of key-value tuples:
-
-      let pairs = (('name', 1) ('age', 2))
-      let m : Map(Int) = Map.from_list $pairs
-
-  **Access** uses bracket notation — `$m['key']` returns
-  `Option(V)` (`some(v)` or `none`). Inside brackets is
-  expression context (never glob); the index expression must
-  be of type `Str`. **Insertion** via assignment —
-  `m['key'] = v` on a `let mut` map desugars to
-  `m = $m.insert 'key' v` (discipline-transparent).
-
-  **Accessors:** `.keys` returns `List(Str)`, `.values`
-  returns `List(V)`. Key-indexed view (`$m['key']`) is an
-  affine traversal; iterate-all-values (`.values`) is a
-  traversal.
+- **Map type** — associative arrays with string keys, O(1)
+  lookup. Full specification in 06-types.md §Map(V).
 
 - **String methods on `Str`** — fork-free string operations
-  registered as `def Str.name { }` accessor methods. `.length`,
+  registered as `def Str::name { }` accessor methods. `.length`,
   `.upper`, `.lower`, `.split`, `.strip_prefix`,
   `.strip_suffix`, `.replace`, `.contains`. Partial operations
   return `Option(T)`; predicates return status. Replaces
@@ -175,13 +129,16 @@ stabilizes.
   back to untyped (`!Bytes` — classical byte stream).
 
   **Subsumption.** A def with a typed output can always be
-  piped to an untyped consumer — the session structure is
-  forgotten via `!`-promotion (the L-calculus dereliction
-  `!A → A` applied to the stream type, collapsing the protocol
-  to a classical byte stream). The reverse direction — untyped
+  piped to an untyped consumer. The session structure is
+  erased (`Stream(T) → Bytes`) and the result promoted to the
+  classical zone (`Bytes → !Bytes` via the L-calculus promotion
+  rule `A → !A`), collapsing the protocol to a classical byte
+  stream. The promotion is justified because an untyped byte
+  stream has no protocol obligations — nothing to violate by
+  duplication or discard. The reverse direction — untyped
   producer to typed consumer — requires an explicit parsing
   boundary (a `def` that reads bytes and produces typed values),
-  because promoting `!Bytes` to `Stream(T)` requires runtime
+  because lifting `!Bytes` to `Stream(T)` requires runtime
   verification that the byte stream conforms to T.
 
   **Deadlock freedom.** Unidirectional `Stream(T)` is
@@ -335,6 +292,18 @@ serving the focused shell psh is designed to be.
   on `def` signatures is itself a non-goal (see above).
   Typed pipes compose with the existing monomorphic type
   system; they do not require or introduce type variables.
+
+### Rejected features (heritage deviations)
+
+- **`select` loop.** POSIX/ksh93's `select` prints a numbered
+  menu to stderr, reads a choice, sets a variable, loops until
+  `break`. psh's `menu` builtin supersedes it: typed
+  `MenuResult(T)` return instead of string-in-variable,
+  explicit cancellation tag instead of EOF, single-shot
+  instead of implicit loop. `select`'s untyped looping model
+  is the pattern psh's type system exists to improve on.
+  `select` is not reserved — the word is available for user
+  definitions.
 
 ### Reserved keywords
 

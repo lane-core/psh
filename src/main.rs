@@ -3,7 +3,7 @@
 //! rc heritage, ksh93 discipline functions, VDC-grounded internals.
 //!
 //! The prior implementation was retired during the VDC reframing
-//! (see docs/specification.md and docs/vdc-framework.md). This
+//! (see docs/spec/ and docs/vdc-framework.md). This
 //! binary is currently a stub that reports the status and exits;
 //! the parser infrastructure lives in parse.rs and the signal
 //! self-pipe lives in signal.rs, ready for the next implementation
@@ -32,7 +32,7 @@ fn main() {
     eprintln!(
         "psh: not yet implemented — the prior grammar, AST, and \
          evaluator were retired during the VDC reframing. See \
-         docs/specification.md for the current design."
+         docs/spec/ for the current design."
     );
     std::process::exit(2);
 }

@@ -26,8 +26,8 @@ Status
 ------
 
 **Design complete, implementation not yet started.** The
-specification and grammar are at `docs/specification.md` and
-`docs/syntax.md`. The source tree is a stub.
+specification lives in `docs/spec/` (start at `docs/spec/index.md`).
+The source tree is a stub.
 
 Requirements
 ------------

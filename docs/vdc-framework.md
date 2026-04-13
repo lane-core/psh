@@ -2,7 +2,7 @@
 
 > **Status:** Theoretical framework report. Develops the categorical
 > semantics (virtual double categories, sequent calculus reading,
-> composition laws) that `specification.md` draws on but does not
+> composition laws) that `docs/spec/` draws on but does not
 > reproduce. The spec is the source of truth for psh syntax and
 > resolved design decisions; this document is the source of truth for
 > the underlying categorical argument. Where psh departs from rc, the
@@ -297,7 +297,7 @@ In rc, this duality appears in the distinction between:
 - **Arguments** (data): the command receives a list of strings. The list was constructed by the caller. The command must pattern-match on it (e.g., dispatching on argument count).
 
   ```
-  # rc syntax (psh uses match/=> — see docs/syntax.md §match):
+  # rc syntax (psh uses match/=> — see docs/spec/04-syntax.md §match):
   switch($#*){
   case 1
       cat >>$1
@@ -562,7 +562,7 @@ The distribution law for `^` — pairwise when both operands have equal length, 
 **In the shell:** Rc functions are named cells:
 
 ```
-# rc syntax (psh uses `def` — see docs/specification.md §def):
+# rc syntax (psh uses `def` — see docs/spec/07-callables.md):
 fn g {
     grep $1 *.[hcyl]
 }
@@ -1106,7 +1106,7 @@ The contribution of this perspective is not a new shell, but a new way of seeing
 
 ## References
 
-All references use canonical keys from `docs/citations.md`. Full
+All references use canonical keys from `docs/spec/references.md`. Full
 citations with venue, year, and DOI are in the bibliography.
 
 **Directly cited in this document:**

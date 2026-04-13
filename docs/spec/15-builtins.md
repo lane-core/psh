@@ -62,7 +62,7 @@ Updates `$PWD` and `$OLDPWD` on success. Failure (directory
 doesn't exist, permission denied) returns nonzero ExitCode.
 
 rc heritage [Duf90, rc(1) §Built-in commands]: "Change the
-current directory to dir. The default argument is `$home`.
+current directory to dir. The default argument is `$HOME`.
 `$cdpath` is searched."
 
 ### `pwd`
@@ -312,9 +312,11 @@ second is the value returned in `selected(T)`.
 
 **ksh93 heritage.** ksh93's `select` statement (sh.1 §Compound
 Commands) is the closest ancestor — it prints a numbered menu,
-reads a reply, sets a variable. `menu` is a strict upgrade:
+reads a reply, sets a variable. `menu` supersedes `select`:
 typed return instead of string-in-variable, cancellation as a
 distinct tag instead of EOF, style hints for richer hosts.
+psh does not provide `select` — `menu` covers all its use
+cases with better types.
 
 **VDC classification:** monadic (§8.5 clause 1). Positive
 input (List(T)) → positive output (MenuResult(T)) through an
@@ -328,24 +330,6 @@ recover the original list). No prism laws apply. `menu` is a
 unidirectional effectful selection, not a bidirectional
 decomposition.
 
-### `select`
-
-    select name [in word...] { body }
-
-POSIX/ksh93-compatible `select` loop. Prints a numbered menu
-to stderr, reads a number from stdin, sets `$name` to the
-chosen word and `$REPLY` to the raw input. Loops until `break`
-or EOF.
-
-    select color in red green blue {
-        echo "you picked $color"
-        break
-    }
-
-`select` is the simple, non-interactive-host form. Use `menu`
-for styled selection with typed returns. `select` exists for
-POSIX familiarity and for cases where a numbered list on
-stderr is sufficient.
 
 
 ## Positional parameters
@@ -644,6 +628,25 @@ the last iteration.
 `each` exists for the pipeline case where the list arrives
 on stdin.
 
+### `fold`
+
+    fold init { |acc x| => body } $list
+    fold init { |acc x| => body }            # reads from stdin
+
+Accumulate across elements. `init` is the initial accumulator
+value. The body is a lambda that receives the current
+accumulator and the next element; its stdout becomes the new
+accumulator value (capture-by-stdout, same convention as `map`).
+Returns the final accumulator.
+
+    let total = fold 0 { |acc n| => echo $(( acc + n )) } $numbers
+    let csv = fold '' { |acc s| =>
+        if(test -z $acc) { echo $s } else { echo "$acc,$s" }
+    } $fields
+
+`fold` is the general form; `each` is side-effect-only (no
+accumulator), `map` is one-to-one (no cross-element state).
+
 
 ## Summary by priority
 
@@ -656,9 +659,9 @@ on stdin.
 
 `printf`, `eval`, `shift`, `wait`, `kill`, `fg`, `bg`, `jobs`,
 `break`, `continue`, `command`, `builtin`, `whatis`, `pwd`,
-`unset`, `unexport`, `fc`, `filter`, `map`, `each`, `menu`.
+`unset`, `unexport`, `fc`, `filter`, `map`, `each`, `fold`,
+`menu`.
 
 ### Operational (robustness)
 
-`disown`, `umask`, `ulimit`, `hash`, `times`, `complete`,
-`select`.
+`disown`, `umask`, `ulimit`, `hash`, `times`, `complete`.

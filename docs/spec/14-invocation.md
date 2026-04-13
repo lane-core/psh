@@ -561,7 +561,7 @@ The shell completes the following without user configuration:
 | Argument position | File paths | Filesystem traversal |
 | After `$` | Variable names | Current scope |
 | After `$name.` | Named accessors | Per-type accessor namespace (struct fields, enum previews, string methods) |
-| After `def Name.` | Type method names | Per-type accessor namespace |
+| After `def Name::` | Type method names | Per-type accessor namespace |
 | Inside `match` arms | Enum variant names | Declared variants of the scrutinee's type |
 
 ### Path completion

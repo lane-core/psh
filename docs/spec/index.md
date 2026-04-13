@@ -17,7 +17,7 @@ else can be read as needed.
 | 03 | [Polarity](03-polarity.md) | CBV/CBN, polarity frames, linear resources, exponentials |
 | 04 | [Syntax](04-syntax.md) | Formal grammar — the implementer's contract |
 | 05 | [Type checking](05-type-checking.md) | Bidirectional checking, modes, pinning |
-| 06 | [Types](06-types.md) | Ground types, tuples, structs, enums, Path, ExitCode |
+| 06 | [Types](06-types.md) | Ground types (Str, Int, Bool, List, Map, Fd, Bytes), tuples, structs, enums, newtypes, Path, ExitCode, Stream(T) |
 | 07 | [Callables](07-callables.md) | `def` vs `let`+lambda, two kinds of callable |
 | 08 | [Discipline functions](08-discipline.md) | Codata model, .get/.refresh/.set, MonadicLens |
 | 09 | [Redirections](09-redirections.md) | Profunctor structure, word expansion pipeline |
@@ -25,8 +25,8 @@ else can be read as needed.
 | 11 | [Namespace](11-namespace.md) | Three tiers, export, environment |
 | 12 | [Error handling](12-errors.md) | ⊕/⅋, Status/ExitCode, try/catch, trap, signals |
 | 13 | [Optics](13-optics.md) | Accessor taxonomy, activation table |
-| 14 | [Invocation](14-invocation.md) | Startup, flags, profile sourcing *(stub)* |
-| 15 | [Builtins](15-builtins.md) | Builtin reference *(stub)* |
+| 14 | [Invocation](14-invocation.md) | Startup, flags, profile sourcing, history, completion, configuration |
+| 15 | [Builtins](15-builtins.md) | Builtin reference |
 | 16 | [Features](16-features.md) | Features, non-goals, reserved keywords |
 
 ## Annotated bibliography

@@ -22,7 +22,7 @@ handling [BTMO23, §"Linear Logic and the Duality of Exceptions"]:
   `case{Inl(x) ⇒ s₁, Inr(y) ⇒ s₂}`. The caller inspects the
   tag. Rust's `Result<T, E>` and Haskell's `Either` are this
   shape. **psh's Status is ⊕**: every command returns a
-  tagged value `ok(()) | err(ExitCode)`, and
+  tagged value `ok | err(ExitCode)`, and
   `try { body } catch (e) { handler }` is the coproduct
   elimination — `e : ExitCode` binds the error payload.
 
@@ -77,7 +77,7 @@ by block count:
 
 **Lexical** (two blocks): `trap SIGNAL { handler } { body }`
 — installs the handler for the duration of the body, the
-μ-binder of Curien-Herbelin [5, §2.1]. The handler captures a
+μ-binder of Curien-Herbelin [CH00, §2.1]. The handler captures a
 signal continuation scoped to the body. Inner lexical traps
 shadow outer for the same signal. The handler may `return N`
 to abort the body with status N.

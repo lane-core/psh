@@ -3,21 +3,21 @@
 ## Syntax
 
 The formal grammar and all syntactic decisions are in
-`docs/syntax.md`. This section summarizes the design rationale
+`04-syntax.md`. This section summarizes the design rationale
 that connects syntax to semantics.
 
 rc's actual syntax is the baseline. Every convention from rc
 is preserved unless explicitly departed from with justification.
-The formal grammar in syntax.md annotates each production with
-its rc heritage or extension rationale.
+The formal grammar in 04-syntax.md annotates each production
+with its rc heritage or extension rationale.
 
 Key syntactic decisions with semantic grounding:
 
 - **`def` instead of `fn`** for command definitions. rc's `fn`
   was a misnomer — it defines a cut template, not a function.
   `def` names the sort honestly. Type/variable disambiguation
-  in dotted names (`def List.length { }` vs `def x.set { }`) is
-  by capitalization. See §Two kinds of callable.
+  in `def` names (`def List::length { }` vs `def x.set { }`) is
+  by `::` vs `.`. See §Two kinds of callable.
 - **`let` + lambda for functions.** Values in the value sort,
   first-class, with capture semantics. Lambdas use `|x| => expr`
   or `|x| { block }`; nullary is `| | => expr`. `let` is CBPV's
@@ -76,7 +76,7 @@ Key syntactic decisions with semantic grounding:
   the variable reference inside double quotes, matching the
   `var_char` boundary). Multi-element lists inside double
   quotes join with spaces (equivalent to `$"var`). `\`-escapes
-  work in both forms. See syntax.md §Quoting and §Backslash
+  work in both forms. See 04-syntax.md §Quoting and §Backslash
   escapes.
 
   rc rejected double quotes because Bourne's double-quote rules

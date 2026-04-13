@@ -1,7 +1,7 @@
 # Syntax
 
 Formal grammar for psh. Starts from rc (Duff 1990) and names
-each extension. Theoretical foundation: `docs/specification.md`.
+each extension. Theoretical foundation: `docs/spec/`.
 
 rc reference: `refs/plan9/man/1/rc` and
 `refs/plan9/papers/rc.ms`.
@@ -63,7 +63,7 @@ flow construct, or an expression.
 ## Bindings
 
 Bindings extend the context Γ with a new name. They are
-μ̃-binders in the sequent calculus reading (specification.md
+μ̃-binders in the sequent calculus reading (02-calculus.md
 §The three sorts).
 
     binding     = assignment | let_binding | def_binding
@@ -150,7 +150,7 @@ by default. Runs type inference from the computed value: `42`
 type annotation constrains the element type of the list.
 
 Under the "every variable is a list" model (see
-specification.md §Foundational commitment), a scalar binding
+01-foundations.md §Foundational commitment), a scalar binding
 like `let x = 42` is sugar for `let x = (42)` — a list of one
 Int. Type annotations refer to the element type, not the list
 length.
@@ -216,14 +216,14 @@ cocase. `.get` is the pure observer; `.refresh` is the effectful
 updater, invoked imperatively as `x.refresh`; `.set` is the
 mutator, fired on assignment. Dotted-name convention is ksh93
 heritage; the three-discipline codata model is psh's
-formalization. See specification.md §Discipline functions for
-the full semantics.
+formalization. See 08-discipline.md for the full semantics.
 
 Type name vs variable name in `def` is disambiguated by
 **capitalization**: `def x.set { }` (lowercase `x`) is a
-discipline function on variable `x`; `def List.length { }`
-(uppercase `List`) is a method on the `List` type. Parser
-inspects the first character before the dot.
+discipline function on variable `x`; `def List::length { }`
+(uppercase `List` with `::`) is a method on the `List` type.
+`.` in `def` always means variable discipline; `::` in `def`
+always means type method.
 
 ### ref
 
@@ -247,11 +247,11 @@ composable.
     let add    = |x| => |y| => $((x + y))    # currying
     let thunk  = | | => echo 'no args'       # nullary
 
-In CBPV terms [4], a lambda is `U(A₁ → ... → Aₙ → F(B))`
+In CBPV terms [Lev04], a lambda is `U(A₁ → ... → Aₙ → F(B))`
 when impure, or `U(A₁ → ... → Aₙ → B)` when pure. The `U`
 (thunk) wraps a computation as a value. The distinction between
 `def` and `let` + lambda is the CBPV value/computation boundary
-surfaced as syntax. See specification.md §Two kinds of callable.
+surfaced as syntax. See 07-callables.md.
 
 The `|...|` parameter delimiter is unambiguous in value position:
 `|` in command position is a shell pipe, but a lambda only appears
@@ -270,8 +270,8 @@ AST analysis: if the body contains no assignments to variables
 outside the lambda's scope, no fork/exec, no side-effecting
 builtins, no I/O, no coprocess interaction — the lambda is
 classified pure. Pure lambdas are thunkable/central in the
-duploid [9, Table 1]. Impure lambdas work but degrade
-to oblique maps. See specification.md §Two kinds of callable.
+duploid [Mun14, Table 1]. Impure lambdas work but degrade
+to oblique maps. See 07-callables.md.
 
 ### Discipline functions
 
@@ -314,9 +314,9 @@ slot write (it bypasses the cocase). Pure `.get` needs no
 polarity frame — there is no polarity crossing and nothing to
 reenter.
 
-See specification.md §Discipline functions for the full
-semantics, the mixed monadic lens structure, and the heritage
-rationale for the observation/refresh split.
+See 08-discipline.md for the full semantics, the mixed monadic
+lens structure, and the heritage rationale for the
+observation/refresh split.
 
 
 ## Control flow
@@ -337,7 +337,7 @@ a braced block or `=>` single-line form.
     try_cmd     = 'try' body 'catch' '(' NAME ')' body    -- NAME : ExitCode (⊕ elimination)
     trap_cmd    = 'trap' SIGNAL (body body?)?
 
-    match_arm   = pattern ('|' pattern)* guard? '=>' lambda_body
+    match_arm   = pattern+ guard? '=>' lambda_body
     guard       = 'if' '(' expr ')'       -- pure expression only (no effects)
     pattern     = glob_pat | structural_pat | literal_pat | wildcard_pat
 
@@ -378,7 +378,7 @@ this convention.
 
 **`else` instead of `if not`.** Duff acknowledged: "The one
 bit of large-scale syntax that Bourne unquestionably does
-better than rc is the if statement with else clause" [1,
+better than rc is the if statement with else clause" [Duf90,
 §Design Principles]. rc's `if not` was a separate command reading
 `$status` implicitly — a state dependency. psh's `else` is a
 syntactic clause of the `if` node.
@@ -445,8 +445,8 @@ patterns, and daemons.
 
     # Multi-pattern arm
     match($ext) {
-        (c h) => echo 'C source';
-        (rs toml) => echo 'Rust';
+        *.c *.h => echo 'C source';
+        *.rs *.toml => echo 'Rust';
         * => echo 'unknown'
     }
 
@@ -462,7 +462,7 @@ elimination.
 
 Match arms use `=>` to introduce the body and `;` to
 separate. Each arm is an independent branch. Multiple
-patterns per arm use list syntax: `(*.txt *.md) => body`.
+patterns per arm are space-separated: `*.txt *.md => body`.
 
 **Structural matching** on Sum values:
 
@@ -507,8 +507,7 @@ conditions, `&&`/`||` LHS, `!` commands are not checked.
 
 `try` blocks nest: inner catches before outer.
 
-See specification.md §Error model for the full semantic
-analysis.
+See 12-errors.md for the full semantic analysis.
 
 ### trap
 
@@ -524,7 +523,7 @@ bodies:
 
 Installs the handler for the duration of the body. When the
 body exits, the handler is uninstalled. This is the μ-binder
-of the sequent calculus [5, §2.1] — the handler captures a
+of the sequent calculus [CH00, §2.1] — the handler captures a
 signal continuation, scoped to the body. Inner lexical traps
 shadow outer ones for the same signal. The handler may `return
 N` to abort the body with status N.
@@ -560,10 +559,10 @@ signal for the relevant scope.
 
 They compose freely: `try` inside `trap`, `trap` inside `try`.
 
-See specification.md §Error model for the full operational
-model, including signal delivery at interpreter step
-boundaries (wake-from-block during child waits) and the four
-cases of signal interaction with try blocks.
+See 12-errors.md for the full operational model, including
+signal delivery at interpreter step boundaries (wake-from-block
+during child waits) and the four cases of signal interaction
+with try blocks.
 
 ### set
 
@@ -598,8 +597,7 @@ and the change dies with the subshell.
 The `exit` command produces an ExitCode value. The numeric
 code is required for non-default exit. The message string is
 optional — builtins populate it; external commands and bare
-`exit N` leave it empty. See specification.md §ExitCode and
-Status.
+`exit N` leave it empty. See 06-types.md §ExitCode and Status.
 
 
 ## Expressions
@@ -711,7 +709,7 @@ RHS is lazily evaluated. Sugar for
 `match(M) { some(x) => x; none => N }`.
 
 **Path literals.** Filesystem paths are parsed into component
-sequences at parse time (specification.md §Path). The leading
+sequences at parse time (06-types.md §Path). The leading
 `/`, `./`, or `../` commits the parser to a path literal;
 internal `/`s are component separators, not content.
 
@@ -788,17 +786,17 @@ under one syntax:
 
     Result::ok(42)           # enum variant construction
     Result::err('fail')      # enum variant construction
-    Str::upper($s)           # per-type method (def Str.upper)
+    Str::upper($s)           # per-type method (def Str::upper)
     Pos::x($point)           # struct field accessor as function
     MenuResult::cancelled    # nullary variant (no parens)
 
 Resolution: `TYPENAME::name` checks (1) enum variants of
-TYPENAME in Σ, then (2) `def TYPENAME.name` in Θ. Variants
+TYPENAME in Σ, then (2) `def TYPENAME::name` in Θ. Variants
 take precedence — a type cannot be both enum and struct, so
 no real ambiguity arises.
 
 The `::` prefix form and the `.` postfix form call the same
-underlying `def Type.name`. The difference is syntactic
+underlying `def Type::name`. The difference is syntactic
 position:
 
     $s.upper                 # postfix — accessor on a value
@@ -865,17 +863,17 @@ Bracket and dot compose freely: `$t[0].name` is Lens ∘ Lens
 = Lens. `$m['key'].name` is AffineTraversal ∘ Lens =
 AffineTraversal. `$s.field[0]` is Lens ∘ Lens = Lens.
 
-The dot accessor namespace is per-type. `def Type.name { }`
-registers a new accessor on a type. Capitalization
-disambiguates type methods (`def List.length { }`) from
-discipline functions (`def x.set { }`).
+The dot accessor namespace is per-type. `def Type::name { }`
+registers a new accessor on a type. `::` in `def` is for
+type methods (`def List::length { }`); `.` in `def` is for
+variable discipline functions (`def x.set { }`).
 
 **No `[*]` or `[@]` inside brackets.** psh does not adopt
 ksh93's all-elements subscript forms. `$a` already gives the
 whole list (every variable is a list).
 
-See specification.md §Tuples, §Structs, §Map type, and
-§Optics activation for the full typing rules.
+See 06-types.md §Tuples, §Structs, §Map type, and
+13-optics.md for the full typing rules.
 
 ### Arithmetic (`$((...))`)
 
@@ -1025,11 +1023,11 @@ recognized; everything else is a parse error.
 
 ### Tilde expansion
 
-`~` is not a word character. It expands to `$home`:
+`~` is not a word character. It expands to `$HOME`:
 
-- **`~/path`** — expands to `$home/path`. The `~` must be at
+- **`~/path`** — expands to `$HOME/path`. The `~` must be at
   word start, immediately followed by `/`.
-- **Bare `~`** — expands to `$home`.
+- **Bare `~`** — expands to `$HOME`.
 
 **Divergence from rc:** rc treated `~` as a keyword for pattern
 matching and had no tilde expansion. psh separates the two:
@@ -1084,7 +1082,7 @@ accessors in interpolation context (bare `"$name.txt"` treats
     $x['key']         map lookup by key (AffineTraversal)
     $x.name           named accessor (struct field or type method)
 
-rc heritage for `$x`, `$#x`, `$"x`, and `${name}` [1,
+rc heritage for `$x`, `$#x`, `$"x`, and `${name}` [Duf90,
 §Variables, §Indexing]. Bracket accessor is psh's addition,
 following ksh93's `${a[n]}` convention with simplified syntax.
 rc's `$x(n)` 1-based list indexing is replaced by `$x[0]`
@@ -1128,8 +1126,8 @@ as new sigils.
                                               -- '-' strips leading tabs from body + marker
 
 Redirections are profunctor maps — transformations on the I/O
-context. See specification.md §Profunctor structure for the
-full analysis.
+context. See 09-redirections.md for the full profunctor
+analysis.
 
 - `>file` — Output (rmap: post-compose on output continuation)
 - `<file` — Input (lmap: pre-compose on input source)
@@ -1177,9 +1175,9 @@ the default coprocess.
     print -p 'query'                  # targets default
     read -p reply                     # targets default
 
-See specification.md §Coprocesses for the full protocol
-description (per-tag binary sessions, Int tag interface,
-wire format, named coprocesses).
+See 10-coprocesses.md for the full protocol description
+(per-tag binary sessions, Int tag interface, wire format,
+named coprocesses).
 
 
 ## Reserved words
@@ -1202,10 +1200,4 @@ two word expressions with surrounding whitespace = infix join.
 
 ## References
 
-All citation keys resolve to `docs/citations.md`.
-
-- `[Duf90]` — Duff, "Rc — The Plan 9 Shell." 1990.
-- `[Mun13]` — Munch-Maccagnoni, thesis, 2013.
-- `[Lev04]` — Levy, *Call-by-Push-Value.* 2004.
-- `[CH00]` — Curien, Herbelin, "The Duality of Computation." ICFP, 2000.
-- `[Mun14]` — Munch-Maccagnoni, "Models of Non-Assoc. Composition." FoSSaCS, 2014.
+All citation keys resolve to `references.md`.

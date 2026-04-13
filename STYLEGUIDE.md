@@ -91,7 +91,7 @@ psh draws from two shell traditions. Document lineage where it matters:
 
 ### Theoretical Citations
 
-psh cites published refs using short bibliography keys resolving to entries in `docs/citations.md`. Full workflow in `docs/citation-workflow.md`. Summary:
+psh cites published refs using short bibliography keys resolving to entries in `docs/spec/references.md`. Full workflow in serena `policy/citation_workflow`. Summary:
 
 - **Module-level docs** (`//!`) carry `# References` section listing keys informing module architecture.
 - **Function-level docs** (`///`) cite only when specific function draws from reference. Most functions need no citation.
@@ -138,8 +138,8 @@ Two separate disciplines — don't cross:
 | Tradition | Format | Audit procedure |
 |-----------|--------|-----------------|
 | Heritage (rc, ksh93, Plan 9) | `rc.ms:line` or `src/cmd/ksh93/sh/nvdisc.c:302` | Verify against cited source repo |
-| Theoretical (papers) | `[Key]` resolving to `docs/citations.md` | Verify against bibliography entry |
-| Internal design docs | `docs/specification.md §Section` | Verify against current spec |
+| Theoretical (papers) | `[Key]` resolving to `docs/spec/references.md` | Verify against bibliography entry |
+| Internal design docs | `docs/spec/NN-chapter.md §Section` | Verify against current spec |
 
 Heritage annotations cite source-code lineage. Theoretical citations cite papers. Module drawing from both carries both, separately.
 

@@ -6,8 +6,7 @@
 //! trivia handling that any psh parser will need. The grammar
 //! productions themselves were retired along with the old AST,
 //! evaluator, and value model; the next implementation will rebuild
-//! them against the current spec (docs/specification.md,
-//! docs/syntax.md).
+//! them against the current spec (docs/spec/04-syntax.md).
 //!
 //! What remains:
 //!   - Character predicates (var_char, word_char, can_start_atom)
@@ -84,7 +83,7 @@ pub(crate) fn comment<I: Stream<Token = char>>() -> impl CombineParser<I, Output
 
 /// Line continuation: backslash followed by newline, consumed as
 /// whitespace. Part of the backslash escape rules (see
-/// docs/syntax.md §Backslash escapes). `\<newline>` is trivia,
+/// docs/spec/04-syntax.md §Backslash escapes). `\<newline>` is trivia,
 /// alongside `\<space>` and `\<tab>`.
 pub(crate) fn line_cont<I: Stream<Token = char>>() -> impl CombineParser<I, Output = ()> {
     attempt(ch('\\').with(ch('\n'))).map(|_| ())
@@ -145,8 +144,7 @@ impl PshParser {
         anyhow::bail!(
             "psh parser is not yet implemented — the prior grammar \
              was retired during the VDC reframing. The next \
-             implementation will rebuild it against docs/specification.md \
-             and docs/syntax.md."
+             implementation will rebuild it against docs/spec/04-syntax.md."
         )
     }
 }

@@ -27,7 +27,7 @@ profunctor maps:
 - `Dup` = contraction (two fds alias one resource)
 - `Close` = weakening (discard a resource)
 
-Duff: "Redirections are evaluated from left to right" [1,
+Duff: "Redirections are evaluated from left to right" [Duf90,
 §Advanced I/O Redirection]. The wrapped representation makes
 the only legal evaluation order the correct one. The profunctor
 laws hold by construction.
