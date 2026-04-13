@@ -2,14 +2,14 @@
 # cite-lint — mechanical citation key checker for psh
 #
 # Verifies that every [Key] citation in source files resolves to
-# an entry in docs/citations.md, and reports unused bibliography
-# entries and alias conflicts.
+# an entry in docs/spec/references.md, and reports unused
+# bibliography entries and alias conflicts.
 #
-# DOES NOT verify semantic correctness. See docs/citation-workflow.md.
+# DOES NOT verify semantic correctness. See STYLEGUIDE.md §Citation hygiene.
 
 set -eu
 
-BIB="docs/citations.md"
+BIB="docs/spec/references.md"
 TMPDIR="${TMPDIR:-/tmp}"
 tmp="$TMPDIR/cite-lint.$$"
 trap 'rm -f "$tmp".*' EXIT
@@ -65,11 +65,10 @@ strip_fences='
 # Matches: [CH00], [CBG24], [MMM], [BTMO23], [CMS], [Duf90], etc.
 KEY_RE='\[([A-Z][A-Za-z]*[0-9]{2,4}|[A-Z]{2,}[0-9]*)\]'
 
-for dir in src docs; do
+for dir in src docs docs/spec; do
     [ -d "$dir" ] || continue
     find "$dir" -type f \( -name '*.rs' -o -name '*.md' \) \
-        ! -name citations.md \
-        ! -name citation-workflow.md \
+        ! -name references.md \
         | while read -r file; do
         case "$file" in
             *.md)

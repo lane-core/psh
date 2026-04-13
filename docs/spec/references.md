@@ -2,7 +2,8 @@
 
 Central bibliography for the psh project. Every citation key
 used in code doc comments (`[Key]`) resolves to an entry here.
-See `docs/citation-workflow.md` for the full workflow.
+Citation rules: `STYLEGUIDE.md` §Theoretical Citations.
+Full rationale: serena `policy/citation_workflow`.
 
 ## Index
 

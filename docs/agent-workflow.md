@@ -13,7 +13,7 @@ per session for memory layout discipline.
 
 When this document and `policy/memory_discipline` disagree,
 `policy/memory_discipline` wins on memory organization. When either
-disagrees with `docs/specification.md`, the spec wins on psh semantics.
+disagrees with `docs/spec/`, the spec wins on psh semantics.
 
 ## The seven operational principles
 
@@ -45,7 +45,7 @@ organization-focused version; these seven apply to how an agent
 5. **Source ranking.** When multiple sources discuss the same
    topic, rank them:
 
-   `docs/specification.md` > `docs/vdc-framework.md` and
+   `docs/spec/` > `docs/vdc-framework.md` and
    `refs/ksh93/ksh93-analysis.md` (framework) > serena memory >
    vendored papers at `/Users/lane/gist/`.
 
@@ -68,7 +68,7 @@ In conflict, follow the higher tier and flag the conflict to Lane.
 
 | Tier | Location | Authority |
 |---|---|---|
-| 1 | `docs/specification.md` | single source of truth |
+| 1 | `docs/spec/` | single source of truth |
 | 2 | `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/implementation.md` | framework |
 | 3 | serena memory store | project-shared knowledge base |
 | 4 | vendored papers at `/Users/lane/gist/` | original literature |
@@ -87,7 +87,7 @@ the serena memory `policy/memory_discipline` §"Agents and the project store".
 
 Before any substantive analysis:
 
-1. **Read the spec.** Read `docs/specification.md` section(s)
+1. **Read the spec.** Read `docs/spec/` section(s)
    touching the topic. If the topic is absent from the spec, say
    so explicitly — the spec's silence is meaningful.
 
@@ -239,7 +239,7 @@ rules need sequent calculus, and whose implementation needs psh
 architect), Lane dispatches the agents in parallel. Each agent
 follows this workflow independently and produces a memo. Lane
 synthesizes results and records the resolution in
-`docs/specification.md`.
+`docs/spec/`.
 
 When an agent reviews another agent's memo, the review uses the
 same memo format with the supersession line pointing at the memo
@@ -265,7 +265,7 @@ When the task produces a memo worth persisting, consult
 - **Re-read sources at write time.** If you drafted a memo during
   planning, re-read every source immediately before writing. For
   status / architecture memos, verify external sources
-  (`PLAN.md`, `docs/specification.md`, `git log`, code) and
+  (`PLAN.md`, `docs/spec/`, `git log`, code) and
   record what you checked in `verified_against:`. Set
   `last_updated` to merge time, not plan time.
 - **Hub-and-spokes.** Clusters of 4+ related memos get a `_hub.md`
@@ -337,13 +337,13 @@ reading the sources fresh, is the practical floor on accuracy.
 
 **Out of scope for the audit.** Upstream issues found in the spec
 or framework documents (e.g., a typo or mis-attribution in
-`docs/specification.md`) are flagged in the audit report and
+`docs/spec/`) are flagged in the audit report and
 routed to Lane for separate resolution. The audit fixes the
 anchors; the spec gets its own review pass.
 
 **Skipping the audit.** Permitted only for tier-3 anchors, short
 corrections that don't introduce new citations, or anchors that
-cite only psh's own materials (`docs/specification.md`,
+cite only psh's own materials (`docs/spec/`,
 decision memos). Any new external paper
 citation triggers the audit on the next pass.
 

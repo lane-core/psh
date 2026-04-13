@@ -22,8 +22,8 @@ evaluator, and value model against the current spec.
 
 | Document | Role |
 |---|---|
-| `docs/specification.md` | Single source of truth for resolved decisions. Read this carefully. |
-| `docs/syntax.md` | Formal grammar. |
+| `docs/spec/index.md` | Spec chapter directory — single source of truth. Start here. |
+| `docs/spec/04-syntax.md` | Formal grammar — the implementer's contract. |
 | `docs/vdc-framework.md` | Theoretical framework report. §4 (VDCs), §8 (composition laws + decision procedure), §9 (engineering principles) are load-bearing. |
 | `refs/ksh93/ksh93-analysis.md` | ksh26 sequent-calculus analysis of ksh93. Source of the polarity frame discipline and the sh.prefix bug analysis. |
 | `docs/implementation.md` | Dependency rationale and engineering principles (CLOEXEC, polarity frames, no global mutable state). |
@@ -122,7 +122,7 @@ workflow in **`docs/agent-workflow.md`** — pre-task retrieval,
 supersession tracking, scope handoff, and the memo output format
 are defined there. When an agent charter disagrees with the
 workflow doc, the workflow doc wins; when either disagrees with
-`docs/specification.md`, the spec wins.
+`docs/spec/`, the spec wins.
 
 ## Committing
 
@@ -180,7 +180,7 @@ Generated-with: Claude opus-4-6 (Anthropic) via Claude Code
 
 ## Knowledge management
 
-Knowledge in psh lives at four tiers: `docs/specification.md` (tier
+Knowledge in psh lives at four tiers: `docs/spec/` (tier
 1, single source of truth) > framework documents
 (`docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`,
 `docs/implementation.md` — tier 2) > **serena memory store** (tier

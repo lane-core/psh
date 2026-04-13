@@ -1,4 +1,4 @@
-# psh syntax
+# Syntax
 
 Formal grammar for psh. Starts from rc (Duff 1990) and names
 each extension. Theoretical foundation: `docs/specification.md`.

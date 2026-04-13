@@ -141,7 +141,7 @@ This is a notational convenience, but it reveals something structural: the adjac
 > access). `$stem.c` in psh is a dot accessor on `$stem`, not
 > concatenation. The free-caret-before-dot rule does not apply. Use
 > explicit `^` for file extension concatenation: `$stem^.c`. See
-> `docs/syntax.md` §Free carets.
+> `docs/spec/04-syntax.md` §Free carets.
 
 ### 2.4 Command Substitution
 
@@ -175,7 +175,7 @@ The rc value domain is:
 - **List formation:** Juxtaposition / parenthesized grouping. This is the free monoid structure.
 - **Pointwise concatenation:** The caret operator `^`. This distributes over lists.
 - **Substitution:** Structural — splices a list into a command without rescanning.
-- **Command substitution:** Runs a command, splits output on `$ifs` once (rc) or on newlines (psh), produces a list. No further rescanning. (psh removes `$ifs` entirely — see `docs/specification.md` §rc-isms removed.)
+- **Command substitution:** Runs a command, splits output on `$ifs` once (rc) or on newlines (psh), produces a list. No further rescanning. (psh removes `$ifs` entirely — see `docs/spec/` §rc-isms removed.)
 
 The key invariant: the boundaries between elements of a list are part of the data, not recoverable from the content. Structure is carried, not reconstructed.
 
@@ -574,7 +574,7 @@ Function definitions are deleted by writing `fn name` with no body. This removes
 
 > **psh departure:** psh uses `def` instead of `fn`. rc's `fn` was a
 > misnomer — it defines a cut template, not a first-class function.
-> `def` names the sort honestly. See `docs/specification.md` §Two
+> `def` names the sort honestly. See `docs/spec/` §Two
 > kinds of callable.
 
 ### 5.10 Signal Handlers = Cells on Exceptional Arrows
@@ -596,7 +596,7 @@ This defines a cell that runs when the SIGINT horizontal arrow arrives. Because 
 > `trap SIGNAL { handler } { body }` (lexical scope), `trap SIGNAL`
 > (deletion). The structural point is unchanged — handlers are
 > pre-parsed cells, not deferred strings — but the syntax is
-> different. See `docs/specification.md` §Unified trap.
+> different. See `docs/spec/` §Unified trap.
 
 ### 5.11 Local Variables = Restricted Cells
 
@@ -839,7 +839,7 @@ demand-driven (operationally co-Kleisli-flavored — `yes | head -1`
 does not evaluate `yes` to completion, because the pipe's blocking
 read is the demand). The Kleisli label describes how the pipeline
 *types* (data on the pipe is a positive intermediary), not how it
-*runs* (demand flows right-to-left). See `docs/specification.md`
+*runs* (demand flows right-to-left). See `docs/spec/`
 §Pipeline execution for the full disambiguation.
 
 ### 8.2 Sequential composition (○, co-Kleisli/comonadic)
@@ -923,9 +923,9 @@ The shell eliminates it operationally, by the same structural means.
 > (oblique, requiring polarity frames). The ⊗/⅋ De Morgan
 > duality (`¬(A ⊗ B) ≅ ¬A ⅋ ¬B`) is an immediate theorem of
 > dialogue structure; the ⊕/⅋ duality noted in
-> `docs/specification.md` §Error model follows via the
+> `docs/spec/` §Error model follows via the
 > L-calculus's additive/multiplicative relationship. See
-> `docs/specification.md` §The semantics for the full commitment.
+> `docs/spec/` §The semantics for the full commitment.
 
 ### 8.5 Decision procedure for new features
 

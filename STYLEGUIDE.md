@@ -127,7 +127,7 @@ workflow is in `docs/citation-workflow.md`. Summary:
 //! foundation are realized here. Cite at the level of the
 //! architectural commitment, not at every function.
 //!
-//! See `docs/specification.md` §Relevant Section for the
+//! See `docs/spec/` §Relevant Section for the
 //! design rationale.
 //!
 //! # References
@@ -143,7 +143,7 @@ workflow is in `docs/citation-workflow.md`. Summary:
 /// token. Consumed by `fire_reply`; removed on fire, realizing
 /// the linear usage from [HVK98] §3.
 ///
-/// See `docs/specification.md` §Coprocess protocol.
+/// See `docs/spec/` §Coprocess protocol.
 pub fn install_continuation(...) { ... }
 ```
 
@@ -215,7 +215,7 @@ fn discipline_set_fires_on_assignment() { ... }
 ## Architecture Patterns
 
 These are load-bearing design decisions documented in
-`docs/specification.md` (the principled design document)
+`docs/spec/` (the principled design document)
 and the pane project's `docs/shell.md`.
 
 | Pattern | Rule |
