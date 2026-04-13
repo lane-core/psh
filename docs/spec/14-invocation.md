@@ -561,25 +561,174 @@ completes the longest common prefix. If ambiguous, a second
 `cd` arguments. Hidden files (starting with `.`) are not
 completed unless the user has typed the leading `.`.
 
-### Programmable completion
+### Completion context
 
-The completion system is extensible. User-defined completion
-functions can be registered per command:
+When the shell invokes a completion function, it provides a
+structured context:
 
-    complete cmd_name { |word ctx| =>
-        # word: the word being completed
-        # ctx: completion context (command position, argument index)
-        # return: List(Str) of candidates
+    struct CompletionContext {
+        line: Str;            # full command line text
+        words: List(Str);     # tokenized words
+        cursor: Int;          # cursor position in line (byte offset)
+        word_index: Int;      # index of word being completed in words
+        current: Str          # partial word at cursor (prefix typed so far)
     }
 
-The completion function is a `def` cell receiving the partial
-word and context, returning a list of candidate strings. This
-is the ksh93 model (programmable completion via functions)
-rather than bash's `complete`/`compgen` command-based model.
+The context is available to completion functions as the second
+argument. `$ctx.words[0]` is the command name. `$ctx.current`
+is the prefix to filter against. `$ctx.word_index` is 0 for
+command position, 1+ for argument positions.
 
-The details of the completion API — context structure, filtering
-conventions, display formatting — are implementation-phase
-decisions that will be specified when the line editor is built.
+### Completion candidates
+
+Completion functions return structured candidates, not bare
+strings. Each candidate carries metadata for display and
+insertion:
+
+    struct Candidate {
+        value: Str;               # text to insert
+        display: Str;             # text to show in menu (defaults to value)
+        description: Str;         # tooltip / help text (may be empty)
+        tag: Str;                 # grouping category (e.g., 'flags', 'files')
+        nospace: Bool             # if true, don't append space after insertion
+    }
+
+Simple string completions are sugar — returning `List(Str)`
+from a completion function wraps each string as a `Candidate`
+with defaults (display = value, empty description/tag,
+nospace = false).
+
+    # Simple: return List(Str) — auto-wrapped
+    complete git { |word ctx| =>
+        (add commit push pull status log)
+    }
+
+    # Structured: return List(Candidate)
+    complete git { |word ctx| =>
+        (
+            Candidate { value = 'add';    description = 'Stage files' }
+            Candidate { value = 'commit'; description = 'Record changes' }
+            Candidate { value = 'push';   description = 'Upload commits' }
+        )
+    }
+
+### Programmable completion
+
+User-defined completion functions are registered per command
+via the `complete` builtin (§15-builtins.md):
+
+    complete cmd_name { |word ctx| =>
+        # word: Str — partial word being completed (= ctx.current)
+        # ctx: CompletionContext — full context
+        # return: List(Str) or List(Candidate)
+    }
+
+The function is a `def` cell receiving the partial word and
+context. The shell filters the returned candidates against
+the current prefix (case-insensitive prefix match by default).
+The host renders candidates using their display/description/tag
+metadata.
+
+### External completion providers
+
+psh supports external completion frameworks (carapace,
+cobra-based tools, etc.) through the external completer hook.
+The hook delegates completion to a subprocess that returns
+structured results.
+
+**`$COMPLETION_EXTERNAL`** — when set, names a command that
+the shell invokes for any command without a registered
+`complete` function. The external provider receives the
+tokenized command line as arguments and returns JSON on stdout:
+
+    # Set carapace as external provider
+    let COMPLETION_EXTERNAL = 'carapace'
+
+When completion triggers for `git add --v` with no registered
+`complete git`, the shell runs:
+
+    carapace git export '' git add --v
+
+and parses the JSON response. The expected format matches
+carapace's `export` protocol:
+
+    {
+        "values": [
+            {
+                "value": "--verbose",
+                "display": "--verbose",
+                "description": "be verbose",
+                "tag": "longhand flags"
+            }
+        ],
+        "nospace": "=",
+        "messages": [],
+        "usage": "git add [flags] [pathspec...]"
+    }
+
+Fields map to psh's `Candidate` struct:
+
+| JSON field | Candidate field | Notes |
+|---|---|---|
+| `value` | `value` | Text to insert |
+| `display` | `display` | Menu display text |
+| `description` | `description` | Help text |
+| `tag` | `tag` | Grouping category |
+
+The `nospace` field is a string of suffix characters — if the
+completed value ends with any of these characters, no space is
+appended. `"*"` means never append space.
+
+The `messages` array contains informational strings displayed
+to the user (not inserted). The `usage` string is displayed
+as context help.
+
+**Provider protocol.** The external provider is invoked as:
+
+    $COMPLETION_EXTERNAL <command> export '' <words...>
+
+where `<words...>` is the tokenized command line. The provider
+returns JSON on stdout (the carapace `export` format). Exit
+status 0 means valid completions; nonzero means fallback to
+built-in path completion.
+
+This protocol is compatible with carapace-bin out of the box.
+Other providers can implement the same JSON format. The
+`export` format is the interchange — psh never generates or
+consumes shell-specific completion snippets.
+
+**Carapace integration example:**
+
+    # In ~/.config/psh/rc
+    let COMPLETION_EXTERNAL = 'carapace'
+
+    # That's it. carapace handles ~1000+ commands.
+    # Per-command overrides still work:
+    complete myapp { |word ctx| =>
+        # custom completions for myapp
+    }
+
+Registered `complete` functions take precedence over the
+external provider. The external provider is the fallback for
+commands without explicit registrations.
+
+### Resolution order
+
+When Tab is pressed, the completion system resolves candidates
+in this order:
+
+1. **Registered `complete` function** for the command — if
+   found, call it and use results.
+2. **External provider** (`$COMPLETION_EXTERNAL`) — if set
+   and the command has no registered completer, invoke the
+   provider subprocess.
+3. **Built-in defaults** — path completion for argument
+   position, `$PATH`/builtin/def search for command position.
+
+Steps are exclusive — the first that produces candidates wins.
+Built-in completion for variables (`$`), accessors (`.`), and
+match arms operates regardless of the above, since those are
+syntactic contexts, not command-argument contexts.
 
 
 ## Configuration layout

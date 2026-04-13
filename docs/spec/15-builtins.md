@@ -544,16 +544,40 @@ ksh93 heritage (sh.1 lines 6480-6555). Also a POSIX utility.
 
     complete cmd_name { |word ctx| => body }
     complete -d cmd_name
+    complete -l
 
-Register or remove a programmable completion function for
-`cmd_name`. When the user presses `Tab` in argument position
-after `cmd_name`, the registered function is called with the
-partial word and a completion context. The function returns
-`List(Str)` of candidates. See §14-invocation.md §Completion
-for the completion framework.
+Register, remove, or list programmable completion functions.
+When `Tab` is pressed after `cmd_name`, the registered function
+is called with the partial word (`Str`) and a
+`CompletionContext` struct (§14-invocation.md §Completion).
 
-`complete -d cmd_name` deregisters the completion function for
-`cmd_name`, reverting to default path completion.
+The function returns `List(Str)` (simple — auto-wrapped) or
+`List(Candidate)` (structured — with display, description, tag,
+nospace metadata). The shell filters results against the
+current prefix.
+
+    # Simple
+    complete brew { |word ctx| =>
+        (install uninstall update upgrade search info list)
+    }
+
+    # Structured
+    complete brew { |word ctx| =>
+        match $ctx.word_index {
+            1 => (
+                Candidate { value = 'install'; description = 'Install a formula or cask' }
+                Candidate { value = 'search';  description = 'Search for formulae' }
+            );
+            _ => ()   # fall through to default
+        }
+    }
+
+`complete -d cmd_name` deregisters the completion function.
+`complete -l` lists all registered completion commands.
+
+See §14-invocation.md §Completion for the full completion
+framework, context structure, candidate format, and external
+provider protocol.
 
 
 ## Generic list combinators
