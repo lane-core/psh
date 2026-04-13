@@ -1047,6 +1047,7 @@ as new sigils.
 
     redirect    = '>' WORD | '>>' WORD
                 | '<' WORD
+                | '<>' WORD                   -- read-write (O_RDWR), default fd 0
                 | '>[' NUM '=' NUM ']'
                 | '<[' NUM '=' NUM ']'
                 | here_doc
@@ -1064,22 +1065,21 @@ full analysis.
 - `>file` — Output (rmap: post-compose on output continuation)
 - `<file` — Input (lmap: pre-compose on input source)
 - `>>file` — Append (rmap variant: output appended, not truncated)
+- `<>file` — ReadWrite (dimap: single O_RDWR open, one file
+  description, one shared offset). Default fd 0 (rc/POSIX
+  convention). rc heritage [Duf90, rc(1) §I/O Redirections].
 - `>[n=m]` — Dup (contraction: two fds alias one resource)
 - `>[n=]` — Close (weakening: discard a resource)
 - `<<<word` — Here-string (lmap: string as stdin)
 
-**`<>file` (read-write) is not supported.** The read-write
-open is a simultaneous lmap + rmap on the same fd — a
-profunctor endomorphism that blurs the input/output distinction.
-psh's profunctor model keeps input (lmap) and output (rmap)
-structurally separate. Read-write access is served by `exec`
-with explicit fd management:
-
-    exec <[3] file >[3] file   # explicit: read on 3, write on 3
-
-This is more verbose but structurally honest — the two
-directions are separate profunctor maps. The `<>` shorthand
-is a non-goal.
+All redirections are classified as Adapters in the profunctor
+model — they transform the fd context from one state to
+another. `<>file` applies `dimap` with both the read and write
+functions targeting the same file description; this is
+well-formed as a profunctor map. The single O_RDWR open is a
+kernel primitive that cannot be decomposed into separate read
+and write opens without changing semantics (two `open()` calls
+produce two file descriptions with independent offsets).
 
 Redirections are evaluated left to right. The AST wraps
 redirections as nesting (inner-to-outer = left-to-right
@@ -1123,7 +1123,7 @@ Reserved for future use: `type` (type aliases, if parametric
 polymorphism on function signatures is ever reconsidered).
 
 Operators: `=`, `|`, `|&`, `||`, `&&`, `&`, `!`, `=>`, `=~`,
-`^`, `/`, `>`, `>>`, `<`, `>[`, `<[`.
+`^`, `/`, `>`, `>>`, `<`, `<>`, `>[`, `<[`.
 
 `/` serves double duty: path literal separator (`/usr/bin`) and
 infix path join operator (`$dir / $file`). Disambiguated by
