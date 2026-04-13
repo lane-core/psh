@@ -416,6 +416,44 @@ children. Minimal utility but required by POSIX for shell
 conformance contexts.
 
 
+### `fc`
+
+    fc [-l] [-e editor] [-s old=new] [first [last]]
+
+Fix command — the programmatic history interface.
+
+| Form | Behavior |
+|------|----------|
+| `fc -l` | List recent history entries (default: last 16) |
+| `fc -l first last` | List entries in range |
+| `fc -l -N` | List last N entries |
+| `fc -e editor` | Open last command in editor, execute on save |
+| `fc -e -` | Re-execute last command without editing |
+| `fc -s old=new` | Substitute and re-execute last command |
+| `fc first last` | Open range in editor, execute on save |
+
+Without `-l`, `fc` opens the selected command(s) in `$FCEDIT`
+(defaulting to `$EDITOR`, defaulting to `ed`). On editor exit,
+the edited text is executed as a command.
+
+ksh93 heritage (sh.1 lines 6480-6555). Also a POSIX utility.
+
+### `complete`
+
+    complete cmd_name { |word ctx| => body }
+    complete -d cmd_name
+
+Register or remove a programmable completion function for
+`cmd_name`. When the user presses `Tab` in argument position
+after `cmd_name`, the registered function is called with the
+partial word and a completion context. The function returns
+`List(Str)` of candidates. See §14-invocation.md §Completion
+for the completion framework.
+
+`complete -d cmd_name` deregisters the completion function for
+`cmd_name`, reverting to default path completion.
+
+
 ## Summary by priority
 
 ### Essential (blocks login shell use)
@@ -427,8 +465,8 @@ conformance contexts.
 
 `printf`, `eval`, `shift`, `wait`, `kill`, `fg`, `bg`, `jobs`,
 `break`, `continue`, `command`, `builtin`, `whatis`, `pwd`,
-`unset`, `unexport`.
+`unset`, `unexport`, `fc`.
 
 ### Operational (robustness)
 
-`disown`, `umask`, `ulimit`, `hash`, `times`.
+`disown`, `umask`, `ulimit`, `hash`, `times`, `complete`.

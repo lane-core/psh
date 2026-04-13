@@ -34,16 +34,23 @@ from `$home/lib/profile`."
 
 1. `/etc/psh/pshrc` — system-wide configuration
    (administrator-controlled). Sourced first if it exists.
-2. `$HOME/.config/psh/profile` — user login profile. Sourced
-   second if it exists. XDG convention
-   (`$XDG_CONFIG_HOME/psh/profile` when `$XDG_CONFIG_HOME` is
-   set).
+2. `/etc/psh/pshrc.d/*.psh` — system drop-in fragments,
+   lexicographic order.
+3. `$HOME/.config/psh/profile` — user login profile. Sourced
+   if it exists. XDG convention (`$XDG_CONFIG_HOME/psh/profile`
+   when `$XDG_CONFIG_HOME` is set).
+4. `$HOME/.config/psh/rc` — user interactive configuration
+   (login shells are also interactive).
+5. `$HOME/.config/psh/rc.d/*.psh` — user drop-in fragments,
+   lexicographic order.
 
 ### Interactive (non-login)
 
 1. `/etc/psh/pshrc` — system-wide configuration (same as login).
-2. `$HOME/.config/psh/rc` — user interactive configuration.
+2. `/etc/psh/pshrc.d/*.psh` — system drop-in fragments.
+3. `$HOME/.config/psh/rc` — user interactive configuration.
    Sourced if it exists.
+4. `$HOME/.config/psh/rc.d/*.psh` — user drop-in fragments.
 
 ### Script
 
@@ -198,13 +205,34 @@ psh does not introduce rc-style lowercase aliases for these.
 | `$0` | Str | Shell name or script path |
 | `$pid` | Int | Current process ID (rc heritage) |
 | `$ppid` | Int | Parent process ID |
+| `$apid` | Int | PID of last background process (rc heritage: rc(1) lines 47-49) |
 | `$status` | ExitCode | Initially `ExitCode { code = 0; message = '' }` |
 | `$pipestatus` | List(ExitCode) | Initially `($status)` |
 | `$PWD` | Path | Current working directory |
 | `$OLDPWD` | Path | Previous working directory (initially `$PWD`) |
 | `$SHLVL` | Int | Shell nesting depth (incremented on each invocation) |
+| `$COLUMNS` | Int | Terminal width (updated on SIGWINCH) |
+| `$LINES` | Int | Terminal height (updated on SIGWINCH) |
+| `$HOSTNAME` | Str | System hostname (from `gethostname(2)`) |
+| `$CDPATH` | List(Path) | cd search path (empty by default; see `cd` in §15-builtins.md) |
 | `$prompt` | List(Str) | `('% ' '  ')` — primary and continuation prompts |
 | `$*` | List(Str) | Positional parameters (script args or `set --` args) |
+
+`$apid` uses rc's name (rc(1) lines 47-49: "whenever a command
+is followed by `&`, the variable `$apid` is set to its process
+id"). ksh93 uses `$!` for the same purpose (sh.1 lines 5150-
+5155). psh follows rc's naming — `$apid` is clearer than `$!`
+and does not collide with the `!` negation operator.
+
+`$COLUMNS` and `$LINES` are set from the terminal size at
+startup and updated on SIGWINCH. They are available to scripts
+for layout calculations but are not authoritative — `stty size`
+or `ioctl(TIOCGWINSZ)` give the canonical terminal size.
+
+`$CDPATH` is a list of directories searched by `cd` when the
+argument is a relative path. Empty by default. Inherited from
+the environment if set (colon-delimited, decomposed into a
+list). See `cd` in §15-builtins.md.
 
 
 ## Export semantics
@@ -351,3 +379,257 @@ substitution — prompts should be fast). `$PWD`, `$USER`,
 `$SHLVL` are commonly used in prompt customization.
 
     prompt = ('$USER@$HOSTNAME:$PWD% ' '  ')
+
+
+## History
+
+Interactive shells maintain a command history for recall and
+search. The history mechanism is available only in interactive
+mode — scripts do not accumulate or search history.
+
+### Variables
+
+| Variable | Type | Default | Meaning |
+|----------|------|---------|---------|
+| `$HISTFILE` | Path | `$HOME/.config/psh/history` | Persistent history file |
+| `$HISTSIZE` | Int | `8192` | Maximum history entries in memory |
+| `$HISTFILESIZE` | Int | `$HISTSIZE` | Maximum entries in `$HISTFILE` |
+
+ksh93 heritage (sh.1 lines 5160-5177): `HISTFILE` names the
+file for persistent history, `HISTSIZE` caps in-memory entries.
+psh follows the same variables with XDG-compliant default path.
+
+### Behavior
+
+Commands are appended to the in-memory history after successful
+parsing (even if execution fails — the history records what was
+typed, not whether it worked). Duplicate consecutive commands
+are stored once (deduplication of immediate repeats only, not
+global).
+
+On interactive shell exit, the in-memory history is written to
+`$HISTFILE`. On startup, `$HISTFILE` is read into memory if it
+exists. History is plain text, one entry per logical line
+(multi-line commands joined with embedded newlines).
+
+### Search
+
+`Ctrl-R` initiates reverse incremental search in emacs mode.
+Typing characters narrows the search through history entries
+matching the typed substring. `Ctrl-R` again cycles to the next
+match. `Enter` accepts the match; `Ctrl-C` or `Escape` cancels.
+
+In vi mode, `/` in command mode initiates forward search, `?`
+initiates backward search, and `n`/`N` repeat the search
+direction. ksh93 heritage (sh.1 lines 5367-5395).
+
+`fc` (fix command) is the programmatic history interface:
+
+    fc -l              # list recent history
+    fc -l -20          # list last 20 entries
+    fc -l 100 110      # list entries 100-110
+    fc -e editor       # edit and re-execute last command
+    fc -s old=new      # substitute and re-execute
+
+See §15-builtins.md for the full `fc` specification.
+
+### History expansion
+
+psh does NOT support `!`-style history expansion (`!!`, `!$`,
+`!-2`). History expansion is a macro processor — it rescans
+input, violating Duff's no-rescan principle [Duf90, §Design
+Principles]. Use `Ctrl-R` search, `fc`, or up-arrow recall
+instead. This matches rc's approach: rc had no history
+expansion; history recall was handled by the `sam`-derived
+terminal emulator.
+
+
+## Completion
+
+Interactive shells provide tab completion for common entities.
+Completion is triggered by the `Tab` key (or `Ctrl-I`).
+
+### Built-in completion targets
+
+The shell completes the following without user configuration:
+
+| Context | What completes | Source |
+|---------|---------------|--------|
+| Command position | Executable names | `$PATH` search, builtins, `def` names |
+| Argument position | File paths | Filesystem traversal |
+| After `$` | Variable names | Current scope |
+| After `$name.` | Named accessors | Per-type accessor namespace (struct fields, enum previews, string methods) |
+| After `def Name.` | Type method names | Per-type accessor namespace |
+| Inside `match` arms | Enum variant names | Declared variants of the scrutinee's type |
+
+### Path completion
+
+File path completion follows the standard convention: `Tab`
+completes the longest common prefix. If ambiguous, a second
+`Tab` lists alternatives. Completion respects `$CDPATH` for
+`cd` arguments. Hidden files (starting with `.`) are not
+completed unless the user has typed the leading `.`.
+
+### Programmable completion
+
+The completion system is extensible. User-defined completion
+functions can be registered per command:
+
+    complete cmd_name { |word ctx| =>
+        # word: the word being completed
+        # ctx: completion context (command position, argument index)
+        # return: List(Str) of candidates
+    }
+
+The completion function is a `def` cell receiving the partial
+word and context, returning a list of candidate strings. This
+is the ksh93 model (programmable completion via functions)
+rather than bash's `complete`/`compgen` command-based model.
+
+The details of the completion API — context structure, filtering
+conventions, display formatting — are implementation-phase
+decisions that will be specified when the line editor is built.
+
+
+## Configuration layout
+
+psh follows XDG Base Directory conventions. The configuration
+root is `$XDG_CONFIG_HOME/psh/` (defaulting to
+`$HOME/.config/psh/` when `$XDG_CONFIG_HOME` is unset).
+
+### Directory structure
+
+    ~/.config/psh/
+    ├── profile          # login shell profile (sourced on login)
+    ├── rc               # interactive rc (sourced on interactive start)
+    ├── rc.d/            # drop-in directory (sourced after rc, *.psh files, sorted)
+    ├── completions/     # user completion functions (autoloaded)
+    └── history          # command history (managed by shell)
+
+### File roles
+
+**`profile`** — login-time initialization. Environment
+variables, PATH modifications, and one-time setup. Sourced
+only by login shells. Equivalent to rc's `$home/lib/profile`
+[Duf90, rc(1) lines 940-949].
+
+**`rc`** — interactive initialization. Aliases, prompt
+customization, completion registrations, and interactive-only
+configuration. Sourced by every interactive shell (including
+login shells, after `profile`).
+
+**`rc.d/`** — drop-in directory for modular configuration.
+Files matching `*.psh` are sourced in lexicographic order after
+`rc`. This supports package managers and tools that install
+shell configuration fragments (e.g., `rc.d/50-cargo.psh`,
+`rc.d/90-nix.psh`). The `.psh` extension prevents stray files
+(`.swp`, `.bak`) from being sourced.
+
+**`completions/`** — completion function directory. Files in
+this directory are autoloaded when the completion system
+initializes. Each file defines `complete` registrations for one
+or more commands. Naming convention: `cmd_name.psh`.
+
+**`history`** — command history file (see §History). Managed
+by the shell, not user-edited.
+
+### System configuration
+
+    /etc/psh/
+    ├── pshrc            # system-wide rc (sourced first, all modes)
+    └── pshrc.d/         # system drop-in directory (*.psh, sorted)
+
+System configuration is sourced before user configuration.
+`pshrc.d/` follows the same drop-in pattern as the user `rc.d/`.
+
+### Data directory
+
+    $XDG_DATA_HOME/psh/     # defaults to ~/.local/share/psh/
+    └── history              # alternative history location if preferred
+
+The spec places `history` in the config directory for
+simplicity. Implementations may respect `$XDG_DATA_HOME` for
+history if strict XDG compliance is desired — history is
+arguably data, not configuration. The default `$HISTFILE` path
+in the config directory follows ksh93 convention (history
+adjacent to configuration).
+
+
+## IFS removal
+
+psh does not have `$IFS`. Word splitting on unquoted variable
+expansion — the mechanism IFS controls in POSIX shells — does
+not exist in psh. Variables are lists; substitution splices
+list elements into argument positions. There is no field
+splitting pass.
+
+### External tool compatibility
+
+Some external tools expect IFS behavior indirectly:
+
+- `xargs` splits stdin on whitespace by default. This works
+  unchanged — psh pipes byte streams to external commands, and
+  `xargs` reads them as bytes. The IFS variable is irrelevant
+  because `xargs` does its own splitting.
+- `read` in POSIX shells splits input on IFS. psh's `read`
+  builtin reads whole lines — splitting is done explicitly
+  by the user via `.split` or pattern matching.
+- `for x in $var` in POSIX shells depends on IFS for word
+  splitting. psh's `for x in $var` iterates over list elements
+  — no splitting occurs because `$var` is already a list.
+
+Tools that explicitly read `$IFS` from the environment (rare)
+will see it unset. If a tool requires IFS in its environment,
+the per-command local variable form works:
+
+    IFS=$'\n' some_tool
+
+
+## Idle timeout
+
+`$TMOUT` is an integer variable specifying the idle timeout in
+seconds for interactive shells. If set and greater than zero,
+the shell exits after `$TMOUT` seconds without input. Before
+exiting, the shell prints a warning and waits 60 seconds for a
+keypress — if input arrives, the timer resets.
+
+ksh93 heritage (sh.1 lines 2484-2491): `TMOUT` causes the
+shell to terminate if a command is not entered within the
+prescribed number of seconds.
+
+Default: unset (no timeout). Primarily useful for security on
+shared systems (terminals left unattended). Scripts ignore
+`$TMOUT`.
+
+
+## Rejected features
+
+The following login/interactive shell features from other shells
+are explicitly not adopted:
+
+- **Restricted mode (`-r`).** ksh93 supports a restricted shell
+  mode that disables `cd`, PATH modification, and output
+  redirection. psh does not implement restricted mode. It is a
+  weak security mechanism that is easily circumvented and
+  provides a false sense of isolation. Containerization and
+  sandboxing are the modern equivalents.
+
+- **`$ENV` variable.** ksh93 uses `$ENV` to name a file sourced
+  for each interactive shell (sh.1 lines 2545ff). psh uses the
+  fixed path `~/.config/psh/rc` for this purpose (see
+  §Configuration layout). The `$ENV` variable is not recognized
+  — if set in the inherited environment, it is ignored. This
+  avoids the confusion of having two mechanisms for the same
+  function.
+
+- **Logout file.** ksh93 sources `$HOME/.sh_logout` on login
+  shell exit. psh does not have a logout file. The `trap`
+  builtin with `EXIT` (or `sigexit`) provides the same
+  functionality without a separate configuration file:
+
+      trap EXIT { cleanup_commands }
+
+  This is consistent with rc, which had `fn sigexit` but no
+  logout file.
+
+- **`!`-style history expansion.** See §History above.
