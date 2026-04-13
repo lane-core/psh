@@ -2,6 +2,7 @@
 name = "psh"
 version = "0.1.0"
 edition = "2021"
+license = "BSD-3-Clause"
 description = "The pane system shell. rc heritage, ksh93 discipline functions, duploid-structured internals."
 
 [dependencies]
