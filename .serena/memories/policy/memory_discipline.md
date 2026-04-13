@@ -310,7 +310,7 @@ three psh memory failures of this rule were caught:
 
 1. `analysis/polarity/dccache_witness` originally said "the (+,−)
    equation **manifest** in a real I/O library." The source
-   (`docs/specification.md` §"The sfio insight") actually says
+   (`docs/spec/` §"The sfio insight") actually says
    "**structurally analogous**" and "the pattern matches; the full
    duploid composition laws have not been formally verified."
    *Fix:* weaken "manifest" to "structurally analogous"; preserve

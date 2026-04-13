@@ -7,7 +7,7 @@ importance: high
 keywords: [data, codata, constructors, destructors, pattern-match, copattern-match, observers, duality, list, fd, codata-discipline, copattern-style]
 agents: [psh-sequent-calculus, psh-optics-theorist, vdc-theory, plan9-systems-engineer]
 related: [decision/codata_discipline_functions, decision/postfix_dot_accessors, analysis/monadic_lens, analysis/three_sorts, analysis/error_duality_oplus_par, reference/papers/grokking_sequent_calculus]
-verified_against: [docs/vdc-framework.md@HEAD §3.5 lines 277-310, docs/specification.md@HEAD §510-655, audit/psh-optics-theorist@2026-04-11]
+verified_against: [docs/vdc-framework.md@HEAD §3.5 lines 277-310, docs/spec/@HEAD §510-655, audit/psh-optics-theorist@2026-04-11]
 ---
 
 # Data vs codata (constructors vs destructors)
@@ -40,8 +40,8 @@ The duality also surfaces in the error model (`analysis/error_duality_oplus_par`
 
 ## Spec sites
 
-- `docs/specification.md` §"Discipline functions §The codata model" line 510 — the codata reading of discipline functions.
-- `docs/specification.md` §"MonadicLens structure" line 647 — the optic class that follows.
+- `docs/spec/` §"Discipline functions §The codata model" line 510 — the codata reading of discipline functions.
+- `docs/spec/` §"MonadicLens structure" line 647 — the optic class that follows.
 - `decision/codata_discipline_functions` — the design decision built on this duality.
 - `decision/postfix_dot_accessors` — copattern-style syntax.
 - `analysis/monadic_lens` — the optic class consequence.

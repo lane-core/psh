@@ -84,6 +84,6 @@ Capitalization disambiguation for per-type namespace: `Type.name` vs `var.name` 
   uniformly across all Str-typed variables.
 - `.` is never free caret. Concatenation uses `^` explicitly.
 
-Spec: `docs/specification.md` §"Two accessor forms: bracket and
+Spec: `docs/spec/` §"Two accessor forms: bracket and
 dot", §"Tuples", §"Structs", §"Map type", §"Optics activation".
-Grammar: `docs/syntax.md` §"Accessor syntax".
+Grammar: `docs/spec/04-syntax.md` §"Accessor syntax".

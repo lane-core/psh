@@ -7,7 +7,7 @@ importance: high
 keywords: [cut, execution, command-formation, t-cut-e, mu-tilde, sequent-calculus, command-template, pipe-as-cut, four-sorts]
 agents: [psh-sequent-calculus, vdc-theory, psh-architect]
 related: [analysis/three_sorts, analysis/oblique_maps, analysis/cbpv_f_u_separation, decision/let_is_mu_tilde_binder_cbpv]
-verified_against: [docs/specification.md@HEAD §302-340, docs/vdc-framework.md@HEAD §3.2 lines 207-232, audit/psh-sequent-calculus@2026-04-11]
+verified_against: [docs/spec/@HEAD §302-340, docs/vdc-framework.md@HEAD §3.2 lines 207-232, audit/psh-sequent-calculus@2026-04-11]
 ---
 
 # Cut as execution (⟨t | e⟩)
@@ -26,7 +26,7 @@ The typing rule (`docs/vdc-framework.md` §3.2 lines 209–213):
 
 In the call-by-value reading, evaluate `t` first, bind its result to `x`, then run the continuation `c` with the binding (`docs/vdc-framework.md` line 215).
 
-In psh, every executable construct is a cut. The spec gives the table at `docs/specification.md` §"Commands (cuts) — ⟨t | e⟩" lines 309–315:
+In psh, every executable construct is a cut. The spec gives the table at `docs/spec/` §"Commands (cuts) — ⟨t | e⟩" lines 309–315:
 
 | psh construct | Cut structure |
 |---|---|
@@ -38,7 +38,7 @@ In psh, every executable construct is a cut. The spec gives the table at `docs/s
 
 The pipe operator `|` is **literally the cut** at the operational level. Variable binding is the cut against a μ̃-binder. Conditionals are cuts against case eliminators. The sequent calculus gives a uniform structural account of every form of execution in the shell.
 
-In psh's AST (`docs/specification.md` §"The AST's four sorts" line 321), the `Command` sort handles cuts and control flow (Exec, If, For, Match, Try, Trap), and the `Binding` sort handles μ̃-binders (Assignment, Cmd, Let). Together they form the cut-and-bind layer of the calculus. The `Term`/`Value` sort is the producer side (terms Γ), and the `Expr` sort is the engineering coterm layer (pipelines, redirections, profunctor maps) — `Expr` is "an engineering choice, not a logical one" per spec line 333.
+In psh's AST (`docs/spec/` §"The AST's four sorts" line 321), the `Command` sort handles cuts and control flow (Exec, If, For, Match, Try, Trap), and the `Binding` sort handles μ̃-binders (Assignment, Cmd, Let). Together they form the cut-and-bind layer of the calculus. The `Term`/`Value` sort is the producer side (terms Γ), and the `Expr` sort is the engineering coterm layer (pipelines, redirections, profunctor maps) — `Expr` is "an engineering choice, not a logical one" per spec line 333.
 
 ## Foundational refs
 
@@ -48,8 +48,8 @@ In psh's AST (`docs/specification.md` §"The AST's four sorts" line 321), the `C
 
 ## Spec sites
 
-- `docs/specification.md` §"Commands (cuts) — ⟨t | e⟩" line 302 — authoritative for psh's cut catalog.
-- `docs/specification.md` §"The AST's four sorts" line 321 — `Command` and `Binding` sorts realize cut and μ̃ respectively.
+- `docs/spec/` §"Commands (cuts) — ⟨t | e⟩" line 302 — authoritative for psh's cut catalog.
+- `docs/spec/` §"The AST's four sorts" line 321 — `Command` and `Binding` sorts realize cut and μ̃ respectively.
 - `analysis/three_sorts` — the surrounding three-sort structure cut lives in.
 - `analysis/cbpv_f_u_separation` — `let` as μ̃-binder on `F(A)` is a cut against an effectful producer.
 - `analysis/oblique_maps` — every shell command has the structure of an oblique map, which is what cuts produce.

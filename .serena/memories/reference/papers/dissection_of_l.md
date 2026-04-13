@@ -34,7 +34,7 @@ Each piece is introduced with the minimum prior material needed to make sense of
 
 ## Concepts it informs in psh
 
-- **Three sorts (producers/consumers/commands)** — `docs/specification.md` §"The three sorts, made explicit". psh has **three** sorts (adding commands as a distinct sort beyond Spiwack's two terms/coterms); the command is the cut itself in Spiwack's formulation.
+- **Three sorts (producers/consumers/commands)** — `docs/spec/` §"The three sorts, made explicit". psh has **three** sorts (adding commands as a distinct sort beyond Spiwack's two terms/coterms); the command is the cut itself in Spiwack's formulation.
 - **Polarity discipline** — positive/negative split, shifts `↓`/`↑`.
 - **`decision/every_variable_is_a_list`** — the unit-free structure connects to Spiwack's linear fragment without the multiplicative unit.
 - **`decision/try_catch_scoped_errort`** — ⊕/⅋ duality sits in Spiwack's additive/multiplicative structure.

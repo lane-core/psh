@@ -33,7 +33,7 @@ Code that realizes ideas from published work owes the reader:
 
 ## Bibliography
 
-Central bibliography: `docs/spec/references.md` (formerly `docs/citations.md`).
+Central bibliography: `docs/spec/references.md` (formerly `docs/spec/references.md`).
 - Canonical key: author initials + two-digit year (`[CH00]`, `[MMM]`).
 - ACM-style entries. No local filesystem paths.
 - Every entry has an annotation naming what the project draws from it.

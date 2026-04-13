@@ -35,7 +35,7 @@ Where Dccache is the empirical structural correspondence in sfio (I/O), sh.prefi
 
 ## Spec sites
 
-`docs/specification.md` §"The sfio insight" (line 133) and §"Polarity discipline" (line 343) consume this as the negative example that psh's discipline is built to prevent.
+`docs/spec/` §"The sfio insight" (line 133) and §"Polarity discipline" (line 343) consume this as the negative example that psh's discipline is built to prevent.
 
 ## Status
 

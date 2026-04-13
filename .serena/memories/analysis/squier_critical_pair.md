@@ -36,7 +36,7 @@ The μ vs μ̃ critical pair (`reference/papers/grokking_sequent_calculus`) is t
 
 ## Spec sites
 
-The spec does not cite Squier directly. The cited dependency is on **CBV focusing** (`docs/specification.md` §"CBV focusing as the reentrancy semantics" line 556), which resolves the most prominent critical pair operationally. Squier is the meta-rewriting tool that would let psh prove all four resolution mechanisms compose coherently — work psh has not yet undertaken.
+The spec does not cite Squier directly. The cited dependency is on **CBV focusing** (`docs/spec/` §"CBV focusing as the reentrancy semantics" line 556), which resolves the most prominent critical pair operationally. Squier is the meta-rewriting tool that would let psh prove all four resolution mechanisms compose coherently — work psh has not yet undertaken.
 
 ## Status
 

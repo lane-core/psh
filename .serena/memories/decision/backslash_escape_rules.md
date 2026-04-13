@@ -7,7 +7,7 @@ importance: normal
 keywords: [backslash, escape, trivia, line-continuation, literal-n, string-literal]
 agents: [psh-architect, plan9-systems-engineer]
 related: [decision/lambda_syntax, decision/single_quotes_only]
-verified_against: [docs/syntax.md@HEAD]
+verified_against: [docs/spec/04-syntax.md@HEAD]
 ---
 
 # Decision: backslash escape rules
@@ -37,4 +37,4 @@ Commit `c1512db` landed the rules. Decision history is in git.
 - `\$` escapes a dollar sign — useful when the next character would otherwise look like a variable reference.
 - Multi-line string literals handle cases where users want embedded newlines.
 
-Spec: `docs/syntax.md` §"Backslash escapes". Ledger: Decision history is in git.
+Spec: `docs/spec/04-syntax.md` §"Backslash escapes". Ledger: Decision history is in git.

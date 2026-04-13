@@ -32,4 +32,4 @@ Alternative considered: a global `set -e` mode or an explicit `?`-check operator
 - `try` and `trap` compose orthogonally (see `decision/unified_trap_three_forms`). Signals fire at step boundaries and are handled by trap; statuses flow through try's `;ₜ`.
 - The `catch (e)` form is parenthesized for grammar consistency with `if_cmd`, `for_cmd`, `while_cmd`, `match_cmd`. See `decision/catch_binding_parenthesized`.
 
-Spec: `docs/specification.md` §"Error model §try/catch — scoped ErrorT", §"Signal interaction with try blocks". Syntax: `docs/syntax.md` §"try / catch".
+Spec: `docs/spec/` §"Error model §try/catch — scoped ErrorT", §"Signal interaction with try blocks". Syntax: `docs/spec/04-syntax.md` §"try / catch".

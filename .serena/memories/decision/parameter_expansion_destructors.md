@@ -7,7 +7,7 @@ importance: normal
 keywords: [parameter-expansion, sigil, length, join, rc-heritage, list-destructor, prefix-sigil, dollar-hash, dollar-quote]
 agents: [plan9-systems-engineer, psh-architect]
 related: [decision/every_variable_is_a_list, analysis/data_vs_codata, analysis/duff_principle]
-verified_against: [docs/specification.md@HEAD, docs/syntax.md@HEAD]
+verified_against: [docs/spec/@HEAD, docs/spec/04-syntax.md@HEAD]
 ---
 
 # Decision: `$#x` and `$"x` are type-specific eliminators for List
@@ -38,4 +38,4 @@ Commit `30f5f6c` landed the decision. Decision history is in git.
 - The same operations are also available via `$count .length` and `$path .join` method accessors (see `decision/postfix_dot_accessors`).
 - ksh93's `${var#pat}` / `${var%pat}` pattern-matching forms are **not** adopted; use Str method accessors instead.
 
-Spec: `docs/specification.md` §"Extension path" (String methods on Str), §"Foundational commitment" (every variable is a list). Ledger: Decision history is in git.
+Spec: `docs/spec/` §"Extension path" (String methods on Str), §"Foundational commitment" (every variable is a list). Ledger: Decision history is in git.

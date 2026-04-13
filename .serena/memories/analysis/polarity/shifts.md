@@ -14,7 +14,7 @@ related: [analysis/polarity/frames, analysis/polarity/cbv_focusing, analysis/pol
 
 ## Concept
 
-In the focused sequent calculus, **shifts** are the operators that mediate between positive (value-mode, expansion context) and negative (computation-mode, execution context) types. The downshift `↓` (CBPV's `U`, thunk) suspends a computation as a value; the upshift `↑` (CBPV's `F`, returner) wraps a value as a trivial computation to be forced. (Spec convention at `docs/specification.md` line 200: "↑A for returning"; line 228: "`def`/`let` + lambda split is CBPV's `U`/`F` adjunction" — `def` returns `F(Status)`, lambda is `U(...)`.) Every place a psh expression crosses the polarity boundary, a shift is happening — and per the polarity-frame discipline, every shift is bracketed by save/restore at runtime.
+In the focused sequent calculus, **shifts** are the operators that mediate between positive (value-mode, expansion context) and negative (computation-mode, execution context) types. The downshift `↓` (CBPV's `U`, thunk) suspends a computation as a value; the upshift `↑` (CBPV's `F`, returner) wraps a value as a trivial computation to be forced. (Spec convention at `docs/spec/` line 200: "↑A for returning"; line 228: "`def`/`let` + lambda split is CBPV's `U`/`F` adjunction" — `def` returns `F(Status)`, lambda is `U(...)`.) Every place a psh expression crosses the polarity boundary, a shift is happening — and per the polarity-frame discipline, every shift is bracketed by save/restore at runtime.
 
 Shifts are the operator; **frames are the runtime realization**. Conversely, the (+,−) equation failure (see `analysis/polarity/plus_minus_failure`) is exactly what makes shifts necessary as primitive operations rather than derivable conveniences.
 
@@ -27,9 +27,9 @@ Shifts are the operator; **frames are the runtime realization**. Conversely, the
 
 ## Spec sites
 
-- `docs/specification.md` §"CBV/CBN split" (line 345) — how the split is realized in psh.
-- `docs/specification.md` §"Three operations, three roles" (line 386) — the three operational roles of a shift in psh syntax.
-- `docs/specification.md` §"Two kinds of callable" (line 473) — `def` vs lambda is the F/U distinction at the syntax level.
+- `docs/spec/` §"CBV/CBN split" (line 345) — how the split is realized in psh.
+- `docs/spec/` §"Three operations, three roles" (line 386) — the three operational roles of a shift in psh syntax.
+- `docs/spec/` §"Two kinds of callable" (line 473) — `def` vs lambda is the F/U distinction at the syntax level.
 
 ## Status
 

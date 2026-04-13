@@ -87,6 +87,6 @@ discriminate which injection was used.
 
 ## Spec
 
-`docs/specification.md` §"Enums (coproducts, +)" and §"Features
-and non-goals §Map type". Grammar in `docs/syntax.md` §Values
+`docs/spec/` §"Enums (coproducts, +)" and §"Features
+and non-goals §Map type". Grammar in `docs/spec/04-syntax.md` §Values
 (variant_val, nullary_variant).

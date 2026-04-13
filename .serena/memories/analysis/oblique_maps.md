@@ -28,8 +28,8 @@ The Mangel-Melliès-Munch-Maccagnoni mapping (cited as `[9, Table 1]` in `refs/k
 
 ## Spec sites
 
-- `docs/specification.md` §"Three operations, three roles" (line 386) — operational realization in psh syntax.
-- `docs/specification.md` §"Theoretical framework" (line 187) — the duploid framing the spec inherits.
+- `docs/spec/` §"Three operations, three roles" (line 386) — operational realization in psh syntax.
+- `docs/spec/` §"Theoretical framework" (line 187) — the duploid framing the spec inherits.
 
 ## Status
 

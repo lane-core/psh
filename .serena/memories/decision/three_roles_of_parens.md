@@ -83,6 +83,6 @@ The term-layer / type-layer symmetry:
 
 ## Spec
 
-`docs/specification.md` §"Tuples (products, ×)", §"Enums
+`docs/spec/` §"Tuples (products, ×)", §"Enums
 (coproducts, +)", §"Structs (named products, ×)". Grammar in
-`docs/syntax.md` §Values (list, tuple, record_lit, variant_val).
+`docs/spec/04-syntax.md` §Values (list, tuple, record_lit, variant_val).

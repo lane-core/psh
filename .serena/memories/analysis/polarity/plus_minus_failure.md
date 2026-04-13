@@ -33,7 +33,7 @@ The empirical witnesses in the wild: sfio's Dccache (see `analysis/polarity/dcca
 
 ## Spec sites
 
-The spec doesn't name the (+,−) equation directly; it names its consequences. The relevant sections are `docs/specification.md` §"Polarity discipline" (line 343) and §"Discipline functions" (line 502). The framework document is where the equation lives by name.
+The spec doesn't name the (+,−) equation directly; it names its consequences. The relevant sections are `docs/spec/` §"Polarity discipline" (line 343) and §"Discipline functions" (line 502). The framework document is where the equation lives by name.
 
 ## Status
 

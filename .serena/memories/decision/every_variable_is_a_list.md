@@ -28,4 +28,4 @@ rc (Duff 1990) made list-valued variables the foundational move. Duff's design p
 - **No `"$var"` quoting ceremony is ever needed.** Variables always splice structurally.
 - The entire type system is designed so that `List` is the outermost layer and everything else is an element type.
 
-Spec: `docs/specification.md` §"Foundational commitment: every variable is a list". Ground: `refs/plan9/papers/rc.ms` §Design Principles; `docs/vdc-framework.md` §9.1 "Duff's Principle Generalized".
+Spec: `docs/spec/` §"Foundational commitment: every variable is a list". Ground: `refs/plan9/papers/rc.ms` §Design Principles; `docs/vdc-framework.md` §9.1 "Duff's Principle Generalized".

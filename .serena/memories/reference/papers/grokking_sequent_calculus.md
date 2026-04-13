@@ -29,7 +29,7 @@ Presents λμμ̃ as a compiler intermediate language, compiling a surface langu
 
 ## Concepts it informs in psh
 
-- **λμμ̃ three sorts** — `docs/specification.md` §"The three sorts, made explicit" cites Curien-Herbelin and, through them, this paper's introduction.
+- **λμμ̃ three sorts** — `docs/spec/` §"The three sorts, made explicit" cites Curien-Herbelin and, through them, this paper's introduction.
 - **Let/control duality** — `decision/let_is_mu_tilde_binder_cbpv` vs `decision/unified_trap_three_forms`. The dual binders.
 - **⊕/⅋ error handling** — `decision/try_catch_scoped_errort` (⊕, data) vs `decision/unified_trap_three_forms` (⅋, codata).
 - **`decision/codata_discipline_functions`** — data/codata duality. Discipline-backed variables are codata; ordinary variables are data.

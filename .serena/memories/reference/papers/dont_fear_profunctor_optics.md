@@ -25,9 +25,9 @@ This is the **intuition layer** for the formal profunctor-optics paper by Clarke
 ## Concepts it informs in psh
 
 - **`decision/postfix_dot_accessors`** — the Lens/Prism distinction determines which accessor type applies.
-- **`docs/specification.md` §"Profunctor structure"** — redirections as Adapter (pure profunctor constraint), fd save/restore as Lens (Cartesian constraint).
+- **`docs/spec/` §"Profunctor structure"** — redirections as Adapter (pure profunctor constraint), fd save/restore as Lens (Cartesian constraint).
 - **`decision/codata_discipline_functions`** — the MonadicLens extension sits atop this hierarchy.
-- **Optics activation table** in `docs/specification.md` §"Extension path" — maps psh types to their supported optic classes.
+- **Optics activation table** in `docs/spec/` §"Extension path" — maps psh types to their supported optic classes.
 
 ## Who consults it
 

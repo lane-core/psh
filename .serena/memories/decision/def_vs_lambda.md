@@ -36,4 +36,4 @@ ksh93's compound variables (`typeset -C`) were its struct system, never named as
 - A lambda's captures are resolved at definition time; a `def` reads its enclosing scope dynamically at invocation.
 - Effects: lambdas have inferred purity (thunkable when pure); `def` bodies may have arbitrary effects.
 
-Spec: `docs/specification.md` §"Two kinds of callable" (authoritative table).
+Spec: `docs/spec/` §"Two kinds of callable" (authoritative table).

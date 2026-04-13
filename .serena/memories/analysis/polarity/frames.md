@@ -27,9 +27,9 @@ The pattern is inherited directly from ksh93's `sh_polarity_enter` / `sh_polarit
 
 ## Spec sites
 
-- `docs/specification.md` §"Polarity discipline" (line 343) — psh's discipline statement.
-- `docs/specification.md` §"Discipline functions §Reentrancy and the polarity frame" (line 629) — the codata case.
-- `docs/specification.md` §"Three operations, three roles" (line 386) — frame structure at the operational level.
+- `docs/spec/` §"Polarity discipline" (line 343) — psh's discipline statement.
+- `docs/spec/` §"Discipline functions §Reentrancy and the polarity frame" (line 629) — the codata case.
+- `docs/spec/` §"Three operations, three roles" (line 386) — frame structure at the operational level.
 
 ## Status
 

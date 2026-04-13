@@ -29,7 +29,7 @@ The technical development of the cut elimination proof is deferred in the paper 
 
 ## Spec sites
 
-- `docs/specification.md` §"Coprocesses (9P-shaped discipline)" line 763 — psh's coprocess design.
+- `docs/spec/` §"Coprocesses (9P-shaped discipline)" line 763 — psh's coprocess design.
 - `decision/coprocess_9p_discipline` — design decision; cites Carbone-Marin-Schürmann directly for star-topology justification.
 - `analysis/wire_format_horizontal_arrow` — operational consequence; the framing is psh's choice, not a paper theorem.
 - `analysis/nine_p_discipline` — the conversation shape per-tag session sits inside.

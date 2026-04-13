@@ -4,7 +4,7 @@ status: current
 created: 2026-04-11
 last_updated: 2026-04-11
 importance: high
-verified_against: [docs/specification.md@HEAD §".get — the pure observer" line 627, /Users/lane/gist/classical-notions-of-computation-duploids.gist.txt:8550-8555]
+verified_against: [docs/spec/@HEAD §".get — the pure observer" line 627, /Users/lane/gist/classical-notions-of-computation-duploids.gist.txt:8550-8555]
 keywords: [cbv-focusing, thunkability, thunkable-central, proposition-8550, hasegawa-thielecke, duploid, reentrancy, fire-once-per-expression, pure-get, not-downen-static-focusing]
 agents: [vdc-theory, psh-sequent-calculus, psh-optics-theorist]
 supersedes: [analysis/polarity/cbv_focusing@pre-2026-04-11 (the "Downen static focusing" framing)]
@@ -106,9 +106,9 @@ operational.
 
 ## Spec sites
 
-- `docs/specification.md` §".get — the pure observer" (line
+- `docs/spec/` §".get — the pure observer" (line
   627) — authoritative citation of Prop 8550.
-- `docs/specification.md` §"Theoretical framework §The
+- `docs/spec/` §"Theoretical framework §The
   semantics" (line 202) — the narrowed Hasegawa-Thielecke
   citation.
 - `decision/codata_discipline_functions` — the design decision

@@ -7,7 +7,7 @@ importance: high
 keywords: [constructor, struct, opcartesian-cell, composite, universal-property, VDC, fcmonads, data-codata, tuple, record-literal, brace-construction, operadic-composition]
 agents: [vdc-theory, psh-sequent-calculus, psh-optics-theorist, psh-architect]
 related: [decision/struct_record_literal_construction, decision/tagged_construction_uniform, decision/three_roles_of_parens, analysis/three_sorts, analysis/data_vs_codata, analysis/oblique_maps, reference/papers/fcmonads]
-verified_against: [/Users/lane/gist/fcmonads.gist.txt@HEAD §5 Def 5.1 line 3957 lines 3999-4005 Theorem 5.4 line 4037, docs/specification.md@HEAD §Structs, docs/vdc-framework.md@HEAD §5.4 line 443]
+verified_against: [/Users/lane/gist/fcmonads.gist.txt@HEAD §5 Def 5.1 line 3957 lines 3999-4005 Theorem 5.4 line 4037, docs/spec/@HEAD §Structs, docs/vdc-framework.md@HEAD §5.4 line 443]
 ---
 
 # Constructor as opcartesian cell
@@ -17,7 +17,7 @@ verified_against: [/Users/lane/gist/fcmonads.gist.txt@HEAD §5 Def 5.1 line 3957
 A `struct` constructor in psh registers an **opcartesian cell**
 in the VDC framework — the cell that witnesses a named composite
 of the struct's field types' horizontal arrows. From
-`docs/specification.md` §Structs: "a struct declaration specifies
+`docs/spec/` §Structs: "a struct declaration specifies
 a cell with a fixed multi-source signature. `Pos : Int, Int → Pos`
 says the constructor cell has two `Int` horizontal arrows on top
 and one `Pos` horizontal arrow on the bottom. The named accessors
@@ -72,7 +72,7 @@ data-layer-specific.
 - `docs/vdc-framework.md` §5.4 "Cells = Commands" (line 443) —
   psh's VDC mapping where commands are cells and constructors are
   cells with multi-source top boundaries.
-- `docs/specification.md` §Structs "In VDC terms" paragraph —
+- `docs/spec/` §Structs "In VDC terms" paragraph —
   psh's own framing of the constructor as a cell.
 - `analysis/data_vs_codata` — the data/codata duality that
   constructor-as-opcartesian and accessor-as-factorization
@@ -82,7 +82,7 @@ data-layer-specific.
 
 ## Spec sites
 
-- `docs/specification.md` §"Structs (named products, ×)" —
+- `docs/spec/` §"Structs (named products, ×)" —
   authoritative struct treatment.
 - `decision/struct_record_literal_construction` — the design
   decision for construction form. Brace record literal under

@@ -47,4 +47,4 @@ Audience: every theory agent (vdc-theory, sequent-calculus, optics) plus plan9-s
 - `reference/papers/duploids` — paper-level reference for the theoretical side (Mangel-Melliès-Munch-Maccagnoni).
 - `reference/ksh93_analysis` — paper-level reference for the manifestation in real interpreter code.
 
-`docs/specification.md` §"Polarity discipline" (line 343), §"Reentrancy and the polarity frame" (line 629). `docs/vdc-framework.md` §9.3 (line 937). `refs/ksh93/ksh93-analysis.md` §"The save/restore pattern IS the shift" (line 425).
+`docs/spec/` §"Polarity discipline" (line 343), §"Reentrancy and the polarity frame" (line 629). `docs/vdc-framework.md` §9.3 (line 937). `refs/ksh93/ksh93-analysis.md` §"The save/restore pattern IS the shift" (line 425).

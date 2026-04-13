@@ -26,12 +26,12 @@ Table 1 of the FoSSaCS companion paper maps abstract structure to concrete PL co
 
 ## Concepts it informs in psh
 
-- **Polarity discipline** — CBV/CBN split in `docs/specification.md` §"Polarity discipline".
+- **Polarity discipline** — CBV/CBN split in `docs/spec/` §"Polarity discipline".
 - **Polarity frame** — the operational realization of the shift operator mediating duploid subcategories. Every psh polarity frame is an instance.
 - **(+,−) non-associativity** — `docs/vdc-framework.md` §8.4 "The non-associativity failure" cites this directly. The `sh.prefix` bugs are concrete manifestations.
 - **Decision procedure** — `docs/vdc-framework.md` §8.5 (monadic/comonadic/boundary-crossing classification) derives from the composition laws in this paper.
 - **`decision/codata_discipline_functions`** — CBV focusing, the codata model, MonadicLens structure in Kl(Ψ).
-- **Führmann-Thielecke theorem** — cited in `docs/specification.md` §"Theoretical framework §The semantics".
+- **Führmann-Thielecke theorem** — cited in `docs/spec/` §"Theoretical framework §The semantics".
 - **Oblique maps** — shell commands as cross-polarity arrows `P → N` (producer meets consumer, effects happen).
 
 ## Who consults it

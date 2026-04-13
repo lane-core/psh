@@ -8,7 +8,7 @@ keywords: [catch, try, parenthesized, binding, grammar, consistency, rc-parens]
 agents: [psh-architect, psh-sequent-calculus, plan9-systems-engineer]
 related: [decision/try_catch_scoped_errort, analysis/error_duality_oplus_par, analysis/cbpv_f_u_separation]
 supersedes: [pre-2026-04-10 bare-NAME form of catch binding in syntax.md:255 and related locations]
-verified_against: [docs/syntax.md@HEAD, docs/specification.md@HEAD, PLAN.md@HEAD]
+verified_against: [docs/spec/04-syntax.md@HEAD, docs/spec/@HEAD, PLAN.md@HEAD]
 ---
 
 # Decision: `catch` binding form is parenthesized
@@ -44,15 +44,15 @@ The `try_cmd` production was the lone outlier among the rc-style control constru
 
 **Locations updated** in the 2026-04-10 change:
 
-- `docs/syntax.md:255` — grammar production tightened
-- `docs/syntax.md:376` — example updated (`} catch (e) {`)
-- `docs/syntax.md:384` — prose updated ("The `catch (e)` binding is a μ̃-binder")
-- `docs/specification.md:283` — coterm table row
-- `docs/specification.md:293` — `catch bindings` prose
-- `docs/specification.md:959` — try/catch scoped ErrorT prose
-- `docs/specification.md:1021` — signal interaction section prose
+- `docs/spec/04-syntax.md:255` — grammar production tightened
+- `docs/spec/04-syntax.md:376` — example updated (`} catch (e) {`)
+- `docs/spec/04-syntax.md:384` — prose updated ("The `catch (e)` binding is a μ̃-binder")
+- `docs/spec/:283` — coterm table row
+- `docs/spec/:293` — `catch bindings` prose
+- `docs/spec/:959` — try/catch scoped ErrorT prose
+- `docs/spec/:1021` — signal interaction section prose
 - `PLAN.md:81, :119` — roadmap references
 
 Decision history is in git.
 
-Spec: `docs/specification.md` §"Error model §try/catch". Syntax: `docs/syntax.md` §"try / catch". Ledger: Decision history is in git.
+Spec: `docs/spec/` §"Error model §try/catch". Syntax: `docs/spec/04-syntax.md` §"try / catch". Ledger: Decision history is in git.

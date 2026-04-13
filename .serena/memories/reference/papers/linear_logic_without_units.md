@@ -25,7 +25,7 @@ psh **has no unit types** — the type system is unit-free, which brings it into
 ## Concepts it informs in psh
 
 - **`decision/every_variable_is_a_list`** — no unit type; lists of length 0 are `()` (the empty list), not a separate Unit.
-- **`docs/specification.md`** implicitly unitless — no Unit type in the value model.
+- **`docs/spec/`** implicitly unitless — no Unit type in the value model.
 - **⊕/⅋ error duality** — when the linear side of the duality is relevant, the unitless MLL fragment is the correct framework.
 - **Coprocess channels** — session types as linear propositions sit in this fragment.
 

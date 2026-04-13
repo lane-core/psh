@@ -24,7 +24,6 @@ Full rationale: serena `policy/citation_workflow`.
 | `[Mun13]` | | Munch-Maccagnoni — Non-Assoc. Composition (thesis) |
 | `[Mun14]` | | Munch-Maccagnoni — Models of Non-Assoc. Composition |
 | `[Spi14]` | `[SPW]` | Spiwack — A Dissection of L |
-| `[Wad03]` | | Wadler — CBV Dual to CBN |
 | `[Wad14]` | | Wadler — Propositions as Sessions |
 
 ---
@@ -303,21 +302,6 @@ layer (words) and the computation layer (commands).
 
 ---
 
-### `[Wad03]`
-
-Philip Wadler. "Call-by-Value is Dual to Call-by-Name." In
-*Proceedings of the Eighth ACM SIGPLAN International
-Conference on Functional Programming (ICFP)*, pp. 189–201,
-2003. DOI: [10.1145/944705.944723](https://doi.org/10.1145/944705.944723).
-
-**Annotation.** Establishes the duality between CBV and CBN
-via the sequent calculus, complementing [CH00]. psh's spec
-cites Wadler for the duality framing that makes the CBV/CBN
-choice a structural decision (which connective is lazy, which
-is strict) rather than a global evaluation strategy.
-
----
-
 ### `[Wad14]`
 
 Philip Wadler. "Propositions as Sessions." *Journal of
@@ -353,7 +337,7 @@ keys for cross-referencing during the transition period.
 | `[3]` | `[Mun13]` | |
 | `[4]` | `[Lev04]` | |
 | `[5]` | `[CH00]` | |
-| `[6]` | `[Wad03]` | |
+| `[6]` | *(removed — uncited)* | |
 | `[7]` | `[BTMO23]` | |
 | `[8]` | `[CMM10]` | |
 | `[9]` | `[Mun14]` | |

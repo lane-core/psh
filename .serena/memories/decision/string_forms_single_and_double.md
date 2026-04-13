@@ -39,5 +39,5 @@ because:
 
 ## Spec
 
-`docs/specification.md` §"Two string forms". `docs/syntax.md`
+`docs/spec/` §"Two string forms". `docs/spec/04-syntax.md`
 §Quoting (SQ_STRING, DQ_STRING productions).

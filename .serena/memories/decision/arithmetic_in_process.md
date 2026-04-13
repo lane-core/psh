@@ -36,4 +36,4 @@ Alternative considered: provide arithmetic only as a builtin (`let n = expr 3 + 
 - The ↓→↑ shift framing means `$((...))` sits at the same level as command substitution in the sequent calculus — it's a polarity shift, not a special form.
 - Typed integer operations (arithmetic, comparison) are available without leaving the polarity discipline.
 
-Spec: `docs/specification.md` §"rc's execution model as sequent calculus §shifts", §"Three operations, three roles".
+Spec: `docs/spec/` §"rc's execution model as sequent calculus §shifts", §"Three operations, three roles".

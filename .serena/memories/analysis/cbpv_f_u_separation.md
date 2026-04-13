@@ -7,7 +7,7 @@ importance: high
 keywords: [cbpv, F, U, returner, thunk, levy, value-computation, def-lambda, let-as-mu-tilde, F-A, U-B, adjunction, pure-vs-effectful]
 agents: [psh-sequent-calculus, vdc-theory, psh-architect]
 related: [analysis/three_sorts, analysis/polarity/shifts, analysis/cut_as_execution, decision/let_is_mu_tilde_binder_cbpv, decision/def_vs_lambda, reference/papers/grokking_sequent_calculus]
-verified_against: [docs/specification.md@HEAD §200-230, §473-500, decision/let_is_mu_tilde_binder_cbpv, audit/psh-sequent-calculus@2026-04-11]
+verified_against: [docs/spec/@HEAD §200-230, §473-500, decision/let_is_mu_tilde_binder_cbpv, audit/psh-sequent-calculus@2026-04-11]
 ---
 
 # CBPV F/U separation (call-by-push-value)
@@ -21,10 +21,10 @@ Levy's **Call-by-Push-Value** (CBPV) splits types into two kinds:
 
 Two adjunction operators bridge them:
 
-- **`F : Val → Comp`** — the **returner**. Given a value type A, `F(A)` is "a computation that returns a value of type A." This is the **upshift** ↑ in the focused-sequent-calculus reading. (Convention at `docs/specification.md` line 200: "↑A for returning".)
+- **`F : Val → Comp`** — the **returner**. Given a value type A, `F(A)` is "a computation that returns a value of type A." This is the **upshift** ↑ in the focused-sequent-calculus reading. (Convention at `docs/spec/` line 200: "↑A for returning".)
 - **`U : Comp → Val`** — the **thunk**. Given a computation type B, `U(B)` is "a value that suspends a computation of type B." This is the **downshift** ↓.
 
-In psh, the `def`/lambda split is the F/U adjunction surfaced as syntax. From `docs/specification.md` line 228: "psh's `def`/`let` + lambda split is CBPV's `U`/`F` adjunction surfaced as syntax."
+In psh, the `def`/lambda split is the F/U adjunction surfaced as syntax. From `docs/spec/` line 228: "psh's `def`/`let` + lambda split is CBPV's `U`/`F` adjunction surfaced as syntax."
 
 - **`def` defines a computation.** A `def` cell has type `F(Status)` — it's a computation that, when run, produces a Status value. Builtins, named commands, and discipline functions are all `def` cells.
 - **A lambda is a value.** `|x| => expr` is a value of type `U(...)` — a thunked computation, storable and substitutable, forced by application.
@@ -41,9 +41,9 @@ The F/U separation is what makes psh's `let` accept effectful computations direc
 
 ## Spec sites
 
-- `docs/specification.md` §"Theoretical framework §The practice" lines 218–230 — Levy CBPV citation.
-- `docs/specification.md` §"Two kinds of callable" line 473 — `def` vs lambda as F/U.
-- `docs/specification.md` line 200 — convention "↑A for returning".
+- `docs/spec/` §"Theoretical framework §The practice" lines 218–230 — Levy CBPV citation.
+- `docs/spec/` §"Two kinds of callable" line 473 — `def` vs lambda as F/U.
+- `docs/spec/` line 200 — convention "↑A for returning".
 - `decision/let_is_mu_tilde_binder_cbpv` — design decision; the operational consequence.
 - `decision/def_vs_lambda` — the design decision for the syntactic split.
 - `analysis/polarity/shifts` — the focused-calculus reading of F/U as ↑/↓.

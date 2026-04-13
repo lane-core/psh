@@ -22,7 +22,7 @@ The **Hasegawa-Thielecke theorem** (duploids paper §"The Hasegawa-Thielecke the
 
 The corresponding categorical-level corollary (gist lines 9610-9612): "The continuation monad of a dialogue category is commutative if and only if it is idempotent." This statement is **attributed in the duploids paper at gist line 9608 to Hasegawa via `melliestabareau`**.
 
-**Attribution note.** The theorem was previously called "Führmann-Thielecke" in `docs/specification.md` line 211 — that was an upstream mis-attribution caught during the 2026-04-11 tier-1 audit. The duploids paper macro `\FH` at gist line 6863 expands unambiguously to "Hasegawa-Thielecke", and every use in the paper (lines 6917, 7891, 7896, 9514) follows that. **Führmann is credited at gist lines 7903-7906** for the related but distinct work distinguishing thunkability from centrality (`Fuhrmann2000PhD`, `fuhrmanndirectmodels`), but the theorem proper is Hasegawa-Thielecke. The spec was corrected to match.
+**Attribution note.** The theorem was previously called "Führmann-Thielecke" in `docs/spec/` line 211 — that was an upstream mis-attribution caught during the 2026-04-11 tier-1 audit. The duploids paper macro `\FH` at gist line 6863 expands unambiguously to "Hasegawa-Thielecke", and every use in the paper (lines 6917, 7891, 7896, 9514) follows that. **Führmann is credited at gist lines 7903-7906** for the related but distinct work distinguishing thunkability from centrality (`Fuhrmann2000PhD`, `fuhrmanndirectmodels`), but the theorem proper is Hasegawa-Thielecke. The spec was corrected to match.
 
 **Why psh cares.** psh's coproduct of effectful and pure values relies on the thunkable=central characterization to know when a value can be safely treated as pure. Pure values (lambdas, builtin returns of pure data) are thunkable; their centrality means they can be substituted into any expansion context without interacting with surrounding effects. The theorem is the proof-theoretic justification for psh's CBPV F/U separation (`analysis/cbpv_f_u_separation`) being meaningful in the presence of classical control (`analysis/classical_control_mu_binder`) — which psh has via lexical `trap` as the μ-binder.
 
@@ -34,7 +34,7 @@ The corresponding categorical-level corollary (gist lines 9610-9612): "The conti
 
 ## Spec sites
 
-- `docs/specification.md` §"Theoretical framework §The semantics" line 211 — citation in psh's framework section. **Corrected from "Führmann-Thielecke" to "Hasegawa-Thielecke" on 2026-04-11** (audit pass).
+- `docs/spec/` §"Theoretical framework §The semantics" line 211 — citation in psh's framework section. **Corrected from "Führmann-Thielecke" to "Hasegawa-Thielecke" on 2026-04-11** (audit pass).
 - `docs/vdc-framework.md` — does not cite the theorem directly (verified by grep on 2026-04-11).
 - `analysis/polarity/duploid_composition` — consumes the theorem as part of the duploid composition law treatment.
 

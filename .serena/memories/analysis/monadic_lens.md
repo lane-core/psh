@@ -4,7 +4,7 @@ status: current
 created: 2026-04-11
 last_updated: 2026-04-11
 importance: high
-verified_against: [docs/specification.md@HEAD §"Mixed-optic structure" line 757, /Users/lane/gist/profunctor-optics/arxivmain.tex:1054-1087]
+verified_against: [docs/spec/@HEAD §"Mixed-optic structure" line 757, /Users/lane/gist/profunctor-optics/arxivmain.tex:1054-1087]
 keywords: [monadic-lens, mixed-optic, kleisli, kl-psi, putget, getput, putput, lens-laws, profunctor-optics, codata, discipline-cells, clarke, def-monadiclens, pure-view]
 agents: [psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect]
 supersedes: [analysis/monadic_lens@pre-2026-04-11 (the "both view and update in Kl(Ψ)" framing that contradicted Clarke def:monadiclens)]
@@ -94,11 +94,11 @@ contradiction with Clarke, no need for Riley's non-mixed variant.
 
 ## Spec sites
 
-- `docs/specification.md` §"Mixed-optic structure" (line 757) —
+- `docs/spec/` §"Mixed-optic structure" (line 757) —
   authoritative.
-- `docs/specification.md` §"Discipline functions §The codata
+- `docs/spec/` §"Discipline functions §The codata
   model" (line 599) — operational embodiment.
-- `docs/specification.md` §"Profunctor structure §Redirections
+- `docs/spec/` §"Profunctor structure §Redirections
   as profunctor maps" (line 810) — optic classes for other
   shell constructs.
 

@@ -38,4 +38,4 @@ Lexical as a μ-binder is the **dual** of `let` as a μ̃-binder (`decision/let_
 - **EINTR policy:** builtins retry on EINTR by default; external commands handle EINTR themselves.
 - No `sigjmp_buf` / `longjmp` in the Rust implementation. Signal delivery via self-pipe wake + poll.
 
-Spec: `docs/specification.md` §"Error model §trap — unified signal handling", §"Polarity discipline §Classical control", §"Signal delivery model", §"Signal interaction with try blocks". Decision history is in git.
+Spec: `docs/spec/` §"Error model §trap — unified signal handling", §"Polarity discipline §Classical control", §"Signal delivery model", §"Signal interaction with try blocks". Decision history is in git.

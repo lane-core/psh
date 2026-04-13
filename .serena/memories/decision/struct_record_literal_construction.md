@@ -7,7 +7,7 @@ importance: high
 keywords: [struct, record-literal, brace-construction, named-fields, bidirectional-check, check-mode, nominal-product]
 agents: [psh-architect, psh-sequent-calculus, psh-optics-theorist, vdc-theory]
 related: [decision/tagged_construction_uniform, decision/three_roles_of_parens, analysis/data_vs_codata, analysis/constructor_as_opcartesian_cell]
-verified_against: [docs/specification.md@HEAD §Structs]
+verified_against: [docs/spec/@HEAD §Structs]
 ---
 
 # Decision: struct construction uses brace record literal with named fields
@@ -90,6 +90,6 @@ with no annotation is a type error at the binding site.
 
 ## Spec
 
-`docs/specification.md` §"Structs (named products, ×)".
-Grammar in `docs/syntax.md` §Bindings (struct_decl) and §Values
+`docs/spec/` §"Structs (named products, ×)".
+Grammar in `docs/spec/04-syntax.md` §Bindings (struct_decl) and §Values
 (record_lit).

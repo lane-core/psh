@@ -52,4 +52,4 @@ ksh93 introduced coprocesses (`cmd |&`) as untyped byte streams with no protocol
 - No `par` dependency. ~40 lines of phantom session types in the Rust implementation; compiler enforces session discipline at build time.
 - Error responses produce nonzero status on `read -p` with the error message bound to the reply variable. Standard ⊕ error handling applies.
 
-Spec: `docs/specification.md` §"Coprocesses (9P-shaped discipline)" — authoritative and complete. Framework: `docs/vdc-framework.md` §4-5 (VDC / horizontal arrows as typed channels), §9.1 (Duff's principle generalized), §9.2 (horizontal arrow discipline). Ground: Carbone-Marin-Schürmann (forwarders); Plan 9 9P (manual section 5).
+Spec: `docs/spec/` §"Coprocesses (9P-shaped discipline)" — authoritative and complete. Framework: `docs/vdc-framework.md` §4-5 (VDC / horizontal arrows as typed channels), §9.1 (Duff's principle generalized), §9.2 (horizontal arrow discipline). Ground: Carbone-Marin-Schürmann (forwarders); Plan 9 9P (manual section 5).

@@ -40,8 +40,8 @@ Cite **definition labels** (e.g., `def:monadiclens`, `def:lens`, `def:prism`) ra
 ## Concepts it informs in psh
 
 - **`decision/codata_discipline_functions`** — `def:monadiclens` is the formal definition. psh's discipline functions in Kl(Ψ) are a direct instance.
-- **`docs/specification.md` §"Profunctor structure"** — redirections as Adapter (`def:adapter`), fd save/restore as Lens (`def:lens`).
-- **Optics activation table** in `docs/specification.md` §"Extension path" — per-type mapping to optic classes (the full hierarchy).
+- **`docs/spec/` §"Profunctor structure"** — redirections as Adapter (`def:adapter`), fd save/restore as Lens (`def:lens`).
+- **Optics activation table** in `docs/spec/` §"Extension path" — per-type mapping to optic classes (the full hierarchy).
 - **`decision/postfix_dot_accessors`** — Lens projection, Prism preview, AffineTraversal (Cartesian + Cocartesian for mixed).
 
 ## Who consults it

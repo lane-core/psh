@@ -8,7 +8,7 @@ keywords: [codata, discipline, get, refresh, set, observer, updater, mutator, pu
 agents: [psh-optics-theorist, psh-sequent-calculus, vdc-theory, psh-session-type-agent, plan9-systems-engineer, psh-architect]
 related: [decision/def_vs_lambda, decision/postfix_dot_accessors, analysis/polarity/cbv_focusing, analysis/polarity/frames, analysis/monadic_lens, analysis/polarity/_hub, analysis/data_vs_codata]
 supersedes: [decision/codata_discipline_functions@pre-2026-04-11 (the "effectful .get as codata observer" design from commit 7afc97d)]
-verified_against: [docs/specification.md@HEAD §"Discipline functions" line 562-806, git-log@7afc97d, git-log@6fbac31, roundtable-2026-04-11]
+verified_against: [docs/spec/@HEAD §"Discipline functions" line 562-806, git-log@7afc97d, git-log@6fbac31, roundtable-2026-04-11]
 ---
 
 # Decision: three-discipline codata model with pure `.get`, effectful `.refresh`, mutating `.set`
@@ -143,8 +143,8 @@ session-type) plus plan9 heritage check.
 
 ## Spec
 
-- `docs/specification.md` §"Discipline functions" (line 562)
-- `docs/specification.md` §"Polarity frames" (line 414)
+- `docs/spec/` §"Discipline functions" (line 562)
+- `docs/spec/` §"Polarity frames" (line 414)
 - Decision history is in git.
   (SUPERSEDED → APPLIED)" — ledger entry; may need a new
   supersession note for the 2026-04-11 rewrite.

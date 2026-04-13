@@ -6,7 +6,7 @@ last_updated: 2026-04-12
 importance: high
 keywords: [psh, design-complete, stub, rc, ksh93, bracket-dot, map-literal, double-quotes, tight-binding-dot, classical-notation, nil-coalescing, if-let, prism-preview]
 agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vdc-theory, psh-sequent-calculus, psh-architect]
-verified_against: [docs/specification.md@HEAD, docs/syntax.md@HEAD, git-log@HEAD]
+verified_against: [docs/spec/@HEAD, docs/spec/04-syntax.md@HEAD, git-log@HEAD]
 ---
 
 # psh status — session handoff (2026-04-12)
@@ -21,7 +21,7 @@ the Plan 9 / ksh93 operational heritage.
 
 ## Design state: first draft complete
 
-The spec (`docs/specification.md`) and grammar (`docs/syntax.md`)
+The spec (`docs/spec/`) and grammar (`docs/spec/04-syntax.md`)
 have been through a six-agent review and verification pass. All
 typing rules use classical sequent notation `Γ ⊢ t : A | Δ` with
 derivable `[synth]`/`[check]` mode annotations. All formal claims
@@ -102,7 +102,7 @@ PLAN.md has 8-phase implementation roadmap.
 
 ## Knowledge tiers
 
-1. `docs/specification.md` — source of truth
+1. `docs/spec/` — source of truth
 2. `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`,
    `docs/implementation.md` — framework
 3. serena memory store — project-shared knowledge base
@@ -111,8 +111,8 @@ PLAN.md has 8-phase implementation roadmap.
 ## Where to read first
 
 1. `CLAUDE.md` — project overview, load-bearing decisions
-2. `docs/specification.md` — the current design
-3. `docs/syntax.md` — grammar productions
+2. `docs/spec/` — the current design
+3. `docs/spec/04-syntax.md` — grammar productions
 4. `PLAN.md` — 8-phase implementation roadmap
 5. `docs/vdc-framework.md` §4, §8, §9 — VDC framework
 6. `refs/ksh93/ksh93-analysis.md` — ksh93 analysis

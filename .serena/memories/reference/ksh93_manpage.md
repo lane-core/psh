@@ -22,7 +22,7 @@ agents: [plan9-systems-engineer, psh-architect]
 - **Discipline functions** — `get`/`set`/`unset` functions attached to variables. Empirical precedent for psh's `decision/codata_discipline_functions`.
 - **Arrays** — indexed and associative. psh's List and Map types correspond.
 - **Type annotations** (`typeset -i`, `typeset -a`, etc.) — ksh93's implicit type system. `refs/ksh93/ksh93-analysis.md` analyzes this as the implicit type theory.
-- **Namespaces** — ksh93's namespace construct. psh has a three-tier namespace (shell variables, process environment, filesystem) — see `docs/specification.md` §"Namespace".
+- **Namespaces** — ksh93's namespace construct. psh has a three-tier namespace (shell variables, process environment, filesystem) — see `docs/spec/` §"Namespace".
 - **Coprocesses** (`|&`) — untyped byte-stream bidirectional channels. `decision/coprocess_9p_discipline` is psh's typed refinement.
 - **Here-documents** (`<<EOF`) and **here-strings** (`<<<`) — inherited syntactic forms; here-string is on the v1 roadmap.
 - **Traps** (DEBUG, ERR, EXIT, signal traps) — the `sh.prefix` bugs analyzed in `refs/ksh93/ksh93-analysis.md` manifest here.

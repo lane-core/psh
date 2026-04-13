@@ -7,7 +7,7 @@ importance: high
 keywords: [9P, plan9, negotiate, request-response, error-at-any-step, orderly-teardown, session-discipline, conversation-shape, protocol-family, per-tag-session, binary-session]
 agents: [psh-session-type-agent, plan9-systems-engineer, psh-architect]
 related: [decision/coprocess_9p_discipline, analysis/wire_format_horizontal_arrow, analysis/forwarders_as_cut, analysis/error_duality_oplus_par]
-verified_against: [docs/specification.md@HEAD §763-922, decision/coprocess_9p_discipline, audit/psh-session-type-agent@2026-04-11]
+verified_against: [docs/spec/@HEAD §763-922, decision/coprocess_9p_discipline, audit/psh-session-type-agent@2026-04-11]
 ---
 
 # 9P discipline (negotiate / request-response / error / teardown)
@@ -33,7 +33,7 @@ The proof-theoretic ground for composing per-tag sessions through the shell-hub 
 
 ## Spec sites
 
-- `docs/specification.md` §"Coprocesses (9P-shaped discipline)" line 763 — protocol context, design lineage, per-tag binary sessions, wire format, named coprocesses.
+- `docs/spec/` §"Coprocesses (9P-shaped discipline)" line 763 — protocol context, design lineage, per-tag binary sessions, wire format, named coprocesses.
 - `decision/coprocess_9p_discipline` — the full design decision.
 
 ## Status

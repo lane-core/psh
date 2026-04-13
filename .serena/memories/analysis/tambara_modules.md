@@ -20,7 +20,7 @@ From the paper at line 488: "...algebraic structure called a **Tambara module**.
 
 A **lens** is a profunctor map polymorphic over **cartesian** Tambara modules. A **prism** is polymorphic over **cocartesian** Tambara modules. The various optic classes correspond to different choices of what Tambara structure the profunctor must respect. The paper's keywords (line 35) list "optics, lens, tambara module" together — the connection is foundational.
 
-Clarke-Boisseau-Gibbons generalizes Tambara modules to **mixed Tambara modules** for mixed optics (`arxivmain.tex` §"Generalized Tambara modules" line 1912). This generalization is necessary for things like monadic lenses where the view and update operations live in different categories. From line 1898: "we need to go even further and generalize the definition of Tambara [modules]." The generalized form is what makes the optic activation table in `docs/specification.md` §"Optics activation" (line 1313) coherent: each row's **profunctor constraint** (cartesian, cocartesian, monoidal, etc. — the spec table's actual column heading) corresponds to a different generalized Tambara structure. **Note:** the correspondence "row's profunctor constraint = generalized Tambara structure" is the optics-theorist reading per Clarke §8; the spec table itself lists profunctor constraints, not Tambara structures, and a careful reader should not mistake this anchor for a spec quotation.
+Clarke-Boisseau-Gibbons generalizes Tambara modules to **mixed Tambara modules** for mixed optics (`arxivmain.tex` §"Generalized Tambara modules" line 1912). This generalization is necessary for things like monadic lenses where the view and update operations live in different categories. From line 1898: "we need to go even further and generalize the definition of Tambara [modules]." The generalized form is what makes the optic activation table in `docs/spec/` §"Optics activation" (line 1313) coherent: each row's **profunctor constraint** (cartesian, cocartesian, monoidal, etc. — the spec table's actual column heading) corresponds to a different generalized Tambara structure. **Note:** the correspondence "row's profunctor constraint = generalized Tambara structure" is the optics-theorist reading per Clarke §8; the spec table itself lists profunctor constraints, not Tambara structures, and a careful reader should not mistake this anchor for a spec quotation.
 
 **Why psh cares.** The optic classes psh exposes (Lens, Prism, MonadicLens, etc., per `analysis/monadic_lens`) compose because they are all profunctor maps factoring through the same generalized-Tambara-modules representation. When psh adds a new optic class to the activation table, the composition question reduces to "does its profunctor structure live in the same generalized Tambara framework." The Pastro-Street theorem is the technical apparatus that lets psh's optics activation be extensible without bespoke composition rules.
 
@@ -34,8 +34,8 @@ Clarke-Boisseau-Gibbons generalizes Tambara modules to **mixed Tambara modules**
 
 ## Spec sites
 
-- `docs/specification.md` §"Profunctor structure" line 696 — psh's profunctor optics framing.
-- `docs/specification.md` §"Optics activation" line 1313 — the activation table whose rows correspond to generalized Tambara structures.
+- `docs/spec/` §"Profunctor structure" line 696 — psh's profunctor optics framing.
+- `docs/spec/` §"Optics activation" line 1313 — the activation table whose rows correspond to generalized Tambara structures.
 - `analysis/monadic_lens` — the MonadicLens consumer of the generalized Tambara framework.
 - `decision/postfix_dot_accessors` — the syntactic surface where the optic classes are exposed.
 

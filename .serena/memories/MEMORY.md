@@ -12,7 +12,7 @@ agents: [plan9-systems-engineer, psh-session-type-agent, psh-optics-theorist, vd
 
 This is the top-level project index — itself a hub per `policy/memory_discipline` §"Hubs reference, they do not contain". It orients agents to query categories and points at memories with one-line hooks. It does **not** contain memo content.
 
-**Sources of truth.** `docs/specification.md` is tier 1 (the spec wins). `docs/vdc-framework.md` / `refs/ksh93/ksh93-analysis.md` / `docs/implementation.md` are tier 2 (framework). Serena memories (below) are tier 3 (project-shared knowledge base). Vendored papers at `/Users/lane/gist/` are tier 4.
+**Sources of truth.** `docs/spec/` is tier 1 (the spec wins). `docs/vdc-framework.md` / `refs/ksh93/ksh93-analysis.md` / `docs/implementation.md` are tier 2 (framework). Serena memories (below) are tier 3 (project-shared knowledge base). Vendored papers at `/Users/lane/gist/` are tier 4.
 
 ## Start here (every session)
 
@@ -72,7 +72,7 @@ Concept-named landings into the foundational material. Each is a short anchor (1
 
 ## When you need to look up a resolved design decision
 
-All decisions live under `decision/`. These are short records: Decision / Why / Consequences. Use them when you need the quick answer; drill into `docs/specification.md` for the full treatment.
+All decisions live under `decision/`. These are short records: Decision / Why / Consequences. Use them when you need the quick answer; drill into `docs/spec/` for the full treatment.
 
 Foundational:
 - [decision/every_variable_is_a_list](decision/every_variable_is_a_list) — Duff's principle extended across the type system
@@ -105,7 +105,7 @@ Semantic / behavioral:
 
 ## When designing / reviewing a coprocess protocol
 
-- `docs/specification.md` §"Coprocesses" — single source of truth.
+- `docs/spec/` §"Coprocesses" — single source of truth.
 - [decision/coprocess_9p_discipline](decision/coprocess_9p_discipline) — quick reference.
 - [reference/papers/carbone_forwarders](reference/papers/carbone_forwarders) — justification for star topology.
 - [reference/papers/deadlock_free_async_rust](reference/papers/deadlock_free_async_rust) — Rust implementation substrate.
@@ -113,7 +113,7 @@ Semantic / behavioral:
 
 ## When reasoning about discipline function semantics
 
-- `docs/specification.md` §"Discipline functions" — authoritative.
+- `docs/spec/` §"Discipline functions" — authoritative.
 - [decision/codata_discipline_functions](decision/codata_discipline_functions) — quick reference + supersession note.
 - [reference/papers/profunctor_optics_clarke](reference/papers/profunctor_optics_clarke) — `def:monadiclens` formal definition.
 - [reference/papers/duploids](reference/papers/duploids) — CBV focusing as critical pair resolution.
@@ -125,11 +125,11 @@ Semantic / behavioral:
 - [reference/ksh93_analysis](reference/ksh93_analysis) — the save/restore pattern IS the shift; the sh.prefix bugs.
 - [reference/sfio_analysis_suite](reference/sfio_analysis_suite) — Dccache as non-associativity witness.
 - [reference/papers/duploids](reference/papers/duploids) — (+,−) equation, focusing.
-- `docs/specification.md` §"Polarity discipline", §"Discipline functions §Reentrancy and the polarity frame".
+- `docs/spec/` §"Polarity discipline", §"Discipline functions §Reentrancy and the polarity frame".
 
 ## When reasoning about error handling (⊕ / ⅋ duality)
 
-- `docs/specification.md` §"Error model" — authoritative.
+- `docs/spec/` §"Error model" — authoritative.
 - [decision/try_catch_scoped_errort](decision/try_catch_scoped_errort) — ⊕ side.
 - [decision/unified_trap_three_forms](decision/unified_trap_three_forms) — ⅋ side.
 - [reference/papers/grokking_sequent_calculus](reference/papers/grokking_sequent_calculus) — where ⊕/⅋ duality is introduced.
@@ -146,7 +146,7 @@ Semantic / behavioral:
 
 - [reference/papers/dont_fear_profunctor_optics](reference/papers/dont_fear_profunctor_optics) — three-part intuition intro.
 - [reference/papers/profunctor_optics_clarke](reference/papers/profunctor_optics_clarke) — formal definitions. Cite `def:monadiclens` etc.
-- `docs/specification.md` §"Profunctor structure", §"Extension path" (optics activation table).
+- `docs/spec/` §"Profunctor structure", §"Extension path" (optics activation table).
 
 ## When reasoning about sequent calculus / λμμ̃ / typing rules
 
@@ -155,7 +155,7 @@ Semantic / behavioral:
 - [reference/papers/duploids](reference/papers/duploids) — categorical semantics.
 - [reference/papers/squier_rewriting_hott](reference/papers/squier_rewriting_hott) — critical pair / coherence.
 - [reference/papers/linear_logic_without_units](reference/papers/linear_logic_without_units) — unit-free MLL fragment.
-- `docs/specification.md` §"The three sorts, made explicit".
+- `docs/spec/` §"The three sorts, made explicit".
 
 ## When reasoning about session types on channels
 

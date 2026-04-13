@@ -38,7 +38,7 @@ agents: [plan9-systems-engineer, vdc-theory, psh-architect]
 
 - **Polarity frame discipline** — Dccache (`07-disciplines.md`) is the structural precedent. psh generalizes it from "I/O library mechanism" to "shell-level discipline at every polarity boundary."
 - **Typed fd model** — `filemap[]`/`sh.topfd` (`10-ksh-integration.md`) is the untyped ancestor of psh's typed fd roles (`Pipe`, `File`, `Tty`, `Coproc`, `Session`).
-- **Wrapped redirections as Lens** — `decision/postfix_dot_accessors`, `docs/specification.md` §"Profunctor structure". The save/restore pattern is a monomorphic Lens with PutGet/GetPut/PutPut laws.
+- **Wrapped redirections as Lens** — `decision/postfix_dot_accessors`, `docs/spec/` §"Profunctor structure". The save/restore pattern is a monomorphic Lens with PutGet/GetPut/PutPut laws.
 - **Non-associativity witness** — Dccache is where duploid (+,−) non-associativity shows up concretely in a real codebase. `docs/vdc-framework.md` §8.4 cites this.
 - **Buffer polarity as shift** — the five-pointer model is a runtime realization of the polarity shift from focused type theory.
 

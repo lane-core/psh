@@ -57,7 +57,7 @@ categories, plus one engineering layer:
   the evaluator dispatches on it before the cut fires.
 - **`Command` — Consumer sort (coterm). Command shapess) — ⟨t | e⟩" —
   sort-by-sort treatment.
-- `docs/specification.md` §"The AST's three sorts (plus
+- `docs/spec/` §"The AST's three sorts (plus
   engineering layer)" — the AST-level mapping.
 
 ## Status

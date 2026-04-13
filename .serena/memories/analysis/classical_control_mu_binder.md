@@ -7,7 +7,7 @@ importance: normal
 keywords: [classical-control, mu-binder, curien-herbelin, continuation-capture, signal-continuation, trap-as-mu, let-control-duality, sigjmp-buf, ksh93, lexical-scoping, delimited-continuation, classical-contraction]
 agents: [psh-sequent-calculus, plan9-systems-engineer, vdc-theory]
 related: [decision/unified_trap_three_forms, decision/let_is_mu_tilde_binder_cbpv, analysis/cbpv_f_u_separation, analysis/error_duality_oplus_par, analysis/cut_as_execution, analysis/polarity/sh_prefix_critical_pair]
-verified_against: [docs/specification.md@HEAD §969-991, refs/ksh93/ksh93-analysis.md@HEAD §228-260, audit/psh-sequent-calculus@2026-04-11]
+verified_against: [docs/spec/@HEAD §969-991, refs/ksh93/ksh93-analysis.md@HEAD §228-260, audit/psh-sequent-calculus@2026-04-11]
 ---
 
 # Classical control as μ-binder
@@ -16,7 +16,7 @@ verified_against: [docs/specification.md@HEAD §969-991, refs/ksh93/ksh93-analys
 
 In the λμμ̃-calculus, **μα.s** (the "mu" binder) captures the current **continuation** (evaluation context) and binds it to α. This is the dual of **μ̃x.s** (the "mu-tilde" binder), which captures the current **value** and binds it to x. The let/control duality (per `reference/papers/grokking_sequent_calculus`): variable binding and continuation binding are the same structural operation applied to opposite sides of the sequent.
 
-**In psh, lexical `trap` is the operational μ-binder.** From `docs/specification.md` §"trap — unified signal handling" line 974:
+**In psh, lexical `trap` is the operational μ-binder.** From `docs/spec/` §"trap — unified signal handling" line 974:
 
 > "**Lexical** (two blocks): `trap SIGNAL { handler } { body }` — installs the handler for the duration of the body, the μ-binder of Curien-Herbelin [5, §2.1]. The handler captures a signal continuation scoped to the body. Inner lexical traps shadow outer for the same signal."
 
@@ -39,14 +39,14 @@ ksh93 implemented all of this with global mutation on `Shell_t`, leading to the 
 
 ## Foundational refs
 
-- Curien, Herbelin. *The Duality of Computation*. ICFP 2000. **Not vendored** in `~/gist/`; cited from `decision/unified_trap_three_forms` and `docs/specification.md` line 974 as `[5, §2.1]`.
+- Curien, Herbelin. *The Duality of Computation*. ICFP 2000. **Not vendored** in `~/gist/`; cited from `decision/unified_trap_three_forms` and `docs/spec/` line 974 as `[5, §2.1]`.
 - `reference/papers/grokking_sequent_calculus` — Binder et al. The let/control duality is presented as a key insight of the functional pearl per the existing reference memo: "Let-bindings (μ̃) are *exactly dual* to control operators (μ). Variable assignment is dual to trap/label setup. Not two separate mechanisms — the same operation viewed from opposite sides of the cut."
 - `refs/ksh93/ksh93-analysis.md` §"Continuations and classical control" lines 228-260 — the ksh93 negative example: classical control via global mutation, with the table mapping shell mechanisms to calculus analogs.
 
 ## Spec sites
 
-- `docs/specification.md` §"trap — unified signal handling (⅋ discipline)" line 969 — authoritative for psh's μ-binder framing.
-- `docs/specification.md` line 974 — explicit "the μ-binder of Curien-Herbelin §2.1" attribution.
+- `docs/spec/` §"trap — unified signal handling (⅋ discipline)" line 969 — authoritative for psh's μ-binder framing.
+- `docs/spec/` line 974 — explicit "the μ-binder of Curien-Herbelin §2.1" attribution.
 - `decision/unified_trap_three_forms` — design decision; cites Curien-Herbelin and the lexical-scoping rationale.
 - `analysis/cbpv_f_u_separation` — the let half of the let/control duality; this anchor is the trap half.
 - `analysis/error_duality_oplus_par` — orthogonal composition with try.

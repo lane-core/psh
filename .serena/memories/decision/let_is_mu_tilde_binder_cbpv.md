@@ -31,4 +31,4 @@ Alternative considered and rejected: ANF-style restriction to pure right-hand si
 - The μ̃-binder is the dual of the μ control-binder; see `decision/unified_trap_three_forms` for the μ side.
 - Builtins return values directly (a trivial `F(A)` where A is known).
 
-Spec: `docs/specification.md` §"Two kinds of callable", §"The three sorts, made explicit", §"Theoretical framework §The practice". Ground: Levy *Call-by-Push-Value* (Springer 2004); Curien-Herbelin "The Duality of Computation" ICFP 2000; Binder et al. "Grokking the Sequent Calculus" (functional pearl, 2023).
+Spec: `docs/spec/` §"Two kinds of callable", §"The three sorts, made explicit", §"Theoretical framework §The practice". Ground: Levy *Call-by-Push-Value* (Springer 2004); Curien-Herbelin "The Duality of Computation" ICFP 2000; Binder et al. "Grokking the Sequent Calculus" (functional pearl, 2023).
