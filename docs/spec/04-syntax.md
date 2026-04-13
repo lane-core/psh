@@ -656,7 +656,7 @@ command that consumes them runs.
     tuple       = '(' word (',' word)+ ','? ')'
 
     arith_expr  = arith_term (arith_op arith_term)*
-    arith_term  = NUM | VARNAME | '(' arith_expr ')'
+    arith_term  = NUM | '$'? VARNAME | '(' arith_expr ')'   -- $ optional, bare name preferred
     arith_op    = '+' | '-' | '*' | '/' | '%'
                 | '>' | '<' | '>=' | '<=' | '==' | '!='
 
@@ -821,9 +821,16 @@ arithmetic operators are not shell syntax (no quoting needed).
     let ok = $((x > 10))        # 1 (true)
     let sum = $((x + y * z))    # standard precedence
 
-Variables inside `$((...))` are looked up by name and coerced
-to integer. Non-integer values are an error. Nested parens
-for grouping: `$((x * (y + z)))`.
+Variables inside `$((...))` are looked up by bare name and
+coerced to integer. Non-integer values are an error. Nested
+parens for grouping: `$((x * (y + z)))`.
+
+**`$`-prefixed variables are accepted** inside `$((...))` for
+familiarity — `$(($x + 1))` is equivalent to `$((x + 1))`.
+The `$` is redundant (the arithmetic context already resolves
+bare names) but rejecting it would create an unnecessary
+migration friction for ksh93/bash users. The grammar treats
+`$VARNAME` as sugar for `VARNAME` inside `arith_expr`.
 
 This is a polarity shift: computation (arithmetic) → value
 (Int). Like command substitution `` `{} `` but the computation
@@ -1056,8 +1063,23 @@ full analysis.
 
 - `>file` — Output (rmap: post-compose on output continuation)
 - `<file` — Input (lmap: pre-compose on input source)
+- `>>file` — Append (rmap variant: output appended, not truncated)
 - `>[n=m]` — Dup (contraction: two fds alias one resource)
 - `>[n=]` — Close (weakening: discard a resource)
+- `<<<word` — Here-string (lmap: string as stdin)
+
+**`<>file` (read-write) is not supported.** The read-write
+open is a simultaneous lmap + rmap on the same fd — a
+profunctor endomorphism that blurs the input/output distinction.
+psh's profunctor model keeps input (lmap) and output (rmap)
+structurally separate. Read-write access is served by `exec`
+with explicit fd management:
+
+    exec <[3] file >[3] file   # explicit: read on 3, write on 3
+
+This is more verbose but structurally honest — the two
+directions are separate profunctor maps. The `<>` shorthand
+is a non-goal.
 
 Redirections are evaluated left to right. The AST wraps
 redirections as nesting (inner-to-outer = left-to-right

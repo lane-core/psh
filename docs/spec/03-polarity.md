@@ -156,6 +156,18 @@ positive, the computation behind the name is negative and
 demand-driven. The polarity frame discipline applies only to
 the bind, not to the deferred computation.
 
+**Nested process substitution.** `cmd1 <{cmd2 <{cmd3}}` is
+valid — the grammar is recursive. Evaluation order is
+left-to-right, innermost-first: `<{cmd3}` forks first and
+allocates `/dev/fd/N`; that name is substituted into `cmd2`'s
+argument list; `<{cmd2 /dev/fd/N}` then forks and allocates
+`/dev/fd/M`; that name is substituted into `cmd1`. Each fork
+allocates the lowest available fd not already in use. The
+inner substitution's fd is visible to the outer command only
+as a string (the `/dev/fd/N` path) — there is no fd-table
+sharing between the nested forks. Each process substitution
+is an independent downshift with its own fd allocation.
+
 
 ### Linear resources and exponentials
 
