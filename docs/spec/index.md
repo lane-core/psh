@@ -42,7 +42,7 @@ here.
 | This directory (`docs/spec/`) | Single source of truth | 1 |
 | `docs/vdc-framework.md` | Categorical semantics (VDC theory) | 2 |
 | `refs/ksh93/ksh93-analysis.md` | ksh26 sequent-calculus analysis | 2 |
-| `docs/implementation.md` | Engineering principles, crate rationale | 2 |
+| `docs/impl/` | Implementation blueprint (7-layer architecture) | 2 |
 | serena memory store | Project knowledge base | 3 |
 | `~/gist/` | Vendored papers | 4 |
 

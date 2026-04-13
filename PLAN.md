@@ -14,7 +14,7 @@ Roadmap. Living doc — update on task completion, priority change, or new work.
 - `src/parse.rs` — combine boilerplate (character predicates, trivia, keyword/name primitives)
 - `src/signal.rs` — self-pipe signal handling (preserved, type-system neutral)
 
-Deps per `docs/implementation.md`: `anyhow`, `bpaf`, `combine`, `fnmatch-regex`, `libc`, `rustix`, `smallvec`, `signal_receipts`.
+Deps per `docs/impl/00-principles.md`: `anyhow`, `bpaf`, `combine`, `fnmatch-regex`, `libc`, `rustix`, `smallvec`, `signal_receipts`.
 
 ## Intermediate State Principle
 

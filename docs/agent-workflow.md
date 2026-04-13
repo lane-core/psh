@@ -37,7 +37,7 @@ Knowledge in psh: four tiers. Higher overrides lower. Conflict → follow higher
 | Tier | Location | Authority |
 |---|---|---|
 | 1 | `docs/spec/` | single source of truth |
-| 2 | `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/implementation.md` | framework |
+| 2 | `docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/impl/` | framework |
 | 3 | serena memory store | project-shared knowledge base |
 | 4 | vendored papers at `/Users/lane/gist/` | original literature |
 

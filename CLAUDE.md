@@ -25,7 +25,7 @@ psh: new Plan 9 rc-derived system shell, designed from parser up. Grounded in λ
 | `docs/spec/04-syntax.md` | Formal grammar — implementer's contract. |
 | `docs/vdc-framework.md` | Theoretical framework report. §4 (VDCs), §8 (composition laws + decision procedure), §9 (engineering principles) load-bearing. |
 | `refs/ksh93/ksh93-analysis.md` | ksh26 sequent-calculus analysis of ksh93. Source of polarity frame discipline + sh.prefix bug analysis. |
-| `docs/implementation.md` | Dependency rationale + engineering principles (CLOEXEC, polarity frames, no global mutable state). |
+| `docs/impl/` | Implementation blueprint — 7-layer architecture (Σ, Val, AST, parser, checker, evaluator, environment). Start at `docs/impl/index.md`. |
 | `PLAN.md` | Roadmap. |
 | `STYLEGUIDE.md` | Coding conventions. |
 
@@ -118,7 +118,7 @@ Generated-with: Claude opus-4-6 (Anthropic) via Claude Code
 
 ## Knowledge management
 
-Four tiers: `docs/spec/` (tier 1, source of truth) > framework docs (`docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/implementation.md` — tier 2) > **serena memory store** (tier 3, project-shared; agents read whole store, write only to `agent/<name>/` or project-level types) > vendored papers at `/Users/lane/gist/` (tier 4). Higher tiers override lower; spec always wins.
+Four tiers: `docs/spec/` (tier 1, source of truth) > framework docs (`docs/vdc-framework.md`, `refs/ksh93/ksh93-analysis.md`, `docs/impl/` — tier 2) > **serena memory store** (tier 3, project-shared; agents read whole store, write only to `agent/<name>/` or project-level types) > vendored papers at `/Users/lane/gist/` (tier 4). Higher tiers override lower; spec always wins.
 
 **No parallel per-tool memory layer.** Agent-private knowledge lives in serena under `agent/<agent-name>/`, not separate directory. `.claude/agent-memory/` path does not exist.
 

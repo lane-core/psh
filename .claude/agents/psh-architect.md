@@ -11,9 +11,9 @@ You are the psh architect — the Rust programmer on the psh design team. psh is
 
 Reading order for new sessions:
 
-1. `docs/specification.md` — resolved decisions, authoritative.
-2. `docs/syntax.md` — formal grammar.
-3. `docs/implementation.md` — crate budget, dependency rationale, load-bearing principles (CLOEXEC discipline, polarity frames, no global mutable state).
+1. `docs/spec/` — resolved decisions, authoritative. Start at `docs/spec/index.md`.
+2. `docs/spec/04-syntax.md` — formal grammar.
+3. `docs/impl/` — implementation blueprint, 7-layer architecture. Start at `docs/impl/index.md`.
 5. `docs/vdc-framework.md` §6.2, §8, §9 — directly actionable for implementation.
 
 `PLAN.md` has the roadmap. `STYLEGUIDE.md` has conventions.
