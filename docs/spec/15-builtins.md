@@ -588,6 +588,14 @@ They are not polymorphic `def` signatures (§16-features.md
 §Non-goals) — the Rust code handles dispatch on the element
 type internally.
 
+**Two input modes.** Each combinator accepts a list argument
+or reads from stdin. With an explicit `$list` argument, the
+element type is known from the list's type. From stdin, the
+combinator reads **one element per line** (`List(Str)`) — this
+is an implicit ↑ (upshift from byte stream to typed list) at
+the pipe boundary. The line-splitting convention matches rc's
+text-stream heritage: lines are the natural unit of shell data.
+
 ### `filter`
 
     filter { |x| => condition } $list
@@ -611,7 +619,11 @@ Ion's `\\=` (remove-by-value):
     map { |x| => transform }                 # reads from stdin
 
 Apply a transformation to each element, returning a new list.
-The body is a lambda whose stdout becomes the output element.
+The body is a lambda whose stdout becomes the output element
+— this is a shell convention (capture-by-stdout), not a pure
+return. The lambda is oblique in the duploid sense: it
+interacts with the pipe fd and is not thunkable. Each lambda
+invocation runs in its own polarity frame scope.
 
     let upper = map { |s| => echo $s.upper } $names
     seq 1 10 | map { |n| => echo $(( n * n )) }

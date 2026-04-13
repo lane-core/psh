@@ -452,10 +452,21 @@ prefixes are the convention for explicit ordering:
 ### Refresh
 
 The status line refreshes before each prompt (same timing as
-`def PROMPT`). Segments should be fast — avoid expensive
-operations or network calls. Expensive data (git status,
-system load) should be cached in a variable and refreshed via
-a `.refresh` discipline on a timer or directory-change hook.
+`def PROMPT`). Segments should be fast and side-effect-free —
+avoid expensive operations, network calls, or mutations.
+Expensive data (git status, system load) should be cached in
+a variable and refreshed via a `.refresh` discipline on a
+timer or directory-change hook.
+
+**Typing note.** The shell discovers segments by runtime
+enumeration of `def status.*` names in Θ — this is reflection
+over the computation namespace, intentionally outside the
+static typing discipline. Each individual segment call is a
+well-typed cut, but the enumeration itself is untyped (the
+type checker does not see which `def status.*` functions will
+exist at runtime). Segments should not depend on each other's
+execution order. Lexicographic ordering is a display
+convention, not a sequencing guarantee.
 
 ### No status line
 
@@ -691,6 +702,15 @@ where `<words...>` is the tokenized command line. The provider
 returns JSON on stdout (the carapace `export` format). Exit
 status 0 means valid completions; nonzero means fallback to
 built-in path completion.
+
+**Bounds.** The provider subprocess has a **2-second timeout**
+— if it has not exited within 2 seconds, it is killed
+(SIGKILL) and the shell falls back to built-in completion.
+Response size is capped at **1 MiB** — larger responses are
+truncated and treated as provider error. These bounds prevent
+a hung or malicious provider from blocking the interactive
+shell. The timeout is not configurable — completion must be
+fast.
 
 This protocol is compatible with carapace-bin out of the box.
 Other providers can implement the same JSON format. The
