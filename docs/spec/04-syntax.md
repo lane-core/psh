@@ -53,9 +53,11 @@ do not nest. rc heritage [Duf90, §Simple commands].
 A command is one of: a binding (context extension), a control
 flow construct, or an expression.
 
-    command     = binding | control | return_cmd | exit_cmd | expr_cmd
+    command     = binding | control | return_cmd | exit_cmd | set_cmd | expr_cmd
     return_cmd  = 'return' value?
     exit_cmd    = 'exit' NUM? WORD?            -- exit code + optional message
+    set_cmd     = 'set' (set_flag+ | '--' WORD*)   -- option control or positional params
+    set_flag    = ('-' | '+') ('o' NAME | SHORT_FLAG)  -- -o name / +o name / -x / +x
 
 
 ## Bindings
@@ -325,9 +327,6 @@ a braced block or `=>` single-line form.
 
     control     = if_cmd | for_cmd | while_cmd
                 | match_cmd | try_cmd | trap_cmd
-                | linear_block
-
-    linear_block = 'linear' body   -- all bindings default to linear zone (§Linear resources)
 
     if_cmd      = 'if' '(' pipeline ')' body ('else' (if_cmd | body))?
                 | 'if' 'let' pat '=' rhs body ('else' body)?   -- refutable pattern branch
@@ -553,27 +552,26 @@ model, including signal delivery at interpreter step
 boundaries (wake-from-block during child waits) and the four
 cases of signal interaction with try blocks.
 
-### linear
+### set
 
-`linear { ... }` changes the default zone from classical to
-linear for all bindings within the block. Every `let x = expr`
-inside a `linear` block produces a linear binding — the type
-checker requires it to be consumed on every control-flow path.
-Explicit `!` marks classical islands within the block.
+`set` controls shell options at runtime. See §14-invocation.md
+for the full option inventory.
 
-    linear {
-        let fd = open $notify_fd       # Fd — linear (must consume)
-        let name = $1                  # Str — linear (must use)
-        let !config = read_config()    # !List(Str) — classical island
+    set -o linear           # bindings default to linear zone
+    set +o linear           # back to classical default
+    set -o noclobber        # prevent > from truncating (on by default)
+    set +o noclobber        # allow > to truncate
+    set -x                  # trace execution (short form)
+    set -o emacs            # emacs line editing
+    set -o vi               # vi line editing
+    set -- a b c            # set positional parameters
 
-        write $fd '\n'                 # fd consumed
-        exec $name                     # name consumed
-    }                                  # checker: all linear bindings consumed
+For scoped option changes, use a subshell:
 
-The `linear` block is a type-checker directive, not a runtime
-construct. No operational cost for code that doesn't use it.
-See specification.md §Linear resources for the three-zone model
-(classical/affine/linear) and exceptional-exit semantics.
+    @{ set -o linear; critical_section }
+
+The subshell inherits the parent's options, applies the change,
+and the change dies with the subshell.
 
 ### exit
 
@@ -1097,7 +1095,7 @@ wire format, named coprocesses).
 
 Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
 `for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
-`return`, `exit`, `struct`, `enum`, `linear`.
+`return`, `exit`, `set`, `struct`, `enum`.
 
 Reserved for future use: `type` (type aliases, if parametric
 polymorphism on function signatures is ever reconsidered).

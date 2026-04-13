@@ -171,7 +171,7 @@ well-defined cancellation protocol. The three usage disciplines:
 |---|---|---|---|
 | **Classical** (`!A`) | Value types: Str, Int, Bool, Path, ExitCode, List, Tuple, Struct | Contraction + weakening (copy, discard freely) | `let x = b` or `let !x = b` |
 | **Affine** | Resource types with cleanup: ReplyTag | No contraction; weakening triggers runtime cleanup | `let tag = print -p name 'q'` |
-| **Linear** (bare `A`) | Bare-annotated bindings; default inside `linear` blocks | No contraction, no weakening | `let fd : Fd = open f` or `linear { let fd = open f }` |
+| **Linear** (bare `A`) | Bare-annotated bindings; default under `set -o linear` | No contraction, no weakening | `let fd : Fd = open f` |
 
 **Default behavior.** `let x = expr` infers the zone from the
 type. Ground value types (Str, Int, Bool, Path, ExitCode, List,
@@ -208,35 +208,45 @@ safe cancellation — dropping a tag is a well-defined protocol
 action, not a leak. The `!` promotion (`let !fd = dup $log_fd`)
 overrides both defaults when the user accepts responsibility.
 
-**`linear` blocks.** The `linear { ... }` block changes the
-default zone from classical to linear for all bindings within
-the block. Inside a `linear` block, `let x = expr` produces a
-linear binding even for value types. Explicit `!` marks
-classical islands within the block. The block boundary is where
-the type checker verifies: all linear bindings introduced in the
-block are consumed before exit.
+**`set -o linear` — linear mode.** The `set -o linear` option
+(§14-invocation.md) changes the default zone from classical to
+linear for all subsequent bindings. Under linear mode,
+`let x = expr` produces a linear binding even for value types.
+Explicit `!` marks classical islands. The type checker verifies
+that all linear bindings are consumed on every control-flow
+path.
 
-**Exceptional exit from `linear` blocks.** When a `linear`
-block is exited via `try`/`catch` abort or signal handler
-`return N`, unconsumed linear bindings degrade to affine
-cleanup: the runtime sends Tflush for outstanding ReplyTags
-and closes outstanding Fds. This is consistent with the
-polarity-frame unwind semantics (§Polarity frames). The type
-checker warns on linear blocks in `try` bodies where
-exceptional paths leave bindings unconsumed, but does not
+```
+#!/usr/bin/env psh
+set -o linear
+
+let fd = open $notify_fd       # Fd — linear (must consume)
+let name = $1                  # Str — linear (must use)
+let !config = read_config()    # !List(Str) — classical island
+
+write $fd '\n'                 # fd consumed
+exec $name                     # name consumed
+```
+
+For scoped linear mode within an otherwise classical script,
+use a subshell:
+
+```
+@{ set -o linear; critical_section }
+```
+
+The subshell inherits the parent's options, applies linear
+mode, and the mode dies with the subshell.
+
+**Exceptional exit under linear mode.** When linear-mode code
+is exited via `try`/`catch` abort or signal handler `return N`,
+unconsumed linear bindings degrade to affine cleanup: the
+runtime sends Tflush for outstanding ReplyTags and closes
+outstanding Fds. This is consistent with the polarity-frame
+unwind semantics (§Polarity frames). The type checker warns
+where exceptional paths leave bindings unconsumed, but does not
 reject — the runtime cleanup guarantees protocol correctness
 regardless.
-
-```
-linear {
-    let fd = open $notify_fd       # Fd — linear (must consume)
-    let name = $1                  # Str — linear (must use)
-    let !config = read_config()    # !List(Str) — classical island
-
-    write $fd '\n'                 # fd consumed
-    exec $name                     # name consumed
-}                                  # checker: all linear bindings consumed ✓
-```
 
 **Type annotations.** `!` and `?` appear in type position with
 their L-calculus meaning. `!T` is "classical T" (freely
@@ -265,7 +275,7 @@ and requires no tracking. Affine tracking is already implemented
 (coprocess tag tracking via the outstanding-tags HashMap).
 Linear checking is a compile-time verification pass — it
 constrains control-flow paths at the type level, not at runtime.
-The `linear` block is a type-checker directive, not a runtime
-construct.
+`set -o linear` is a type-checker directive — it constrains
+the default zone but adds no runtime overhead.
 
 
