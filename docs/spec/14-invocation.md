@@ -365,20 +365,45 @@ and an optional message string.
 
 ## Prompt
 
-`$prompt` is a list of two strings (rc heritage):
+Two mechanisms, in priority order:
 
-- `$prompt[0]` — primary prompt (displayed before each command)
-- `$prompt[1]` — continuation prompt (displayed when more input
-  needed)
+**1. `def PROMPT` — computation (preferred).** If a `def`
+named `PROMPT` exists, the shell calls it before each command
+line. The def returns a list of two strings: primary prompt
+and continuation prompt. This is a computation in Θ — full
+psh is available (conditionals, variable access, command
+substitution, string methods).
 
-Default: `('% ' '  ')` — the `%` prompt from rc, with a
-two-space continuation indent.
+    def PROMPT {
+        let branch = `{git branch --show-current 2>/dev/null}
+        let dir = $PWD.name
+        if $branch != '' {
+            ("$dir ($branch) % " '  ')
+        } else {
+            ("$dir % " '  ')
+        }
+    }
 
-Prompt strings undergo variable expansion (but not command
-substitution — prompts should be fast). `$PWD`, `$USER`,
-`$SHLVL` are commonly used in prompt customization.
+`def PROMPT` fits psh's CBPV model: the prompt is a
+computation, not a value. Arbitrary logic runs each time —
+git status, exit code coloring, hostname for SSH detection.
+
+**2. `$prompt` variable — simple case.** If no `def PROMPT`
+exists, the shell uses `$prompt`, a list of two strings
+(rc heritage):
+
+- `$prompt[0]` — primary prompt
+- `$prompt[1]` — continuation prompt
+
+Default: `('% ' '  ')` — rc's `%` prompt, two-space
+continuation. Prompt strings undergo variable expansion
+(not command substitution). `$PWD`, `$USER`, `$SHLVL`
+commonly used.
 
     prompt = ('$USER@$HOSTNAME:$PWD% ' '  ')
+
+`def PROMPT` takes precedence when defined. Undefining it
+(`unset -f PROMPT`) falls back to `$prompt`.
 
 
 ## History

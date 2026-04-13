@@ -594,7 +594,7 @@ Status.
 Expressions are the profunctor layer — commands with
 redirections, pipelines, and operators.
 
-    expr_cmd    = or_expr ('&')?
+    expr_cmd    = or_expr ('&' '!'? )?
     or_expr     = and_expr ('||' and_expr)*
     and_expr    = match_expr ('&&' match_expr)*
     match_expr  = pipeline ('=~' value)?
@@ -638,7 +638,13 @@ independent.
 **`!` negation.** Inverts exit status. rc heritage.
 
 **`&` background.** Runs the command asynchronously. rc
-heritage.
+heritage. `$apid` set to the child's PID.
+
+**`&!` background + disown.** Runs the command asynchronously
+and immediately removes it from the job table. The shell will
+not send SIGHUP on exit and `jobs` will not list it. Shorthand
+for `cmd &` followed by `disown`. Useful for fire-and-forget
+daemons: `server --port 8080 &!`
 
 
 ## Words

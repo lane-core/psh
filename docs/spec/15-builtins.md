@@ -454,6 +454,59 @@ for the completion framework.
 `cmd_name`, reverting to default path completion.
 
 
+## Generic list combinators
+
+Generic combinators (`map`, `filter`, `each`) are shell
+builtins whose types live at the Rust implementation layer.
+They are not polymorphic `def` signatures (§16-features.md
+§Non-goals) — the Rust code handles dispatch on the element
+type internally.
+
+### `filter`
+
+    filter { |x| => condition } $list
+    filter { |x| => condition }              # reads from stdin
+
+Remove elements that don't satisfy the condition. Returns a
+new list. The body is a lambda — its exit status determines
+inclusion (0 = keep, nonzero = discard).
+
+    let evens = filter { |n| => test $(( n % 2 )) -eq 0 } $numbers
+    ls | filter { |f| => test -d $f }
+
+**List removal shorthand.** `filter` with negation replaces
+Ion's `\\=` (remove-by-value):
+
+    let cleaned = filter { |x| => test $x != 'unwanted' } $list
+
+### `map`
+
+    map { |x| => transform } $list
+    map { |x| => transform }                 # reads from stdin
+
+Apply a transformation to each element, returning a new list.
+The body is a lambda whose stdout becomes the output element.
+
+    let upper = map { |s| => echo $s.upper } $names
+    seq 1 10 | map { |n| => echo $(( n * n )) }
+
+### `each`
+
+    each { |x| => body } $list
+    each { |x| => body }                     # reads from stdin
+
+Execute the body for each element. Unlike `map`, output is not
+collected — `each` is for side effects. Returns the status of
+the last iteration.
+
+    each { |f| => rm $f } $tempfiles
+    ls *.log | each { |f| => gzip $f }
+
+`for x in $list { body }` is the control-flow equivalent.
+`each` exists for the pipeline case where the list arrives
+on stdin.
+
+
 ## Summary by priority
 
 ### Essential (blocks login shell use)
@@ -465,7 +518,7 @@ for the completion framework.
 
 `printf`, `eval`, `shift`, `wait`, `kill`, `fg`, `bg`, `jobs`,
 `break`, `continue`, `command`, `builtin`, `whatis`, `pwd`,
-`unset`, `unexport`, `fc`.
+`unset`, `unexport`, `fc`, `filter`, `map`, `each`.
 
 ### Operational (robustness)
 
