@@ -325,13 +325,14 @@ Control flow constructs branch or iterate. Each takes its
 condition or value in rc-style parentheses and its body as
 a braced block or `=>` single-line form.
 
-    control     = if_cmd | for_cmd | while_cmd
+    control     = if_cmd | for_cmd | while_cmd | loop_cmd
                 | match_cmd | try_cmd | trap_cmd
 
     if_cmd      = 'if' '(' pipeline ')' body ('else' (if_cmd | body))?
                 | 'if' 'let' pat '=' rhs body ('else' body)?   -- refutable pattern branch
     for_cmd     = 'for' '(' NAME 'in' value ')' body
     while_cmd   = 'while' '(' pipeline ')' body
+    loop_cmd    = 'loop' body                                  -- sugar: while(true)
     match_cmd   = 'match' '(' value ')' '{' match_arm (';' match_arm)* ';'? '}'
     try_cmd     = 'try' body 'catch' '(' NAME ')' body    -- NAME : ExitCode (⊕ elimination)
     trap_cmd    = 'trap' SIGNAL (body body?)?
@@ -421,6 +422,18 @@ loops].
 
 rc's `while() echo y` (empty parens = always true) becomes
 `while(true) { echo y }`. The `true` builtin is explicit.
+
+### loop
+
+    loop {
+        let line = read
+        if ($line =~ 'quit') { break }
+        process $line
+    }
+
+Sugar for `while(true)`. Use `break` to exit, `continue` to
+skip to next iteration. Common for event loops, REPLs, retry
+patterns, and daemons.
 
 ### match
 
@@ -1137,7 +1150,7 @@ wire format, named coprocesses).
 ## Reserved words
 
 Keywords: `def`, `let`, `mut`, `export`, `ref`, `if`, `else`,
-`for`, `in`, `while`, `match`, `try`, `catch`, `trap`,
+`for`, `in`, `while`, `loop`, `match`, `try`, `catch`, `trap`,
 `return`, `exit`, `set`, `struct`, `enum`.
 
 Reserved for future use: `type` (type aliases, if parametric
