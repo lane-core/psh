@@ -246,6 +246,108 @@ Essential for login shells — prevents background work from
 being killed on logout.
 
 
+## Interactive
+
+### `menu`
+
+    menu [-popup|-vertical|-transient] [-fuzzy] [-timeout N]
+         [-prompt STR] $items
+
+Structured interactive selection. Presents a list of items to
+the user and returns their choice as a tagged enum. Interactive
+only — in non-interactive mode (scripts, `-c`), `menu` returns
+`err('not interactive')` immediately.
+
+**Return type:**
+
+    enum MenuResult(T) {
+        selected(T);
+        cancelled;
+        err(Str)
+    }
+
+Three tags distinguish three outcomes: the user chose an item,
+the user dismissed the menu (Escape, Ctrl-C), or the operation
+failed (non-interactive shell, malformed request). This is NOT
+a `Result` — `cancelled` is a deliberate user action, not an
+error.
+
+**Basic usage:**
+
+    let choice = menu (stage commit push)
+    match $choice {
+        selected(v) => handle $v;
+        cancelled   => ();
+        err(e)      => echo "menu error: $e"
+    }
+
+**Style hints.** The shell suggests a presentation style. The
+host renders however it can — a terminal may ignore `-popup`
+and render a numbered list. Style hints degrade gracefully.
+
+| Flag | Hint |
+|------|------|
+| `-popup` | Overlay popup (if host supports) |
+| `-vertical` | Scrollable vertical list |
+| `-transient` | Auto-dismiss after one selection |
+| `-fuzzy` | Fuzzy filter as user types |
+| `-timeout N` | Auto-cancel after N seconds |
+| `-prompt STR` | Filter/input prompt string |
+
+**Structured items.** Items can be simple strings or tuples
+for richer presentation:
+
+    # Simple: List(Str)
+    menu -popup (stage commit push)
+
+    # Structured: List with display labels
+    menu -transient (
+        ('s : stage', 'stage')
+        ('c : commit', 'commit')
+        ('p : push', 'push')
+    )
+
+For tuple items, the first element is the display label, the
+second is the value returned in `selected(T)`.
+
+**ksh93 heritage.** ksh93's `select` statement (sh.1 §Compound
+Commands) is the closest ancestor — it prints a numbered menu,
+reads a reply, sets a variable. `menu` is a strict upgrade:
+typed return instead of string-in-variable, cancellation as a
+distinct tag instead of EOF, style hints for richer hosts.
+
+**VDC classification:** monadic (§8.5 clause 1). Positive
+input (List(T)) → positive output (MenuResult(T)) through an
+effect (user interaction). No polarity frame needed.
+
+**Not an optic.** The old design doc classified `menu` as a
+MonadicPrism. This is incorrect — `menu` is a Kleisli arrow
+`List(T) → Ψ(MenuResult(T))`, not an optic. There is no
+rebuild direction (you cannot inject a T back into a menu to
+recover the original list). No prism laws apply. `menu` is a
+unidirectional effectful selection, not a bidirectional
+decomposition.
+
+### `select`
+
+    select name [in word...] { body }
+
+POSIX/ksh93-compatible `select` loop. Prints a numbered menu
+to stderr, reads a number from stdin, sets `$name` to the
+chosen word and `$REPLY` to the raw input. Loops until `break`
+or EOF.
+
+    select color in red green blue {
+        echo "you picked $color"
+        break
+    }
+
+`select` is the simple, non-interactive-host form. Use `menu`
+for styled selection with typed returns. `select` exists for
+POSIX familiarity and for cases where a numbered list on
+stderr is sufficient.
+
+
 ## Positional parameters
 
 ### `shift`
@@ -518,8 +620,9 @@ on stdin.
 
 `printf`, `eval`, `shift`, `wait`, `kill`, `fg`, `bg`, `jobs`,
 `break`, `continue`, `command`, `builtin`, `whatis`, `pwd`,
-`unset`, `unexport`, `fc`, `filter`, `map`, `each`.
+`unset`, `unexport`, `fc`, `filter`, `map`, `each`, `menu`.
 
 ### Operational (robustness)
 
-`disown`, `umask`, `ulimit`, `hash`, `times`, `complete`.
+`disown`, `umask`, `ulimit`, `hash`, `times`, `complete`,
+`select`.

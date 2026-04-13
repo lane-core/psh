@@ -406,6 +406,72 @@ commonly used.
 (`unset -f PROMPT`) falls back to `$prompt`.
 
 
+## Status line
+
+Interactive shells may display a status line (the bottom line
+of the terminal, below the prompt). The status line is
+assembled from **segment defs** — functions matching the
+naming convention `def status.NAME`.
+
+### Segment convention
+
+Any `def` whose name starts with `status.` is a status line
+segment provider. The shell enumerates all `def status.*`
+functions, calls each, and concatenates their outputs to form
+the status line.
+
+    def status.git {
+        let branch = `{git branch --show-current 2>/dev/null}
+        if $branch != '' { echo $branch }
+    }
+
+    def status.path {
+        echo $PWD.name
+    }
+
+    def status.jobs {
+        let n = $#jobs
+        if $n > 0 { echo "$n jobs" }
+    }
+
+Segments return a string (their content) or empty string (to
+hide). The shell renders them left-to-right in lexicographic
+order of the segment name. Segments producing empty output
+are omitted.
+
+### Segment ordering
+
+Segment order follows the `def` name lexicographically:
+`status.a_git` renders before `status.b_path`. Numeric
+prefixes are the convention for explicit ordering:
+
+    def status.10_git { ... }
+    def status.20_path { ... }
+    def status.90_clock { ... }
+
+### Refresh
+
+The status line refreshes before each prompt (same timing as
+`def PROMPT`). Segments should be fast — avoid expensive
+operations or network calls. Expensive data (git status,
+system load) should be cached in a variable and refreshed via
+a `.refresh` discipline on a timer or directory-change hook.
+
+### No status line
+
+If no `def status.*` functions exist, no status line is
+displayed. The feature is entirely opt-in. Hosts that do not
+support a status line (dumb terminals) ignore segment output.
+
+### Host rendering
+
+The shell produces segment strings. The host decides visual
+presentation — colors, separators, positioning. The shell
+names content; the host names appearance. This follows the
+same separation as `def PROMPT`: the shell computes what to
+show, the host decides how to show it.
+
+
 ## History
 
 Interactive shells maintain a command history for recall and
