@@ -217,6 +217,10 @@ psh does not introduce rc-style lowercase aliases for these.
 | `$CDPATH` | List(Path) | cd search path (empty by default; see `cd` in §15-builtins.md) |
 | `$prompt` | List(Str) | `('% ' '  ')` — primary and continuation prompts |
 | `$*` | List(Str) | Positional parameters (script args or `set --` args) |
+| `$FCEDIT` | Str | Editor for `fc` builtin (default: `$EDITOR` or `ed`) |
+| `$TMOUT` | Int | Idle timeout in seconds (0 = disabled). See §Idle timeout. |
+| `$COMPLETION_EXTERNAL` | Str | External completion provider path. See §Completion. |
+| `$REPLY` | Str | Set by `read` and `menu` with raw user input |
 
 `$apid` uses rc's name (rc(1) lines 47-49: "whenever a command
 is followed by `&`, the variable `$apid` is set to its process

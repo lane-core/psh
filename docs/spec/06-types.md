@@ -1098,8 +1098,9 @@ consequence of the ⊕ structure: success is the left injection
 (the "continue" case), failure is the right injection (the
 "abort/branch" case). **Bool never enters the picture at the
 type level for command status.** If the user wants an explicit
-boolean, `$status.is_success` returns Bool via a named
-projection.
+boolean, `match($status) { ok => true; err(_) => false }`
+gives an explicit Bool. The prism preview `$status.ok` returns
+`Option(Unit)` — `some` on success, `none` on failure.
 
 **`$status` and `$pipestatus`:**
 

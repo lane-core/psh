@@ -21,7 +21,11 @@ determines how the optic is selected, not which class it is.
 | Sums (coproducts) | `match` | Prism (case analysis) | Cocartesian |
 | Map(V), key lookup | `$m['key']` | Affine traversal (partial) | Cartesian + Cocartesian |
 | Map(V), all values | `.values` | Getter (read-only) | — |
-| List slice | `$l[a..b]` | Affine fold (read-only) | (read-only restriction of AffineTraversal) |
+| Map(V), keys | `.keys` | Getter (read-only) | — |
+| List slice | `$l[a..b]` | Fold (read-only, 0-to-many) | (read-only restriction of Traversal) |
+| Enum prism preview | `$r.ok`, `$r.err` | Prism preview → `Option(T)` | Cocartesian |
+| Struct `.fields` | `$s.fields` | Getter (read-only) | — |
+| Struct `.values` | `$s.values` | Getter (read-only, homogeneous only) | — |
 | Path | `$p.parent` | Lens (drop last component) | Cartesian |
 | Path | `$p.name`, `.stem` | Lens (last component) | Cartesian |
 | Path | `$p.ext` | AffineTraversal (may not exist) | Cartesian + Cocartesian |

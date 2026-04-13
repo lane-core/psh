@@ -103,7 +103,7 @@ Bindings extend the context Γ with a new name. They are
                 | '_'                       -- wildcard
                 | '(' pat (',' pat)* ')'    -- tuple pattern
                 | '{' field_pat (';' field_pat)* ';'? '}'   -- struct record pattern
-                | (TYPENAME '::')? NAME '(' pat ')'  -- enum payload variant pattern (optionally qualified)
+                | (TYPE_NAME '::')? NAME '(' pat ')'  -- enum payload variant pattern (optionally qualified)
                 | NAME                      -- enum nullary variant pattern (same production as variable binding; disambiguated by scope)
                 | literal                   -- literal pattern (Int, Str, Path, Bool)
     field_pat   = NAME '=' pat              -- named field pattern (explicit)
@@ -345,7 +345,7 @@ a braced block or `=>` single-line form.
     literal_pat = NUM | QUOTED
     wildcard_pat = '_'
     structural_pat = tagged_pat | tuple_pat | list_pat | struct_pat
-    tagged_pat  = (TYPENAME '::')? NAME '(' pattern* ')'  -- enum variant destructure (optionally qualified)
+    tagged_pat  = (TYPE_NAME '::')? NAME '(' pattern* ')'  -- enum variant destructure (optionally qualified)
     struct_pat  = TYPE_NAME '{' (named_field_pats | positional_pats) '}'
     named_field_pats = field_pat (';' field_pat)* ';'?
     field_pat   = NAME '=' pattern                -- named field match (explicit)
@@ -356,6 +356,17 @@ a braced block or `=>` single-line form.
 
     body        = '{' program '}'
                 | '=>' command
+
+**Two pattern grammars.** `pat` (§Bindings) and `pattern`
+(above) serve different contexts. `pat` is for bindings
+(`let`, `if let`, `let-else`) — no globs, no multi-pattern.
+`pattern` is for `match` arms — includes globs and multi-
+pattern. They share structural forms (tagged, tuple, struct)
+but differ: `pat` has a plain `NAME` for variable binding,
+`pattern` does not (bare name in match context would be
+ambiguous with a nullary enum variant). The implementation
+uses a single `Pattern` enum (see docs/impl/03-ast.md) with
+context-specific validation.
 
 `=>` is a dependent keyword — a single-line body introducer.
 After `=>`, the parser reads a single command (terminated by
@@ -672,6 +683,7 @@ command that consumes them runs.
                 | '`{' program '}'
                 | '<{' program '}'
                 | '$((' arith_expr '))'
+                | '%' NUM                     -- job ID: %1, %2, etc.
                 | path_literal
                 | '~' '/' LITERAL
                 | '~'
@@ -708,6 +720,20 @@ than dot/bracket.
 RHS is lazily evaluated. Sugar for
 `match(M) { some(x) => x; none => N }`.
 
+**Process substitution `<{cmd}`.** Forks `cmd` as a
+concurrent child, returns a path to an fd (typically
+`/dev/fd/N`) that reads the child's stdout. The value is a
+`Path` — it names the resource, it does not force the
+computation. This is a downshift (`↓`): the computation is
+thunked behind a name, not forced to produce a value. See
+03-polarity.md §Shifts for the categorical reading.
+
+    diff <{sort file1} <{sort file2}
+
+**`%N` job ID.** Expands to the PID of background job N.
+`%1` is the most recent background job. Used as an argument
+to `fg`, `bg`, `kill`, `wait`, `disown`.
+
 **Path literals.** Filesystem paths are parsed into component
 sequences at parse time (06-types.md §Path). The leading
 `/`, `./`, or `../` commits the parser to a path literal;
@@ -743,10 +769,10 @@ is absolute, it replaces the left entirely (POSIX semantics).
     positional_fields = value ',' value (',' value)*       -- minimum 2 values
     map_lit     = '{' map_entry (',' map_entry)* ','? '}'
     map_entry   = expr ':' expr           -- key (Str) : value
-    variant_val = (TYPENAME '::')? NAME '(' value ')'  -- enum construction (optionally qualified)
-    nullary_variant = (TYPENAME '::')? NAME            -- enum nullary (optionally qualified)
-    type_call   = TYPENAME '::' NAME '(' value* ')'   -- per-type method call: Type::method(args)
-                | TYPENAME '::' NAME                   -- nullary (enum variant or zero-arg method)
+    variant_val = (TYPE_NAME '::')? NAME '(' value ')'  -- enum construction (optionally qualified)
+    nullary_variant = (TYPE_NAME '::')? NAME            -- enum nullary (optionally qualified)
+    type_call   = TYPE_NAME '::' NAME '(' value* ')'   -- per-type method call: Type::method(args)
+                | TYPE_NAME '::' NAME                   -- nullary (enum variant or zero-arg method)
 
 **Tuples.** Comma-separated values in parentheses. Lists are
 space-separated (rc heritage). The comma disambiguates.
@@ -790,8 +816,8 @@ under one syntax:
     Pos::x($point)           # struct field accessor as function
     MenuResult::cancelled    # nullary variant (no parens)
 
-Resolution: `TYPENAME::name` checks (1) enum variants of
-TYPENAME in Σ, then (2) `def TYPENAME::name` in Θ. Variants
+Resolution: `TYPE_NAME::name` checks (1) enum variants of
+TYPE_NAME in Σ, then (2) `def TYPE_NAME::name` in Θ. Variants
 take precedence — a type cannot be both enum and struct, so
 no real ambiguity arises.
 
@@ -963,6 +989,25 @@ discipline function names: `def x.set { }`), `/` (for paths).
 makes the split explicit and adds `.` to `word_char` (not
 `var_char`) to support discipline function names.
 
+### Terminals
+
+Terminals used in the grammar but not defined by the character
+set rules:
+
+    NUM         = [0-9]+
+    GLOB        = word_char sequence containing unquoted *, ?, or [
+                  -- disambiguated from LITERAL by presence of glob metacharacters
+    SIGNAL      = NAME                        -- signal name: SIGINT, SIGHUP, EXIT, etc.
+                                              -- validated against known signal set at parse time
+    MARKER      = NAME | QUOTED               -- here-doc delimiter: EOF, 'EOF', etc.
+    TYPE_NAME   = [A-Z] word_char*            -- uppercase-initial: Str, Result, Pos
+    SHORT_FLAG  = [a-zA-Z]                    -- single-character flag: x, e, etc.
+
+`TYPE_NAME` is distinguished from `NAME` by initial
+capitalization. The parser checks the first character: uppercase
+= type or constructor context, lowercase = variable or command
+context.
+
 ### Quoting
 
 Two string forms: single quotes (literal) and double quotes
@@ -1113,6 +1158,7 @@ as new sigils.
 ## Redirections
 
     redirect    = '>' WORD | '>>' WORD
+                | '>|' WORD                   -- noclobber override (force clobber)
                 | '<' WORD
                 | '<>' WORD                   -- read-write (O_RDWR), default fd 0
                 | '>[' NUM '=' NUM ']'

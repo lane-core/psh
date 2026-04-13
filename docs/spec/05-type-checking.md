@@ -40,7 +40,10 @@ Key syntactic decisions with semantic grounding:
 - **Two accessor forms: bracket and dot.** Both bind tightly
   to `$name` with no space required. Bracket `$a[i]` is
   projection by runtime value — tuples (`$t[0]`), lists
-  (`$l[n]`), maps (`$m['key']`). Returns `Option(T)`. Dot
+  (`$l[n]`), maps (`$m['key']`). Lists and maps return
+  `Option(T)` (runtime partiality). Tuples with literal index
+  return the field type directly (statically bounds-checked,
+  Lens). Dot
   `$x.name` is named field/method/discipline access.
   Concatenation uses explicit `^` only (`$stem^.c`). The `.`
   is always an accessor, never an implicit caret. Inside

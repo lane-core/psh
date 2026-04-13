@@ -88,6 +88,24 @@ rc heritage [Duf90, rc.ms §Built-in commands]. psh's `echo`
 does not interpret escape sequences (unlike bash's `echo -e`).
 For formatted output, use `printf`.
 
+### `print`
+
+    print [-p name] [arg...]
+
+Write arguments to stdout (default) or to a named coprocess
+channel (`-p name`). When `-p` is used, `print` sends a
+request to the named coprocess and returns a `ReplyTag`
+(affine resource) representing the pending response.
+
+    print -p myproc 'request'           # send to coprocess
+    let tag = print -p myproc 'query'   # capture ReplyTag
+    read -p myproc -t $tag reply        # read response for tag
+
+Without `-p`, `print` is equivalent to `echo` but accepts
+flags for future extension (ksh93 heritage: sh.1 §print).
+
+See 10-coprocesses.md for the full coprocess protocol.
+
 ### `printf`
 
     printf format [arg...]
@@ -110,7 +128,7 @@ cases, `printf` when formatting matters.
 
 ### `read`
 
-    read [-u fd] [-n count] name...
+    read [-u fd] [-n count] [-p name [-t tag]] name...
 
 Read a line from stdin (or fd `fd` with `-u`) and split into
 the named variables. The last variable receives the remainder
@@ -119,12 +137,17 @@ names are set to empty strings.
 
 - `-u fd`: read from file descriptor `fd` instead of stdin.
 - `-n count`: read exactly `count` bytes (binary read).
+- `-p name`: read from named coprocess channel. Consumes a
+  response from the coprocess's reply queue.
+- `-t tag`: with `-p`, read the response for a specific
+  `ReplyTag`. The tag is an affine resource — using it
+  consumes it. Without `-t`, reads the next available response.
 
 Returns nonzero on EOF or error.
 
-This is distinct from `read -p` (coprocess read, §10-coprocesses.md).
-The `-p` flag routes to the coprocess protocol; without `-p`,
-`read` operates on standard file descriptors.
+Without `-p`, `read` operates on standard file descriptors.
+With `-p`, it routes to the coprocess protocol
+(10-coprocesses.md).
 
 Splitting: psh splits on whitespace (spaces and tabs), not on
 `$IFS` (which psh does not have). Fields are assigned left to
@@ -476,6 +499,38 @@ Same heritage and categorical justification as `break`.
 than the post-continuation.
 
 
+## Signal handling
+
+### `trap`
+
+    trap SIGNAL { handler } { body }   -- lexical (scoped)
+    trap SIGNAL { handler }            -- global
+    trap SIGNAL                        -- delete handler
+
+Unified signal handling. Three forms distinguished by block
+count. See 04-syntax.md §trap and 12-errors.md §trap for
+the full grammar and semantics.
+
+**Lexical** (two blocks): installs the handler for the
+duration of the body — the μ-binder of the sequent calculus
+[CH00, §2.1]. The handler captures a signal continuation
+scoped to the body. Inner lexical traps shadow outer for
+the same signal.
+
+**Global** (one block): installs a persistent handler that
+remains until overwritten or deleted.
+
+**Delete** (no blocks): removes the handler for the named
+signal, restoring the default disposition.
+
+Precedence: innermost lexical > outer lexical > global >
+OS default.
+
+ksh93 heritage (sh.1 §Signals). rc had `{cmd}` blocks for
+signal handlers; psh's three-form `trap` unifies rc's signal
+handling with ksh93's `trap` command.
+
+
 ## Path cache
 
 ### `hash`
@@ -652,8 +707,9 @@ accumulator), `map` is one-to-one (no cross-element state).
 
 ### Essential (blocks login shell use)
 
-`.`, `cd`, `echo`, `read`, `true`, `false`, `exec`, `export`,
-`set` (§14-invocation.md), `exit` (§04-syntax.md).
+`.`, `cd`, `echo`, `print`, `read`, `true`, `false`, `exec`,
+`export`, `set` (§14-invocation.md), `exit` (§04-syntax.md),
+`trap`.
 
 ### Important (daily interactive use)
 
@@ -665,3 +721,13 @@ accumulator), `map` is one-to-one (no cross-element state).
 ### Operational (robustness)
 
 `disown`, `umask`, `ulimit`, `hash`, `times`, `complete`.
+
+### Planned (used in spec examples, not yet fully specified)
+
+`open`, `close`, `dup`, `write` — fd-level I/O operations
+(used in 03-polarity.md examples). `str`, `path`, `path.join`
+— type conversion builtins (used in 06-types.md §Path).
+
+`test` is an external command (`/usr/bin/test`), not a builtin.
+Spec examples that use `test` in `filter` bodies assume it is
+available on `$PATH`.
