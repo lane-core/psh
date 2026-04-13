@@ -4,10 +4,11 @@
 
 psh is a new Plan 9 rc-derived system shell being designed from the
 parser up. It is grounded in a specific theoretical constellation:
-the λμμ̃-calculus of sequent calculus, duploid semantics, profunctor
-optics, session types, virtual double categories, and the Plan 9 /
-ksh93 operational heritage. It is a standalone shell — no pane
-dependency, no external infrastructure required.
+the λμμ̃-calculus of sequent calculus, dialogue duploid semantics
+(with the linear classical L-calculus as internal type theory),
+profunctor optics, session types, virtual double categories, and
+the Plan 9 / ksh93 operational heritage. It is a standalone shell
+— no pane dependency, no external infrastructure required.
 
 **Current state:** design phase. The prior implementation was
 retired during the VDC reframing (commit 76be317). The source tree
@@ -74,8 +75,9 @@ the relevant agent and Lane.
   innermost lexical > outer lexical > global > OS default.
 - **Coprocesses.** Named bidirectional channels with per-tag binary
   sessions multiplexed over one socketpair. `print -p name 'query'`
-  returns an Int tag. Shell-internal PendingReply tracking. Wire
-  format: length-prefixed binary frames, MAX_FRAME_SIZE 16 MiB.
+  returns a `ReplyTag` (affine resource). Shell-internal PendingReply
+  tracking. Wire format: length-prefixed binary frames, MAX_FRAME_SIZE
+  16 MiB.
 - **9P-derived coprocess discipline** (negotiate, request-response,
   error-at-any-step, orderly teardown). Star topology: shell as hub.
 - **try/catch as scoped ErrorT.** Changes the sequencing combinator
@@ -85,6 +87,20 @@ the relevant agent and Lane.
 - **Two string forms.** Single quotes are literal (`'no $expansion'`).
   Double quotes interpolate (`"hello $name"`). Multi-element lists
   inside double quotes join with spaces. `\`-escapes in both forms.
+- **Dialogue duploid commitment.** Full Hasegawa-Thielecke theorem
+  (thunkable ⇔ central). Linear classical L-calculus as internal
+  type theory. Exponentials `!`/`?` partition the typing context.
+- **Three-zone linear resource model.** Classical (`!A`, default for
+  value types), affine (ReplyTag — drop triggers Tflush), linear
+  (bare `A` — must consume). `set -o linear` for whole-script linear
+  mode. `let !x` for classical promotion.
+- **Path is a component list**, not a string. Duff's principle for
+  filesystem paths. Root marker + `List(Str)`. Not a subtype of Str.
+- **ExitCode = `{ code: Int, message: Str }`.** Status refactored to
+  `Result((), ExitCode)` — genuine ⊕ coproduct. `catch (e : ExitCode)`.
+- **`set -o` option system.** 13 options, 6 axes. noclobber/pipefail
+  default ON. No errexit (try/catch). No nounset (type checker).
+  `set -o emacs` / `set -o vi` for editor mode.
 
 ## Quick start
 
