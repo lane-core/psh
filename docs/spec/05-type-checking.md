@@ -94,8 +94,7 @@ expressions in two directions without unification variables
 and without cross-expression inference. The algorithm is
 strictly weaker than Hindley-Milner and strictly stronger
 than monomorphic surface-form checking; it is the well-studied
-"bottom-up synth plus top-down check" pattern [Pierce-Turner,
-Dunfield].
+"bottom-up synth plus top-down check" pattern [PT00], [DK21].
 
 ### The two modes
 

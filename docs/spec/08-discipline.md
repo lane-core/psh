@@ -30,7 +30,7 @@ or IPC mechanism the user chooses — the spirit is portable even
 though Plan 9's specific mechanism is not.
 
 ksh93 collapsed observation and refresh by allowing its `get`
-discipline to run arbitrary shell code on every reference [SPEC,
+discipline to run arbitrary shell code on every reference [KSH93,
 §Discipline Functions]. psh declines to import that design: it
 hides work at the reference site, conflicts with Duff's "no
 hidden work" principle, and interacts unsoundly with session-

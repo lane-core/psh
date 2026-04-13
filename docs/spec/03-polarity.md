@@ -45,7 +45,7 @@ bracketing is:
     (h ○ g) • f   ≠   h ○ (g • f)
 
 — a comonadic step `○` wrapping a monadic step `•`. This is the
-operational shape of the `sh.prefix` bugs documented in [SPEC,
+operational shape of the `sh.prefix` bugs documented in [KSH93,
 §"Non-associativity made concrete"]: a computation-mode
 operation (DEBUG trap, `○`) intruding into a value-mode context
 (compound assignment, `•`) with no mediator. sfio had the
@@ -72,7 +72,7 @@ continuation (classical contraction — each copy evolves
 independently). The fork boundary is the shift between the
 local context and the classical exterior.
 
-psh avoids ksh93's continuation-stack corruption bugs [SPEC,
+psh avoids ksh93's continuation-stack corruption bugs [KSH93,
 §"Continuations and classical control"] by making the μ-binder
 lexically scoped. ksh93's `sigjmp_buf`/`checkpt` mechanism used dynamic
 traps with global mutation (`sh.prefix`, `sh_getscope`). psh's
@@ -110,7 +110,7 @@ A **polarity frame** is the operational mechanism for a `↓→↑`
 shift — forcing a negative (computation-mode) term to produce a
 positive (value-mode) result. Structurally, a frame is a
 restriction-like cell in the VDC of shell programs (cf.
-fcmonads §7, virtual equipments): it saves the positive-mode
+[CS10, §7], virtual equipments): it saves the positive-mode
 state (the expansion context — splice positions, CBV-focused
 values, partial word accumulators), runs the negative computation,
 and restores the positive-mode state on exit with the produced

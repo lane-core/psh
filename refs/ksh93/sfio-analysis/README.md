@@ -47,7 +47,7 @@ stack allocator identity.
 
 ## Polarity framework
 
-SFIO operations map onto the polarity framework from [SPEC.md](../../SPEC.md).
+SFIO operations map onto the polarity framework from [KSH93.md](../../SPEC.md).
 The mapping is a **structural analogy** — sfio's buffer/syscall boundary has the
 same shape as SPEC.md's value/computation boundary, and the failure modes match,
 but the full composition laws are unverified. Where the annotations below say

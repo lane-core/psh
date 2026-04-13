@@ -16,6 +16,7 @@ Full rationale: serena `policy/citation_workflow`.
 | `[CMM10]` | | Curien, Munch-Maccagnoni — Duality Under Focus |
 | `[CMS]` | | Carbone, Marin, Schürmann — Async Multiparty Compat. |
 | `[CS10]` | | Cruttwell, Shulman — Generalized Multicategories |
+| `[DK21]` | | Dunfield, Krishnaswami — Bidirectional Typing |
 | `[Duf90]` | | Duff — Rc, The Plan 9 Shell |
 | `[HVK98]` | | Honda, Vasconcelos, Kubo — Session Types |
 | `[Lei04]` | | Leinster — Higher Operads, Higher Categories |
@@ -23,6 +24,8 @@ Full rationale: serena `policy/citation_workflow`.
 | `[MMM]` | `[Duploids]` | Mangel, Melliès, Munch-Maccagnoni — Duploids |
 | `[Mun13]` | | Munch-Maccagnoni — Non-Assoc. Composition (thesis) |
 | `[Mun14]` | | Munch-Maccagnoni — Models of Non-Assoc. Composition |
+| `[PT00]` | | Pierce, Turner — Local Type Inference |
+| `[SH21]` | | Sterling, Harper — Logical Relations as Types |
 | `[Spi14]` | `[SPW]` | Spiwack — A Dissection of L |
 | `[Wad14]` | | Wadler — Propositions as Sessions |
 
@@ -159,6 +162,22 @@ is the key architectural principle.
 
 ---
 
+### `[DK21]`
+
+Jana Dunfield and Neelakantan R. Krishnaswami. "Bidirectional
+Typing." *ACM Computing Surveys* 54(5), Article 98, 2021.
+DOI: [10.1145/3450952](https://doi.org/10.1145/3450952).
+
+**Annotation.** Comprehensive survey of bidirectional type
+checking. psh's checker implements the "bottom-up synth plus
+top-down check" pattern this paper formalizes. The write-once
+slot discipline for type parameter pinning, the subsumption
+rule bridging synth and check modes, and the "ambiguity is
+error" policy all follow the patterns DK21 systematizes.
+Cited alongside [PT00] for the bidirectional heritage.
+
+---
+
 ### `[Duf90]`
 
 Tom Duff. "Rc — The Plan 9 Shell." *Plan 9 Programmer's
@@ -286,6 +305,43 @@ laws psh draws on.
 
 ---
 
+### `[PT00]`
+
+Benjamin C. Pierce and David N. Turner. "Local Type
+Inference." *ACM Transactions on Programming Languages and
+Systems* 22(1), pp. 1–44, 2000.
+DOI: [10.1145/345099.345100](https://doi.org/10.1145/345099.345100).
+
+**Annotation.** Foundational paper for bidirectional type
+checking. Introduces the synth/check mode distinction that
+psh's checker implements. Pierce and Turner's key insight —
+that local constraint solving around application sites
+suffices for practical type inference without global
+unification — is exactly psh's approach: the checker
+synthesizes bottom-up from literals and variables, checks
+top-down from annotations and expected types, and requires
+explicit annotation only when neither direction pins a type.
+
+---
+
+### `[SH21]`
+
+Jonathan Sterling and Robert Harper. "Logical Relations as
+Types: Proof-Relevant Parametricity for Program Modules."
+*Journal of the ACM* 68(6), Article 41, 2021.
+DOI: [10.1145/3474834](https://doi.org/10.1145/3474834).
+
+**Annotation.** Cited in the non-goals section (§Parametric
+polymorphism on def signatures) for the observation that
+psh's polarity discipline already carries Reynolds-style
+parametricity internally at the phase boundary. Sterling and
+Harper's §42 establishes that logical relations arise as
+types in a proof-relevant setting — the type-level guarantee
+that psh gets "for free" from the duploid structure without
+needing rank-1 ∀ on function signatures.
+
+---
+
 ### `[Spi14]`
 
 **Alias:** `[SPW]`
@@ -355,7 +411,7 @@ cites them by repo-relative path:
 
 - `[9P]` → `refs/plan9/man/5/intro` (vendored) + `refs/plan9/rfc9p2000.txt`
 - `[Be]` → Haiku/BeOS source (heritage annotation)
-- `[SPEC]` → `refs/ksh93/ksh93-analysis.md`
+- `[KSH93]` → `refs/ksh93/ksh93-analysis.md`
 - `[SFIO]` → `refs/ksh93/sfio-analysis/README.md`
 - `[SFIO-3]` → `refs/ksh93/sfio-analysis/03-buffer-model.md`
 - `[SFIO-7]` → `refs/ksh93/sfio-analysis/07-disciplines.md`

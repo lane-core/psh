@@ -2,7 +2,7 @@
 
 ## Two kinds of callable
 
-ksh93's compound variables [SPEC, §Compound variables] were its
+ksh93's compound variables [KSH93, §Compound variables] were its
 struct system, never named as such. `typeset -C` created
 name-value trees; `${x.field}` accessed them; disciplines
 mediated access. psh's `def`/lambda distinction is informed by

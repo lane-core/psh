@@ -205,7 +205,7 @@ psh makes polarity explicit:
 - **Save/restore as lens roundtrips** — PutGet (restore after
   redirect gives saved state), GetPut (save without redirect is
   no-op), PutPut (consecutive redirects, only last matters).
-  This is ksh93's `filemap[]` / `sh.topfd` pattern [SPEC,
+  This is ksh93's `filemap[]` / `sh.topfd` pattern [KSH93,
   sfio-analysis/10-ksh-integration.md] translated to typed Rust.
 
 

@@ -159,6 +159,6 @@ handlers only write a byte to the pipe fd, which is safe.
 mutable state. No `static mut`, no thread-local mutation.
 The reentrancy guard for discipline functions is a field on
 `Shell`, not a global flag. This is the lesson from ksh93's
-`sh.prefix` / `sh_getscope` bugs [SPEC, §The critical pair].
+`sh.prefix` / `sh_getscope` bugs [KSH93, §The critical pair].
 
 

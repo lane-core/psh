@@ -52,7 +52,7 @@ activates when products and coproducts are added.
 
 ksh93's `macro.c` expansion pipeline (tilde → parameter →
 command sub → arithmetic → field split → glob) is Kleisli
-composition [SPEC, §"The monadic side"]. psh's `eval_term` has
+composition [KSH93, §"The monadic side"]. psh's `eval_term` has
 a simpler pipeline:
 
 1. **Literal** → identity (pure, no effects)

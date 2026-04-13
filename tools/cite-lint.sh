@@ -63,7 +63,8 @@ strip_fences='
 
 # Key pattern: [UpperStart][AlphaNum]*[Digits] or [ALLCAPS][OptDigits]
 # Matches: [CH00], [CBG24], [MMM], [BTMO23], [CMS], [Duf90], etc.
-KEY_RE='\[([A-Z][A-Za-z]*[0-9]{2,4}|[A-Z]{2,}[0-9]*)\]'
+# Also matches [Key, §section] form — comma terminates the key.
+KEY_RE='\[([A-Z][A-Za-z]*[0-9]{2,4}|[A-Z]{2,}[0-9]*)[],]'
 
 for dir in src docs docs/spec; do
     [ -d "$dir" ] || continue
@@ -74,12 +75,12 @@ for dir in src docs docs/spec; do
             *.md)
                 keys=$(awk "$strip_fences" "$file" \
                     | grep -oE "$KEY_RE" 2>/dev/null \
-                    | sed 's/^\[//;s/\]$//' \
+                    | sed 's/^\[//;s/[],]$//' \
                     | sort -u) || true
                 ;;
             *.rs)
                 keys=$(grep -oE "$KEY_RE" "$file" 2>/dev/null \
-                    | sed 's/^\[//;s/\]$//' \
+                    | sed 's/^\[//;s/[],]$//' \
                     | sort -u) || true
                 ;;
             *)
@@ -96,11 +97,22 @@ done
 sort -u "$tmp.found" > "$tmp.found_uniq"
 files_with_cites=$(sort -u "$tmp.files" | wc -l | tr -d ' ')
 
+# --- Internal (non-bibliographic) keys ---
+# These are project-internal document refs, not published works.
+# Listed in references.md §"project-internal documents" section.
+INTERNAL_KEYS="KSH93 SFIO VDC"
+
 # --- Check for unresolved keys ---
 
 unresolved_count=0
 while IFS= read -r key; do
     [ -z "$key" ] && continue
+    # Skip known internal keys
+    skip=false
+    for ik in $INTERNAL_KEYS; do
+        case "$key" in "$ik"|"$ik"-*) skip=true; break ;; esac
+    done
+    $skip && continue
     if ! grep -qxF "$key" "$tmp.all_valid"; then
         printf 'cite-lint: UNRESOLVED — [%s] not found in %s\n' "$key" "$BIB"
         unresolved_count=$((unresolved_count + 1))

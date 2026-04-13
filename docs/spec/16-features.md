@@ -215,8 +215,7 @@ serving the focused shell psh is designed to be.
   Init-script robustness is delivered instead by rich
   ground-typed builtins and the polarity discipline that
   already carries Reynolds-style parametricity internally at
-  the phase boundary [Sterling-Harper, logical-relations-as-
-  types §4226-4243]. Generic combinators (`map`, `filter`,
+  the phase boundary [SH21, §42]. Generic combinators (`map`, `filter`,
   `fold`) are shell builtins whose types live at the Rust
   implementation layer and are never surfaced to the shell
   user. Parametric type *constructors* on type declarations
@@ -272,7 +271,7 @@ serving the focused shell psh is designed to be.
   session types.
 
 - **Pipeline fusion as a user-visible feature.** The Segal
-  condition (fcmonads §5) gives the categorical account of
+  condition [CS10, §5] gives the categorical account of
   when a sequence of pipeline stages has a composite. This is
   an implementation-level optimization opportunity — the
   evaluator may fuse adjacent stages for performance when
