@@ -805,3 +805,101 @@ principle generalized: structure is never destroyed and
 reconstructed).
 
 
+## Stream(T) (typed pipe sessions)
+
+`Stream(T)` is a recursive session type describing a
+unidirectional stream of typed values — the session protocol
+carried by typed pipes (§Features, "Typed pipes for def-to-def
+composition").
+
+**Definition.** `Stream(T)` is a recursive session type using
+the internal/external choice operators from session type
+theory [HVK98]:
+
+    Stream(T) = μX. (Send<T, X> ⊕ End)
+
+Read this: at each step, the producer either sends a value of
+type `T` and continues with the protocol (recursion via `X`),
+or closes the stream (`End`). The `⊕` is internal choice —
+the producer decides which branch to take. `μ` is the
+recursive session type constructor (least fixed point).
+
+The consumer's dual type is obtained by involutive negation
+`¬(−)` from the L-calculus [MMM, §9.3]:
+
+    ¬Stream(T) = νX. (Recv<T, X> & End)
+
+At each step, the consumer either receives a `T` and
+continues, or acknowledges end-of-stream. The `&` is
+external choice — the consumer must be prepared for either
+branch. `ν` is the greatest fixed point (dual to `μ`). The
+duality `¬¬Stream(T) ≅ Stream(T)` holds by involutivity.
+
+**Operational correspondence.** `Send<T, X>` is a `write`
+to the pipe fd. `Recv<T, X>` is a `read` from the pipe fd.
+`End` is EOF (pipe closure). The session type describes the
+protocol that the bytes on the pipe follow — it does not
+change what the kernel transmits. A `Stream(Str)` pipe
+carries newline-delimited strings; a `Stream(Int)` pipe
+carries the string representation of integers. The
+serialization boundary is Display/FromStr, same as rc's
+text convention.
+
+**Recursion.** `Stream(T)` is the first recursive type in
+psh's type system. The recursion is **structural** — the type
+unfolds to a fixed alternation of `Send` and `⊕`/`End`
+choice. There is no arbitrary recursive type machinery; the
+`μ`/`ν` constructors are restricted to session types on pipe
+endpoints. User code does not write `μX. ...` directly —
+`Stream(T)` is a named type constructor that encapsulates
+the recursion, like `List(T)` encapsulates cons-cell
+recursion at the implementation level.
+
+**Sugar.** `|[T]` in the pipe operator is sugar for
+`|[Stream(T)]`. The explicit form `|[Stream(T)]` is valid
+and equivalent. The sugar exists because the streaming
+protocol is the overwhelmingly common case for pipes, and
+writing `Stream(...)` at every pipe site would be noise. The
+explicit form exists for future extensibility — richer
+session types on pipes (e.g., batched or windowed protocols)
+can use the same annotation site.
+
+**Typing rule** (stream introduction / producer):
+
+    Γ ⊢ v : T | Δ          Γ ⊢ rest : Stream(T) | Δ     [synth]
+    ────────────────────────────────────────────────────
+    Γ ⊢ send(v); rest : Stream(T) | Δ
+
+    ─────────────────── [synth]
+    Γ ⊢ close : End | Δ
+
+The producer builds the stream by sending values and
+eventually closing. In practice, these are not explicit
+`send`/`close` calls — they are `echo`, `print`, and pipe
+closure. The typing rule describes the logical structure;
+the evaluator maps it onto standard I/O operations.
+
+**Zone.** `Stream(T)` as a type descriptor is classical
+(`!Stream(T)`) — the type name is freely copyable and
+usable in annotations. A *pipe endpoint* carrying a stream
+is **affine** — consumed by the pipeline mechanism, not
+directly manipulated by user code. Users do not hold
+`Stream(T)` values; the type exists in the type system to
+annotate pipe channels, not as a first-class value type.
+
+**Not user-constructible.** Unlike `List(T)` or `Option(T)`,
+`Stream(T)` values are not directly constructed by user code
+with a literal syntax. They are produced by the pipeline
+mechanism when a `def` writes to stdout. The `Stream(T)`
+type appears in:
+
+- Pipe operator annotations: `|[T]` or `|[Stream(T)]`
+- Future: `def` signature stream type declarations
+- Type-level reasoning about pipe compatibility
+
+Stream(T) is positive (the data that flows on the pipe is
+positive). The session type structure (the protocol state
+machine) is a type-level property checked statically, not a
+runtime representation.
+
+

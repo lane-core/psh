@@ -25,6 +25,7 @@ Full rationale: serena `policy/citation_workflow`.
 | `[Mun14]` | | Munch-Maccagnoni — Models of Non-Assoc. Composition |
 | `[Spi14]` | `[SPW]` | Spiwack — A Dissection of L |
 | `[Wad03]` | | Wadler — CBV Dual to CBN |
+| `[Wad14]` | | Wadler — Propositions as Sessions |
 
 ---
 
@@ -309,6 +310,28 @@ is strict) rather than a global evaluation strategy.
 
 ---
 
+### `[Wad14]`
+
+Philip Wadler. "Propositions as Sessions." *Journal of
+Functional Programming* 24(2-3), 2014, pp. 384–418.
+
+**Annotation.** Establishes the correspondence between
+propositions of classical linear logic and session types for
+concurrent computation. The key observation: the cut rule of
+linear sequent calculus *is* the typing rule for composing
+two processes over a channel, and involutive negation *is*
+session duality. psh's typed pipes use this correspondence
+directly — the `|[T]` annotation places a session type on the
+cut formula at the pipe site, the consumer receives the dual
+type `¬Stream(T)`, and the L-calculus cut rule (§Calculus)
+verifies compatibility. Wadler builds on the
+Caires-Pfenning [2010] correspondence between intuitionistic
+linear logic and session types, extending it to the classical
+setting — which is the setting psh inhabits (multiple
+conclusions in Δ, classical control via trap/μ-binders).
+
+---
+
 ## Correspondence to spec references
 
 The spec (`docs/specification.md`) uses its own numbering
@@ -338,7 +361,7 @@ The following spec references are **project-internal documents**,
 not published works. They do not get bibliography entries. Code
 cites them by repo-relative path:
 
-- `[9P]` → `man 5` in any Plan 9 distribution (heritage)
+- `[9P]` → `refs/plan9/man/5/intro` (vendored) + `refs/plan9/rfc9p2000.txt`
 - `[Be]` → Haiku/BeOS source (heritage annotation)
 - `[SPEC]` → `refs/ksh93/ksh93-analysis.md`
 - `[SFIO]` → `refs/ksh93/sfio-analysis/README.md`

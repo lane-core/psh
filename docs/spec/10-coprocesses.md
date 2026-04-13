@@ -275,3 +275,29 @@ party deadlock freedom per tag is immediate and multiparty
 safety reduces to the forwarder correctness of the shell
 itself.
 
+### Relationship to typed pipes
+
+Coprocesses and typed pipes (§Features, "Typed pipes for
+def-to-def composition") are complementary mechanisms serving
+distinct protocol shapes. Coprocesses are **bidirectional
+request-response** channels with external processes — per-tag
+multiplexed sessions over a socketpair, 9P-shaped discipline,
+shell as initiator. Typed pipes are **unidirectional streaming**
+channels between shell-internal `def` cells — single
+`Stream(T)` session per pipe, producer-initiated, pipeline-
+scoped.
+
+The session types are structurally different: coprocess tags
+have `Send<Req, Recv<Resp, End>>` (one exchange per tag),
+while typed pipes have `Stream(T) = μX. (Send<T, X> ⊕ End)`
+(recursive streaming). The VDC framework treats both as
+horizontal arrows with different type annotations — they
+coexist in the same VDC as different kinds of typed channels
+[Wad14].
+
+The design does not converge the two mechanisms. Coprocesses
+serve IPC with processes psh does not control. Typed pipes
+serve composition between defs psh does control. The
+operational substrates differ (socketpair vs `pipe(2)`), the
+protocol shapes differ, and the use cases are complementary.
+

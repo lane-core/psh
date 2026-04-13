@@ -603,6 +603,8 @@ redirections, pipelines, and operators.
     pipe_op     = '|'                         -- stdout → stdin
                 | '|[' NUM ']'                -- fd N → stdin (rc heritage)
                 | '|[' NUM '=' NUM ']'        -- fd N → fd M (rc general form)
+                | '|[' TYPE ']'               -- typed pipe: Stream(T) on stdout → stdin
+                | '|[' NUM ':' TYPE ']'       -- fd N typed: Stream(T) on fd N → stdin
     cmd_expr    = '!' cmd_expr
                 | body
                 | '@' body
@@ -611,9 +613,22 @@ redirections, pipelines, and operators.
     simple_cmd  = cmd_prefix* WORD+
     cmd_prefix  = NAME '=' value              -- per-command local variable (rc heritage)
 
+**Typed pipe `|[T]`.** When both sides of a pipe are
+`def` cells, the type annotation declares the element type
+of the stream. `|[Str]` is sugar for `|[Stream(Str)]`. The
+type checker verifies that the producer's output and the
+consumer's input are compatible via the cut rule with
+session type duality (§Types, `Stream(T)`; §Features,
+"Typed pipes for def-to-def composition"). The bracket
+annotation is lexically unambiguous with fd targeting:
+type names are uppercase, fd numbers are digits. The combined
+form `|[N:TYPE]` targets fd N with a typed stream. When
+either side is an external command, the annotation is
+absent and the pipe is an untyped byte stream.
+
 **`|&` coprocess.** `cmd |&` starts a coprocess with a
-9P-shaped bidirectional protocol. See specification.md
-§Coprocesses for the full discipline.
+9P-shaped bidirectional protocol. See §Coprocesses for the
+full discipline.
 
 **`@{ }` subshell.** Fork with a copy of the current scope.
 rc's `@` operator [Duf90, §Operators] — a subshell fork.

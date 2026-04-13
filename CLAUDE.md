@@ -98,6 +98,12 @@ the relevant agent and Lane.
   filesystem paths. Root marker + `List(Str)`. Not a subtype of Str.
 - **ExitCode = `{ code: Int, message: Str }`.** Status refactored to
   `Result((), ExitCode)` — genuine ⊕ coproduct. `catch (e : ExitCode)`.
+- **Typed pipes for def-to-def composition.** `|[T]` annotates the
+  pipe with element type T (sugar for `|[Stream(T)]`). Static type
+  check only — pipe stays kernel byte stream. External pipes untyped.
+  `Stream(T) = μX. (Send<T, X> ⊕ End)`. Cut rule with ¬S for consumer.
+  VDC classification: monadic. Complementary to coprocesses (streaming
+  vs request-response).
 - **`set -o` option system.** 13 options, 6 axes. noclobber/pipefail
   default ON. No errexit (try/catch). No nounset (type checker).
   `set -o emacs` / `set -o vi` for editor mode.
