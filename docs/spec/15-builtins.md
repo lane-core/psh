@@ -30,6 +30,11 @@ rc heritage [Duf90, rc.ms §Built-in commands]: "Execute commands
 from file. `$*` is set for the duration to the remainder of the
 argument list."
 
+`source` is accepted as an alias for `.` — it has no semantic
+difference in psh (ksh93 distinguishes them via special-builtin
+discipline, which psh does not adopt). The alias aids migration
+from bash/ksh scripts.
+
 This is the mechanism for startup file sourcing
 (§14-invocation.md): `/etc/psh/pshrc`, user profile, and
 interactive rc are all executed via `.`.
@@ -41,11 +46,15 @@ interactive rc are all executed via `.`.
 
     cd [dir]
     cd -
+    cd old new
 
 Change the current working directory.
 
 - No argument: `cd $HOME`.
 - `-` argument: `cd $OLDPWD` (previous directory).
+- Two arguments: substitute `old` with `new` in `$PWD` and cd
+  to the result. ksh93 heritage — useful for deep paths:
+  `cd src test` in `/project/src/lib` → `/project/test/lib`.
 - With `dir`: change to `dir`, searching `$CDPATH` if `dir` is
   relative and not found in the current directory.
 
@@ -87,6 +96,11 @@ Formatted output following POSIX printf conventions. The
 `format` string supports `%s`, `%d`, `%x`, `%o`, `%f`, `%%`,
 and `\n`, `\t`, `\\` escape sequences. If there are more
 arguments than format specifiers, the format string is reused.
+
+The `-v name` flag assigns the formatted result directly to a
+variable instead of writing to stdout — avoids command
+substitution overhead and trailing-newline stripping (ksh93
+heritage: sh.1 §printf).
 
 This is the reliable output mechanism — `echo` for simple
 cases, `printf` when formatting matters.
@@ -242,9 +256,10 @@ Shift positional parameters left by `n` positions (default 1).
 `$1` becomes what was `$2`, etc. The first `n` parameters are
 discarded. `$#*` decreases by `n`.
 
-rc heritage: rc did not have `shift` (Duff deleted it: rc.ms
-§Design Principles). ksh93 heritage (sh.1 §shift). psh restores
-it because positional parameter processing on Unix is pervasive.
+rc heritage: rc kept `shift` — Duff's deletion list (rc.ms
+§Design Principles) does not include it, and both rc.ms and
+rc(1) list `shift` among the builtins. ksh93 heritage
+(sh.1 §shift) adds arithmetic expressions for the count.
 
 
 ## Environment
