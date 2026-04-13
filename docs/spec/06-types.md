@@ -231,6 +231,20 @@ auto-generated `def Type.fields` and `def Type.values`
 methods — computations that produce new lists, not lens
 projections into the struct's storage.
 
+**Prefix form.** Struct accessors are also callable in command
+position via `Type::field(value)` (§Syntax, "Type::name()"):
+
+    echo Pos::x($p)         # 10 — same as $p.x
+    echo Pos::y($p)         # 20 — same as $p.y
+    Pos::fields($p)         # same as $p.fields
+
+The `::` prefix form and the `.` postfix form call the same
+`def Type.name`. Prefix is useful when the accessor is the
+operation rather than the value — e.g., as an argument to
+`map`:
+
+    map { |p| => Pos::x($p) } $positions
+
 **Pattern matching** uses the type name prefix, symmetric with
 construction. Named and positional patterns mirror the two
 construction forms:

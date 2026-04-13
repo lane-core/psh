@@ -733,7 +733,8 @@ is absolute, it replaces the left entirely (POSIX semantics).
                 | tuple                   -- anonymous product (comma-delim, min 2)
                 | struct_lit              -- struct construction (type-prefixed)
                 | map_lit                 -- map construction (string keys, synth-capable)
-                | variant_val             -- enum construction (tagged)
+                | type_call               -- Type::name(args) — unified enum + method
+                | variant_val             -- enum construction (tagged, unqualified)
                 | nullary_variant         -- enum nullary variant (bare name)
                 | lambda
                 | word
@@ -746,6 +747,8 @@ is absolute, it replaces the left entirely (POSIX semantics).
     map_entry   = expr ':' expr           -- key (Str) : value
     variant_val = (TYPENAME '::')? NAME '(' value ')'  -- enum construction (optionally qualified)
     nullary_variant = (TYPENAME '::')? NAME            -- enum nullary (optionally qualified)
+    type_call   = TYPENAME '::' NAME '(' value* ')'   -- per-type method call: Type::method(args)
+                | TYPENAME '::' NAME                   -- nullary (enum variant or zero-arg method)
 
 **Tuples.** Comma-separated values in parentheses. Lists are
 space-separated (rc heritage). The comma disambiguates.
@@ -777,6 +780,38 @@ Disambiguated from blocks by the `:` after the first key.
     { 'name': 1, 'age': 2 }    # map — colon + commas
 
 psh extension — rc had no maps or structs.
+
+**`Type::name()` — unified type-namespaced calls.** The `::`
+operator accesses a type's namespace in command position.
+It unifies enum variant construction and per-type method calls
+under one syntax:
+
+    Result::ok(42)           # enum variant construction
+    Result::err('fail')      # enum variant construction
+    Str::upper($s)           # per-type method (def Str.upper)
+    Pos::x($point)           # struct field accessor as function
+    MenuResult::cancelled    # nullary variant (no parens)
+
+Resolution: `TYPENAME::name` checks (1) enum variants of
+TYPENAME in Σ, then (2) `def TYPENAME.name` in Θ. Variants
+take precedence — a type cannot be both enum and struct, so
+no real ambiguity arises.
+
+The `::` prefix form and the `.` postfix form call the same
+underlying `def Type.name`. The difference is syntactic
+position:
+
+    $s.upper                 # postfix — accessor on a value
+    Str::upper($s)           # prefix — command position call
+
+The prefix form is useful in pipelines and as arguments to
+combinators where a value expression is expected:
+
+    map { |s| => Str::upper($s) } $names
+
+The `NAME(` no-space rule applies: `Str::upper(` commits to
+the call. `Str::upper (` (with space) is a command named
+`Str::upper` with a list argument.
 
 ### Accessor syntax
 
