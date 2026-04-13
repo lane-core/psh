@@ -720,9 +720,10 @@ patterns use `let-else`:
 
     Γ ⊢ M : A | Δ                           [synth on RHS]
     Γ ⊢ pat : A ⊣ Γ'                        (pattern binds Γ')
-    Γ | else-body diverges ⊢ Δ              (else must return/exit)
+    Γ ⊢ else-body : ⊥ | Δ                  (else must diverge)
+    Γ, Γ' ⊢ rest | Δ                        (bindings scoped below)
     ─────────────────────────────────────────────────────
-    Γ' ⊢ rest : (Γ' ⊢ Δ)                   (bindings scoped below)
+    Γ ⊢ let pat = M else { else-body }; rest | Δ
 
 The else-body is a consumer in Δ (an error continuation).
 It must diverge — `return N`, `exit`, or an infinite loop.

@@ -122,14 +122,17 @@ are:
 
 - **Terms** (producers): values that have been computed or are
   ready to compute. They live on the left of the cut.
-- **Coterms** (consumers): contexts that are waiting to receive
-  a value. They live on the right of the cut.
+  Curien-Herbelin's "terms."
 - **Commands** (consumers): contexts waiting to receive a value
-  — the coterm side. `echo` consumes arguments. `if` consumes
-  a status. `match` consumes a value and eliminates by tag.
+  — the coterm side of the calculus. `echo` consumes arguments.
+  `if` consumes a status. `match` consumes a value and
+  eliminates by tag. Curien-Herbelin's "coterms" — psh calls
+  them "commands" because that is what shells call them.
 - **Expressions** (cuts): a term meeting a command — ⟨t | e⟩ —
   the moment of interaction where computation happens. The
   `Expr` layer wires up pipelines, redirections, and fork/exec.
+  Curien-Herbelin's "commands" (confusingly — psh uses
+  "expression" to avoid the name clash).
 
 `echo hello` is a cut: the producer `hello` meets the consumer
 `echo`. The `def` keyword defines a computation; the cut

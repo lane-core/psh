@@ -337,8 +337,8 @@ a braced block or `=>` single-line form.
     try_cmd     = 'try' body 'catch' '(' NAME ')' body    -- NAME : ExitCode (⊕ elimination)
     trap_cmd    = 'trap' SIGNAL (body body?)?
 
-    match_arm   = pattern+ guard? '=>' lambda_body
-    guard       = 'if' '(' expr ')'       -- pure expression only (no effects)
+    match_arm   = pattern+ guard? '=>' (command | '{' program '}')
+    guard       = 'if' '(' pipeline ')'   -- condition (pure expression preferred)
     pattern     = glob_pat | structural_pat | literal_pat | wildcard_pat
 
     glob_pat    = GLOB              -- e.g. *.txt, [a-z]*
@@ -705,7 +705,7 @@ command that consumes them runs.
                 | '>' | '<' | '>=' | '<=' | '==' | '!='
 
     var_ref     = '$' VARNAME (bracket_access | dot_accessor)*
-    bracket_access = '[' (expr '..' expr | expr) ']'
+    bracket_access = '[' (word '..' word | word) ']'
     dot_accessor   = '.' NAME
     ws          = (' ' | '\t')+
 
@@ -762,7 +762,7 @@ is absolute, it replaces the left entirely (POSIX semantics).
                 | nullary_variant         -- enum nullary variant (bare name)
                 | lambda
                 | word
-    tuple       = '(' value ',' value (',' value)* ')'     -- minimum 2 elements
+    -- tuple defined above in §Words: '(' word (',' word)+ ','? ')'
     struct_lit  = TYPE_NAME '{' (named_fields | positional_fields) '}'
     named_fields      = field_init (';' field_init)* ';'?
     field_init        = NAME '=' value    -- named field (explicit)
@@ -852,7 +852,7 @@ caret. Concatenation uses explicit `^` only: `$stem^.c`.
 Grammar:
 
     accessed_word = '$' VARNAME (bracket_access | dot_accessor)*
-    bracket_access = '[' (expr '..' expr | expr) ']'
+    bracket_access = '[' (word '..' word | word) ']'
     dot_accessor   = '.' NAME
 
 Examples:
