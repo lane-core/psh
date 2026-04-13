@@ -380,6 +380,43 @@ are bare — no parens at construction. `()` is reserved for
 the empty list. `none()` is not valid syntax under this
 rule.
 
+**Qualified variant syntax.** Variant names can be qualified
+with their parent type using `::` (Rust convention):
+
+    let r = Result::ok(42)
+    let m = MenuResult::err('not interactive')
+    match $choice {
+        MenuResult::selected(v) => handle $v;
+        MenuResult::cancelled   => ();
+        MenuResult::err(e)      => echo $e
+    }
+
+Qualification is **never required** when the bidirectional
+checker can resolve the variant from context. Bare `ok(42)` is
+valid when the expected type pins the enum. Qualification is
+available for:
+
+- **Explicitness** — making code self-documenting when multiple
+  enums share variant names (`err` on both `Result` and
+  `MenuResult`).
+- **Disambiguation** — when the checker cannot determine which
+  enum a variant belongs to (rare, requires a context where
+  two enums with the same variant name are both candidates).
+
+When disambiguation is needed and the user writes a bare
+variant, the checker produces a targeted error:
+
+    error: ambiguous variant `err` — could be Result::err or MenuResult::err
+      --> script.psh:12:5
+       | match $x {
+       |     err(e) => ...
+       |     ^^^
+       = help: qualify as Result::err(e) or MenuResult::err(e)
+
+The `TYPENAME::` prefix is syntactic — it resolves at parse
+time to the enum declaration in Σ. It is not a runtime
+namespace lookup.
+
 **Command-position ambiguity.** In command position, `ok 42`
 (with space) is a command named `ok` with argument `42`, not
 enum construction. The `NAME(` token (no space before `(`)

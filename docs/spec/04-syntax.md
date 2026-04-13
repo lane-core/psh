@@ -103,7 +103,7 @@ Bindings extend the context Γ with a new name. They are
                 | '_'                       -- wildcard
                 | '(' pat (',' pat)* ')'    -- tuple pattern
                 | '{' field_pat (';' field_pat)* ';'? '}'   -- struct record pattern
-                | NAME '(' pat ')'          -- enum payload variant pattern
+                | (TYPENAME '::')? NAME '(' pat ')'  -- enum payload variant pattern (optionally qualified)
                 | NAME                      -- enum nullary variant pattern (same production as variable binding; disambiguated by scope)
                 | literal                   -- literal pattern (Int, Str, Path, Bool)
     field_pat   = NAME '=' pat              -- named field pattern (explicit)
@@ -345,7 +345,7 @@ a braced block or `=>` single-line form.
     literal_pat = NUM | QUOTED
     wildcard_pat = '_'
     structural_pat = tagged_pat | tuple_pat | list_pat | struct_pat
-    tagged_pat  = NAME '(' pattern* ')'           -- enum variant destructure
+    tagged_pat  = (TYPENAME '::')? NAME '(' pattern* ')'  -- enum variant destructure (optionally qualified)
     struct_pat  = TYPE_NAME '{' (named_field_pats | positional_pats) '}'
     named_field_pats = field_pat (';' field_pat)* ';'?
     field_pat   = NAME '=' pattern                -- named field match (explicit)
@@ -744,8 +744,8 @@ is absolute, it replaces the left entirely (POSIX semantics).
     positional_fields = value ',' value (',' value)*       -- minimum 2 values
     map_lit     = '{' map_entry (',' map_entry)* ','? '}'
     map_entry   = expr ':' expr           -- key (Str) : value
-    variant_val = NAME '(' value ')'      -- enum construction with payload
-    nullary_variant = NAME                -- bare variant name (context-determined)
+    variant_val = (TYPENAME '::')? NAME '(' value ')'  -- enum construction (optionally qualified)
+    nullary_variant = (TYPENAME '::')? NAME            -- enum nullary (optionally qualified)
 
 **Tuples.** Comma-separated values in parentheses. Lists are
 space-separated (rc heritage). The comma disambiguates.
