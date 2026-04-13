@@ -1,7 +1,7 @@
 # Style Guide
 
-Conventions for contributing to psh — code, prose, and formatting.
-Observed by all contributors, human and agent alike.
+Conventions for psh contributions — code, prose, formatting.
+All contributors follow, human + agent.
 
 ---
 
@@ -15,25 +15,23 @@ Observed by all contributors, human and agent alike.
 | Import grouping | std, then external crates, then local (`group_imports = "StdExternalCrate"`) |
 | Linter | `cargo clippy -- -D warnings` |
 
-Run `cargo fmt` before every commit. Run `cargo clippy`
-before pushing. Fix warnings — don't suppress them.
+Run `cargo fmt` before every commit. Run `cargo clippy` before pushing. Fix warnings — no suppression.
 
-The `rustfmt.toml` is the source of truth. No editor-local overrides.
+`rustfmt.toml` = source of truth. No editor-local overrides.
 
 ## Derive Order
 
-When a type derives multiple traits, use this order:
+Multiple trait derives use this order:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 ```
 
-Only derive what's needed. Omit `Copy` unless the type is small and
-value-semantic.
+Only derive what's needed. Omit `Copy` unless type small + value-semantic.
 
 ## Visibility
 
-psh is a single binary crate. Visibility rules:
+psh = single binary crate. Visibility rules:
 
 | Scope | Annotation |
 |-------|------------|
@@ -51,16 +49,13 @@ psh is a single binary crate. Visibility rules:
 | fork/exec failures | Return `Status::err` with errno context |
 | Discipline functions | Reentrancy guard, then run body |
 
-psh uses the ⊕ error convention exclusively: every function
-returns a status or result. No longjmp, no panic for control
-flow. Rust's `Result` + `?` is the mechanism.
+psh uses ⊕ error convention exclusively: every function returns status/result. No longjmp, no panic for control flow. Rust's `Result` + `?` = mechanism.
 
 ---
 
 ## Code Comments
 
-Comments explain *why*, not *what*. If the code needs a *what*
-comment, the code needs rewriting.
+Comments explain *why*, not *what*. Code needs *what* comment → code needs rewriting.
 
 ```rust
 // Bad: check if the variable exists
@@ -71,14 +66,11 @@ if let Some(var) = scope.get(name) { ... }
 if let Some(body) = self.env.get_fn(&format!("{name}.set")).cloned() { ... }
 ```
 
-Do not add comments to code you didn't change. Do not add
-docstrings to private functions unless the logic is genuinely
-non-obvious.
+No comments on unchanged code. No docstrings on private functions unless logic genuinely non-obvious.
 
 ### Heritage Annotations
 
-psh draws from two shell traditions. Document the lineage
-where it matters:
+psh draws from two shell traditions. Document lineage where it matters:
 
 ```rust
 //! rc heritage: first-class lists, single-quote-only quoting,
@@ -99,20 +91,12 @@ where it matters:
 
 ### Theoretical Citations
 
-psh cites published references using short bibliography keys
-that resolve to entries in `docs/citations.md`. The full
-workflow is in `docs/citation-workflow.md`. Summary:
+psh cites published refs using short bibliography keys resolving to entries in `docs/citations.md`. Full workflow in `docs/citation-workflow.md`. Summary:
 
-- **Module-level docs** (`//!`) carry a `# References` section
-  listing the keys that inform the module's architecture.
-- **Function-level docs** (`///`) cite only when the specific
-  function draws from a reference. Most functions need no
-  citation.
-- **Every citation is a testable claim.** "This code implements
-  the idea described in this reference." If the claim is not
-  defensible, remove the citation.
-- **Epistemic strength matches the source.** Hedge when the
-  source hedges.
+- **Module-level docs** (`//!`) carry `# References` section listing keys informing module architecture.
+- **Function-level docs** (`///`) cite only when specific function draws from reference. Most functions need no citation.
+- **Every citation = testable claim.** "This code implements idea from this reference." Claim not defensible → remove citation.
+- **Epistemic strength matches source.** Hedge when source hedges.
 
 **Module-level template:**
 
@@ -149,7 +133,7 @@ pub fn install_continuation(...) { ... }
 
 ### Citation format
 
-Two separate disciplines — do not cross them:
+Two separate disciplines — don't cross:
 
 | Tradition | Format | Audit procedure |
 |-----------|--------|-----------------|
@@ -157,28 +141,19 @@ Two separate disciplines — do not cross them:
 | Theoretical (papers) | `[Key]` resolving to `docs/citations.md` | Verify against bibliography entry |
 | Internal design docs | `docs/specification.md §Section` | Verify against current spec |
 
-Heritage annotations cite source-code lineage. Theoretical
-citations cite papers. A module drawing from both carries both,
-separately.
+Heritage annotations cite source-code lineage. Theoretical citations cite papers. Module drawing from both carries both, separately.
 
 ### Citation hygiene
 
-- **`tools/cite-lint.sh`** catches typos and dangling keys.
-  Run before committing. Green lint ≠ correct citations — it
-  is a mechanical check only.
-- **Semantic audit** catches stale citations, wrong attribution,
-  strengthened hedges. Performed at review time: if a PR touches
-  a cited function, the reviewer re-reads the cited reference
-  and confirms the citation is still accurate.
-- **Citations follow the code.** Move with refactors, delete
-  with deletions, update when the implementation changes.
+- **`tools/cite-lint.sh`** catches typos + dangling keys. Run before committing. Green lint ≠ correct citations — mechanical check only.
+- **Semantic audit** catches stale citations, wrong attribution, strengthened hedges. At review time: PR touches cited function → reviewer re-reads cited reference, confirms citation still accurate.
+- **Citations follow code.** Move with refactors, delete with deletions, update when implementation changes.
 
 ---
 
 ## Technical Writing Voice
 
-Same as pane: describe the machine. Present tense, active voice,
-concrete behavior. Short sentences. Code examples over prose.
+Same as pane: describe the machine. Present tense, active voice, concrete behavior. Short sentences. Code examples over prose.
 
 | Guideline | Example |
 |-----------|---------|
@@ -194,10 +169,10 @@ concrete behavior. Short sentences. Code examples over prose.
 | Rule | Detail |
 |------|--------|
 | Framework | `#[test]` with `cargo test` |
-| Test naming | `snake_case` describing the claim being tested |
-| Test isolation | Each test creates its own `Shell` instance |
+| Test naming | `snake_case` describing claim tested |
+| Test isolation | Each test creates own `Shell` instance |
 
-Test names should read as claims:
+Test names read as claims:
 
 ```rust
 #[test]
@@ -214,9 +189,7 @@ fn discipline_set_fires_on_assignment() { ... }
 
 ## Architecture Patterns
 
-These are load-bearing design decisions documented in
-`docs/spec/` (the principled design document)
-and the pane project's `docs/shell.md`.
+Load-bearing design decisions documented in `docs/spec/` and pane project's `docs/shell.md`.
 
 | Pattern | Rule |
 |---------|------|
@@ -233,40 +206,18 @@ and the pane project's `docs/shell.md`.
 
 ## Intermediate State Principle
 
-Multi-step implementation is safer when each intermediate state
-is a natural resting point. The litmus test: **would anyone
-design the intermediate state on purpose?** If not — if it
-exists only as a waypoint between two coherent designs — combine
-the steps.
+Multi-step implementation safer when each intermediate state = natural resting point. Litmus test: **would anyone design intermediate state on purpose?** If not — exists only as waypoint between two coherent designs — combine steps.
 
-**When phasing wins:** each intermediate is a plausible resting
-place. A validation library: step 1 = email validation (useful
-standalone), step 2 = URL validation. A protocol stack: step 1 =
-framing (useful without correlation). Each phase is a system
-someone would ship.
+**When phasing wins:** each intermediate = plausible resting place. Validation library: step 1 = email validation (useful standalone), step 2 = URL validation. Protocol stack: step 1 = framing (useful without correlation). Each phase = system someone would ship.
 
-**When phasing is a trap:** an intermediate creates a coherence
-obligation that neither the before-state nor the after-state
-requires. Building a counter separately from the collection it
-counts. Implementing error types before the operations that
-produce errors. Extracting a type to a new crate before the
-functions that return it. The transient cross-boundary invariant
-is strictly harder to reason about than either endpoint.
+**When phasing = trap:** intermediate creates coherence obligation neither before-state nor after-state requires. Building counter separately from collection it counts. Implementing error types before operations producing them. Extracting type to new crate before functions returning it. Transient cross-boundary invariant strictly harder to reason about than either endpoint.
 
 **How to apply:**
 
-1. Before proposing a phased plan, write down what the system
-   looks like after each phase — not what changed, what EXISTS.
-2. For each intermediate: "If we stopped here permanently, would
-   this be a reasonable design?" If "no, but the next phase fixes
-   it" — merge the phases.
-3. A smaller diff is not inherently safer. An incoherent
-   intermediate is strictly more dangerous than a larger coherent
-   step.
-4. Exception: if a combined step is too large to review or test
-   as a unit, splitting is justified — but document the
-   intermediate as intentionally transient and land both steps in
-   the same review cycle.
+1. Before proposing phased plan, write down what system looks like after each phase — not what changed, what EXISTS.
+2. Each intermediate: "If stopped here permanently, reasonable design?" If "no, but next phase fixes it" — merge phases.
+3. Smaller diff not inherently safer. Incoherent intermediate strictly more dangerous than larger coherent step.
+4. Exception: combined step too large to review/test as unit → splitting justified — but document intermediate as intentionally transient, land both steps in same review cycle.
 
 ---
 
@@ -274,9 +225,8 @@ is strictly harder to reason about than either endpoint.
 
 When deviating from rc behavior:
 
-1. Document the divergence with rationale
-2. Valid reasons: ksh93 influence, correctness improvement,
-   Rust idiom, pane integration
+1. Document divergence with rationale
+2. Valid reasons: ksh93 influence, correctness improvement, Rust idiom, pane integration
 3. Invalid reasons: "sounds better", didn't check what rc does
 4. Known deliberate divergences:
    - `if cond { } else { }` with mandatory braces (fixes rc's `if not`)
